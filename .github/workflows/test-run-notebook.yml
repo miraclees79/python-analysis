@@ -27,6 +27,10 @@ jobs:
           pip install pytesseract
           pip install pdf2image
           pip install google-api-python-client
+      - name: Debug JSON Secret
+        run: |
+          echo "${{ secrets.GOOGLE_CREDENTIALS }}" | tr -d '\r' > /tmp/credentials.json
+          python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
 
       - name: Set up Google Credentials
         run: |
