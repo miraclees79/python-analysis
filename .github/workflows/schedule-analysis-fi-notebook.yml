@@ -41,10 +41,7 @@ jobs:
              # Use WebDriver Manager (Recommended)
           python -c "from webdriver_manager.chrome import ChromeDriverManager; print(ChromeDriverManager().install())"
 
-      - name: Run data processing script
-        env:
-          PATH: /usr/local/bin:$PATH
-          
+     
       - name: Create Google Credentials File
         run: |
           echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
@@ -55,7 +52,8 @@ jobs:
               python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
      
       - name: Execute Notebook
-        
+        env:
+          PATH: /usr/local/bin:$PATH
        
           
         run: |
