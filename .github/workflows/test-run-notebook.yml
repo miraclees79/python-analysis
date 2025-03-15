@@ -35,10 +35,7 @@ jobs:
       - name: Validate JSON Format
         run: |
           python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
-      - name: Set up Google Credentials
-        run: |
-          python -c "from google.oauth2 import service_account; creds = service_account.Credentials.from_service_account_file('/tmp/credentials.json', scopes=['https://www.googleapis.com/auth/drive'])"
-  
+     
       - name: Execute Notebook
         run: |
           # Here, use your Python script or notebook, and load credentials
