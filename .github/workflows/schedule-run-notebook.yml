@@ -1,0 +1,61 @@
+name: Run Jupyter Notebook Daily
+
+on:
+  schedule:
+    # This cron expression runs the workflow once every 24 hours (UTC time)
+    - cron: '0 1 * * *'   # This means every day at 1 am (UTC)
+  workflow_dispatch:   # This allows the workflow to be triggered manually
+
+jobs:
+  run-notebook:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set Up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+    
+
+    
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+          sudo apt-get install -y libtesseract-dev
+          sudo apt-get install -y tesseract-ocr-pol
+          sudo apt-get install -y poppler-utils
+          pip install --no-cache-dir pyzipper pytesseract pdf2image google-api-python-client jupyter papermill opencv-python-headless pandas
+          
+      - name: Create Google Credentials File
+        run: |
+          echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
+          cat /tmp/credentials.json | head -n 10  # Debug: Print first 10 lines
+     
+      - name: Validate JSON Format
+        run: |
+              python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
+     
+      - name: Execute Notebook
+        
+        env:
+          ZIP_URL: ${{ secrets.ZIP_URL }} 
+          ZIP_PASSWORD : ${{ secrets.ZIP_PASSWORD }} 
+          
+        run: |
+          # Here, use your Python script or notebook, and load credentials
+          python -c "from google.oauth2 import service_account; creds = service_account.Credentials.from_service_account_file('/tmp/credentials.json', scopes=['https://www.googleapis.com/auth/drive'])"
+          zip_password="${{ secrets.ZIP_PASSWORD }}"
+
+        
+          
+          papermill download_extract.ipynb output.ipynb
+
+      - name: Upload Output Notebook as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: executed-notebook
+          path: output.ipynb
