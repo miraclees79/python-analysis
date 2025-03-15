@@ -28,12 +28,14 @@ jobs:
           pip install pdf2image
           pip install google-api-python-client
 
-      - name: Set up Google Credentials
+     - name: Set up Google Credentials
         run: |
-          echo "${{ secrets.GOOGLE_CREDENTIALS }}" > /tmp/credentials.json
-          # Verify that the file looks correct
-          cat /tmp/credentials.json
-          
+        # Write the Google credentials to a file using printf for multiline support
+        printf "%s" "${{ secrets.GOOGLE_CREDENTIALS }}" > /tmp/credentials.json
+
+        # Verify that the file looks correct (printing the first few lines)
+        cat /tmp/credentials.json | head -n 20  # Adjust n to control how many lines to print
+
       - name: Execute Notebook
         run: |
           # Here, use your Python script or notebook, and load credentials
