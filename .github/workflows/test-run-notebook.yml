@@ -15,7 +15,12 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-
+    
+      - name: Install system dependencies for OpenCV
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-glx
+    
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -23,11 +28,8 @@ jobs:
           sudo apt-get install -y libtesseract-dev
           sudo apt-get install -y tesseract-ocr-pol
           sudo apt-get install -y poppler-utils
-          pip install pyzipper
-          pip install pytesseract
-          pip install pdf2image
-          pip install google-api-python-client
-          pip install jupyter papermill opencv-python
+          pip install --no-cache-dir pyzipper pytesseract pdf2image google-api-python-client jupyter papermill opencv-python
+          
       - name: Create Google Credentials File
         run: |
           echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
