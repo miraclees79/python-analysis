@@ -27,7 +27,7 @@ jobs:
           pip install pytesseract
           pip install pdf2image
           pip install google-api-python-client
-          pip install jupyter papermill
+          pip install jupyter papermill opencv-python
       - name: Create Google Credentials File
         run: |
           echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
