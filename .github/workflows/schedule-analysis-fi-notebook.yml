@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: |
           
-          pip install --no-cache-dir pandas numpy requests beautifulsoup4 selenium webdriver-manager
+          pip install --no-cache-dir pandas numpy requests beautifulsoup4 selenium webdriver-manager google-api-python-client jupyter papermill
       
       - name: Install Chrome and ChromeDriver
         run: |
