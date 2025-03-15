@@ -27,14 +27,15 @@ jobs:
           pip install pytesseract
           pip install pdf2image
           pip install google-api-python-client
-     
-      - name: Save Google Credentials to File
+
+      - name: Create Google Credentials File
         run: |
-          echo "${{ secrets.GOOGLE_CREDENTIALS }}" | tr -d '\r' | jq '.' > /tmp/credentials.json
-          cat /tmp/credentials.json | head -n 10  # Optional: print first 10 lines for debugging
+              echo '${{ secrets.GOOGLE_CREDENTIALS }}' | jq '.' > /tmp/credentials.json
+              cat /tmp/credentials.json | head -n 10  # Debug: Print first 10 lines
+     
       - name: Validate JSON Format
         run: |
-          python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
+              python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
      
       - name: Execute Notebook
         run: |
