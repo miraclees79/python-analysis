@@ -31,7 +31,9 @@ jobs:
       - name: Set up Google Credentials
         run: |
           echo "${{ secrets.GOOGLE_CREDENTIALS }}" > /tmp/credentials.json
-
+          # Verify that the file looks correct
+          cat /tmp/credentials.json
+          
       - name: Execute Notebook
         run: |
           # Here, use your Python script or notebook, and load credentials
