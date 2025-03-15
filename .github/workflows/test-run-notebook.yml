@@ -16,10 +16,7 @@ jobs:
         with:
           python-version: '3.10'
     
-      - name: Install system dependencies for OpenCV
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgl1 libx11-6 libgtk2.0-0 libcanberra-gtk-modul
+
     
       - name: Install Dependencies
         run: |
@@ -28,7 +25,7 @@ jobs:
           sudo apt-get install -y libtesseract-dev
           sudo apt-get install -y tesseract-ocr-pol
           sudo apt-get install -y poppler-utils
-          pip install --no-cache-dir pyzipper pytesseract pdf2image google-api-python-client jupyter papermill opencv-python
+          pip install --no-cache-dir pyzipper pytesseract pdf2image google-api-python-client jupyter papermill opencv-python-headless
           
       - name: Create Google Credentials File
         run: |
