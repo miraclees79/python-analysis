@@ -37,11 +37,18 @@ jobs:
               python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
      
       - name: Execute Notebook
+        
+        env:
+          ZIP_URL: ${{ secrets.ZIP_URL }} 
+          ZIP_PASSWORD : ${{ secrets.ZIP_PASSWORD }} 
+          
         run: |
           # Here, use your Python script or notebook, and load credentials
           python -c "from google.oauth2 import service_account; creds = service_account.Credentials.from_service_account_file('/tmp/credentials.json', scopes=['https://www.googleapis.com/auth/drive'])"
           zip_password="${{ secrets.ZIP_PASSWORD }}"
-          zip_url="${{ secrets.ZIP_URL }}"
+
+        
+          
           papermill download_extract.ipynb output.ipynb
 
       - name: Upload Output Notebook as Artifact
