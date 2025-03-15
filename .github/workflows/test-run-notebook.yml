@@ -27,19 +27,18 @@ jobs:
           pip install pytesseract
           pip install pdf2image
           pip install google-api-python-client
-      - name: Debug JSON Secret
+     
+      - name: Save Google Credentials to File
         run: |
-          echo "${{ secrets.GOOGLE_CREDENTIALS }}" | tr -d '\r' > /tmp/credentials.json
+          echo "${{ secrets.GOOGLE_CREDENTIALS }}" | tr -d '\r' | jq '.' > /tmp/credentials.json
+          cat /tmp/credentials.json | head -n 10  # Optional: print first 10 lines for debugging
+      - name: Validate JSON Format
+        run: |
           python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
-
       - name: Set up Google Credentials
         run: |
-           # Write the Google credentials to a file using printf for multiline support
-           printf "%s" "${{ secrets.GOOGLE_CREDENTIALS }}" > /tmp/credentials.json
-
-           # Verify that the file looks correct (printing the first few lines)
-           cat /tmp/credentials.json | head -n 20  # Adjust n to control how many lines to print
-
+          python -c "from google.oauth2 import service_account; creds = service_account.Credentials.from_service_account_file('/tmp/credentials.json', scopes=['https://www.googleapis.com/auth/drive'])"
+  
       - name: Execute Notebook
         run: |
           # Here, use your Python script or notebook, and load credentials
