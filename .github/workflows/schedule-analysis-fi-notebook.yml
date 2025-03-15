@@ -25,15 +25,14 @@ jobs:
       
       - name: Install Chrome and ChromeDriver
         run: |
-          sudo apt update
-          sudo apt install -y google-chrome-stable
+          sudo apt install -y google-chrome-stable || true
           CHROME_VERSION=$(google-chrome --version | awk '{print $3}')
           DRIVER_VERSION=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION)
           wget -q "https://chromedriver.storage.googleapis.com/$DRIVER_VERSION/chromedriver_linux64.zip"
           unzip chromedriver_linux64.zip
           sudo mv chromedriver /usr/local/bin/
           sudo chmod +x /usr/local/bin/chromedriver
- 
+          
       - name: Create Google Credentials File
         run: |
           echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
