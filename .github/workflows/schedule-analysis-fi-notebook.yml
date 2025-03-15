@@ -25,13 +25,24 @@ jobs:
       
       - name: Install Chrome and ChromeDriver
         run: |
-          sudo apt install -y google-chrome-stable || true
+          sudo apt update || true
+          sudo apt install -y --no-install-recommends ca-certificates curl || true
+          sudo apt install -y --no-install-recommends google-chrome-stable || true
+          
+          # Install ChromeDriver manually if needed
           CHROME_VERSION=$(google-chrome --version | awk '{print $3}')
-          DRIVER_VERSION=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION)
+          DRIVER_VERSION=$(curl -sS "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION")
           wget -q "https://chromedriver.storage.googleapis.com/$DRIVER_VERSION/chromedriver_linux64.zip"
           unzip chromedriver_linux64.zip
           sudo mv chromedriver /usr/local/bin/
           sudo chmod +x /usr/local/bin/chromedriver
+          
+             # Use WebDriver Manager (Recommended)
+          python -c "from webdriver_manager.chrome import ChromeDriverManager; print(ChromeDriverManager().install())"
+
+      - name: Run data processing script
+        env:
+          PATH: /usr/local/bin:$PATH
           
       - name: Create Google Credentials File
         run: |
