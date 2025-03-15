@@ -25,7 +25,7 @@ jobs:
           papermill download_extract.ipynb output.ipynb
 
       - name: Upload Output Notebook as Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: executed-notebook
           path: output.ipynb
