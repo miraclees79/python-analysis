@@ -6,7 +6,7 @@ on:
     - cron: "0 2 * * *"  # Runs daily at 2 AM UTC
 
 jobs:
-  process-data:
+  run-notebook:
     runs-on: ubuntu-latest
 
 
