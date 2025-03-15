@@ -30,8 +30,8 @@ jobs:
 
       - name: Create Google Credentials File
         run: |
-              echo '${{ secrets.GOOGLE_CREDENTIALS }}' | jq '.' > /tmp/credentials.json
-              cat /tmp/credentials.json | head -n 10  # Debug: Print first 10 lines
+          echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
+          cat /tmp/credentials.json | head -n 10  # Debug: Print first 10 lines
      
       - name: Validate JSON Format
         run: |
