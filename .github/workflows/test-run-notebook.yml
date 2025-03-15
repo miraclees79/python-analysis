@@ -1,0 +1,31 @@
+name: Test Run Jupyter Notebook
+
+on:
+  workflow_dispatch:  # Allows manual execution from the Actions tab
+
+jobs:
+  run-notebook:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set Up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install jupyter nbconvert papermill
+
+      - name: Execute Notebook
+        run: |
+          papermill download_extract.ipynb output.ipynb
+
+      - name: Upload Output Notebook as Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: executed-notebook
+          path: output.ipynb
