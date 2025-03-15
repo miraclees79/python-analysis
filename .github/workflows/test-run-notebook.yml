@@ -1,4 +1,4 @@
-name: Test Run Jupyter Notebook
+name: Run Colab Notebook with Google API Authentication
 
 on:
   workflow_dispatch:  # Allows manual execution from the Actions tab
@@ -18,10 +18,26 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install jupyter nbconvert papermill
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+          sudo apt-get install -y libtesseract-dev
+          sudo apt-get install -y tesseract-ocr-pol
+          sudo apt-get install -y poppler-utils
+          pip install pyzipper
+          pip install pytesseract
+          pip install pdf2image
+          pip install google-api-python-client
+
+      - name: Set up Google Credentials
+        run: |
+          echo "${{ secrets.GOOGLE_CREDENTIALS }}" > /tmp/credentials.json
 
       - name: Execute Notebook
         run: |
+          # Here, use your Python script or notebook, and load credentials
+          python -c "from google.oauth2 import service_account; creds = service_account.Credentials.from_service_account_file('/tmp/credentials.json', scopes=['https://www.googleapis.com/auth/drive'])"
+          zip_password="${{ secrets.ZIP_PASSWORD }}"
+          zip_url="${{ secrets.ZIP_URL }}"
           papermill download_extract.ipynb output.ipynb
 
       - name: Upload Output Notebook as Artifact
