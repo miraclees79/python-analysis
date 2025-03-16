@@ -36,8 +36,8 @@ jobs:
           libatk-bridge2.0-0 libgtk-3-0 libdbus-glib-1-2 libxtst6 \
           fonts-liberation libu2f-udev dbus-x11 upower 
 
-     - name: Install Chrome and ChromeDriver
-       run: |
+      - name: Install Chrome and ChromeDriver
+        run: |
          # Install Google Chrome
          wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
          sudo dpkg -i google-chrome-stable_current_amd64.deb || sudo apt-get -f install -y
