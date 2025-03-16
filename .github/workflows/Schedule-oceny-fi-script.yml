@@ -6,7 +6,7 @@ on:
     - cron: "0 0 * * *"  # Runs daily at midn UTC
 
 jobs:
-  build:
+  process_stooq_data:
     runs-on: ubuntu-latest
 
     steps:
