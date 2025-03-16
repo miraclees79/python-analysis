@@ -67,7 +67,7 @@ jobs:
           PATH: /usr/local/bin:$PATH
         run: |
             # Here, use your Python script or notebook, and load credentials
-           # python -c "from google.oauth2 import service_account; creds = service_account.Credentials.from_service_account_file('/tmp/credentials.json', scopes=['https://www.googleapis.com/auth/drive'])"
+            # python -c "from google.oauth2 import service_account; creds = service_account.Credentials.from_service_account_file('/tmp/credentials.json', scopes=['https://www.googleapis.com/auth/drive'])"
             papermill download_FI.ipynb output.ipynb
 
       - name: Upload Output Notebook as Artifact
