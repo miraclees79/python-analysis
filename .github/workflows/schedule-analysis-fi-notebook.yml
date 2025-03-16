@@ -20,27 +20,15 @@ jobs:
 
       - name: Install dependencies
         run: |
-          
+    
           pip install --no-cache-dir pandas numpy requests beautifulsoup4 selenium webdriver-manager google-api-python-client jupyter papermill
       
       - name: Install dependencies for Chrome
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            wget \
-            curl \
-            unzip \
-            libgconf-2-4 \
-            libnss3 \
-            libx11-xcb1 \
-            libxcomposite1 \
-            libxdamage1 \
-            libxrandr2 \
-            xdg-utils \
-            libgbm-dev \
-            libasound2
-     
-     - name: Install Chrome and ChromeDriver
+          sudo apt-get install -y  wget curl unzip  libgconf-2-4 libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 xdg-utils  libgbm-dev  libasound2
+    
+      - name: Install Chrome and ChromeDriver
         run: |
           # Install Google Chrome
           wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
