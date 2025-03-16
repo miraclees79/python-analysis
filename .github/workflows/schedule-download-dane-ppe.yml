@@ -1,4 +1,4 @@
-name: Run Jupyter Notebook Daily
+name: Download dane PPE
 
 on:
   schedule:
