@@ -23,33 +23,36 @@ jobs:
     
           pip install --no-cache-dir pandas numpy requests beautifulsoup4 selenium webdriver-manager google-api-python-client jupyter papermill
       
-      - name: Install additional dependencies for Chrome
+      - name: Install Dependencies for Chrome
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-          libx11-xcb1 \
-          libnss3 \
-          libxss1 \
-          libappindicator3-1 \
-          libatk-bridge2.0-0 \
-          libgtk-3-0 \
-          libdbus-glib-1-2 \
-          libxtst6 \
-          libgbm-dev \
-          libasound2-plugins \
-          libxcomposite1 \
-          libxdamage1 \
-          libxrandr2 \
-          xdg-utils \
-          fonts-liberation \
-          libu2f-udev  
-      - name: Install Chrome and ChromeDriver
+          sudo apt-get install -y wget curl unzip libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 xdg-utils libgbm-dev libasound2-plugins libatk-bridge2.0-0 libgtk-3-0 libdbus-glib-1-2 libxtst6 fonts-liberation libu2f-udev
+
+      - name: Remove Old Chrome and ChromeDriver
         run: |
-          # Install Google Chrome
-          wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo dpkg -i google-chrome-stable_current_amd64.deb || sudo apt-get -f install -y
-          sudo apt-get install -y google-chrome-stable chromium-chromedriver
-          rm google-chrome-stable_current_amd64.deb
+          sudo apt-get remove -y google-chrome-stable chromium-chromedriver || true
+          sudo rm -f /usr/bin/chromedriver
+
+      - name: Install Latest Google Chrome
+        run: |
+          wget -q -O google-chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo dpkg -i google-chrome.deb || sudo apt-get -f install -y
+          rm google-chrome.deb
+          google-chrome --version
+
+      - name: Install Matching ChromeDriver
+        run: |
+          CHROME_VERSION=$(google-chrome --version | awk '{print $3}')
+          CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION")
+          echo "Installing ChromeDriver version: $CHROMEDRIVER_VERSION"
+
+          wget -q -O chromedriver.zip "https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip"
+          unzip chromedriver.zip
+          sudo mv chromedriver /usr/bin/chromedriver
+          sudo chmod +x /usr/bin/chromedriver
+          rm chromedriver.zip
+          chromedriver --version
+
       - name: Debug Chrome and ChromeDriver
         run: |
           which google-chrome
