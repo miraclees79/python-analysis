@@ -26,7 +26,7 @@ jobs:
       - name: Install Dependencies for Chrome
         run: |
           sudo apt-get update
-          sudo apt-get install -y install -y wget curl unzip jq \
+          sudo apt-get install -y  wget curl unzip jq \
           libnss3 libx11-xcb1 libxcomposite1 libxdamage1 \
           libxrandr2 xdg-utils libgbm-dev libasound2-plugins \
           libatk-bridge2.0-0 libgtk-3-0 libdbus-glib-1-2 libxtst6 \
