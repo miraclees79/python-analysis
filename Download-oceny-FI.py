@@ -256,5 +256,5 @@ else:
     file_id = created_file.get('id')
     print(f"File '{file_name}' created. File ID: {file_id}")
 
-print(f"Analysis complete. Extracted data from {len(all_results)} pages saved in 'oceny.csv'.")
+print(f"Analysis complete. Extracted data from {len(cleaned_results)} pages saved in 'oceny.csv'.")
 
