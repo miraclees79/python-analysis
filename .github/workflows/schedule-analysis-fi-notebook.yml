@@ -46,7 +46,7 @@ jobs:
          # Run Chrome headlessly with proper flags
          google-chrome --headless=new --disable-gpu --no-sandbox \
          --disable-software-rasterizer --disable-features=UseOzonePlatform \
-         --remote-debugging-port=9222 https://www.google.com & sleep 5
+         https://www.google.com & sleep 5
          # Stop any lingering chrome processes (optional step)
          pkill -f "chrome" || true
       
