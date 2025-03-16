@@ -42,7 +42,8 @@ jobs:
       - name: Test Chrome in Headless Mode
         run: |
           google-chrome --headless=new --disable-gpu --no-sandbox \
-          --disable-software-rasterizer --disable-dev-shm-usage \
+          --disable-dev-shm-usage --disable-software-rasterizer \
+          --disable-features=UseOzonePlatform --no-zygote \
           --remote-debugging-port=9222 https://www.google.com & sleep 5
           pkill chrome || true
       
