@@ -70,6 +70,14 @@ jobs:
           # Here, use your Python script or notebook, and load credentials
           python -c "from google.oauth2 import service_account; creds = service_account.Credentials.from_service_account_file('/tmp/credentials.json', scopes=['https://www.googleapis.com/auth/drive'])"
       
+      - name: Debug Chrome and ChromeDriver
+          run: |
+          which google-chrome
+          google-chrome --version
+          which chromedriver
+          chromedriver --version
+      
+      
 
           papermill download_FI.ipynb output.ipynb
 
