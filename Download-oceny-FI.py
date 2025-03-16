@@ -192,7 +192,7 @@ def process_data(url, url_title, filename):
   
   
   # Loop through each XXXX value
-for xxxx in range(1000, 1010):
+for xxxx in range(1000, 6001):
     csv_url = csv_base_url.format(xxxx)
     title_url = title_base_url.format(xxxx)
 

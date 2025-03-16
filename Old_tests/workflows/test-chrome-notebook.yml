@@ -2,8 +2,7 @@ name: Test Chrome for Stooq
 
 on:
   workflow_dispatch:  # Allows manual trigger
-  schedule:
-    - cron: "0 2 * * *"  # Runs daily at 2 AM UTC
+
 
 jobs: 
   process-data:
