@@ -35,7 +35,10 @@ jobs:
           which chromedriver
           chromedriver --version
 
-   
+      - name: Test Chrome in Headless Mode
+        run: |
+          google-chrome --headless=new --disable-gpu --no-sandbox --remote-debugging-port=9222 https://www.google.com & sleep 5
+          pkill chrome || true
       
      
       - name: Create Google Credentials File
