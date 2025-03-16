@@ -23,9 +23,7 @@ jobs:
     
           pip install --no-cache-dir pandas numpy requests beautifulsoup4 selenium webdriver-manager google-api-python-client jupyter papermill
       
-      - name: Remove snap chromium
-        run: |
-          sudo snap remove chromium || true
+
       
       - name: Install Dependencies for Chrome
         run: |
@@ -36,15 +34,7 @@ jobs:
           libatk-bridge2.0-0 libgtk-3-0 libdbus-glib-1-2 libxtst6 \
           fonts-liberation libu2f-udev dbus-x11 upower 
 
-      - name: Install Chrome and ChromeDriver
-        run: |
-         # Install Google Chrome
-         wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-         sudo dpkg -i google-chrome-stable_current_amd64.deb || sudo apt-get -f install -y
-         sudo apt-get install -y google-chrome-stable chromium-chromedriver
-         rm google-chrome-stable_current_amd64.deb
-     
-     
+
       - name: Debug Chrome and ChromeDriver
         run: |
           which google-chrome
