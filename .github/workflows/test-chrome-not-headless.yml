@@ -20,7 +20,7 @@ jobs:
 
       - name: Install Selenium and webdriver_manager
         run: |
-          pip install selenium webdriver-manager
+          pip install selenium webdriver-manager pandas numpy requests beautifulsoup4 google-api-python-client
 
       - name: Run Minimal Selenium Test
         run: |
@@ -37,8 +37,8 @@ jobs:
 
           try:
               driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-              driver.get("https://www.google.com")
-              print("Chrome launched successfully!")
+              driver.get("https://www.stooq.pl")
+              print("Chrome launched successfully  for target site stooq.pl!!")
               driver.quit()
           except Exception as e:
               print(f"Error: {e}")
