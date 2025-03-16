@@ -45,7 +45,7 @@ jobs:
           libu2f-udev  
       - name: Install Chrome and ChromeDriver
         run: |
-           # Install Google Chrome
+          # Install Google Chrome
           wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
           sudo dpkg -i google-chrome-stable_current_amd64.deb || sudo apt-get -f install -y
           sudo apt-get install -y google-chrome-stable chromium-chromedriver
