@@ -1,0 +1,66 @@
+name: Minimal not headless Chrome Test
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Selenium and webdriver_manager
+        run: |
+          pip install selenium webdriver-manager
+
+      - name: Run Minimal Selenium Test
+        run: |
+          python <<EOF
+          from selenium import webdriver
+          from selenium.webdriver.chrome.service import Service
+          from webdriver_manager.chrome import ChromeDriverManager
+          from selenium.webdriver.chrome.options import Options
+
+          options = Options()
+          options.add_argument('--headless=new')
+          options.add_argument('--no-sandbox')
+          options.add_argument('--disable-dev-shm-usage')
+
+          try:
+              driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+              driver.get("https://www.google.com")
+              print("Chrome launched successfully!")
+              driver.quit()
+          except Exception as e:
+              print(f"Error: {e}")
+          EOF
+
+      - name: Verify Chrome and ChromeDriver versions
+        run: |
+          google-chrome --version
+          chromedriver --version
+      - name: Check permissions
+        run: |
+          ls -l /usr/bin/google-chrome
+          ls -l /usr/bin/chromedriver
+          
+      - name: Check executable permissions
+        run: |
+          ls -l /etc/alternatives/google-chrome
+          ls -l /usr/local/share/chromedriver-linux64/chromedriver
+          
+      - name: Install Xvfb
+        run: |
+          sudo apt-get install -y xvfb
+      - name: Run Xvfb
+        run: |
+          xvfb-run --server-args="-screen 0 1280x720x24" python chrome-test.py
