@@ -24,17 +24,6 @@ jobs:
           pip install --no-cache-dir pandas numpy requests beautifulsoup4 selenium webdriver-manager google-api-python-client jupyter papermill
       
 
-      
-      - name: Install Dependencies for Chrome
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y  wget curl unzip jq \
-          libnss3 libx11-xcb1 libxcomposite1 libxdamage1 \
-          libxrandr2 xdg-utils libgbm-dev libasound2-plugins \
-          libatk-bridge2.0-0 libgtk-3-0 libdbus-glib-1-2 libxtst6 \
-          fonts-liberation libu2f-udev dbus-x11 upower 
-
-
       - name: Debug Chrome and ChromeDriver
         run: |
           which google-chrome
@@ -42,18 +31,28 @@ jobs:
           which chromedriver
           chromedriver --version
 
-      - name: Test Chrome in Headless Mode
+      - name: Run Minimal Selenium Test
         run: |
-         # Ensure any running Chrome processes are stopped
-         pkill -f "chrome" || true
-         # Run Chrome headlessly with proper flags
-         google-chrome --headless=new --disable-gpu --no-sandbox \
-         --disable-software-rasterizer --disable-features=UseOzonePlatform \
-         https://www.google.com & sleep 5
-         # Stop any lingering chrome processes (optional step)
-         pkill -f "chrome" || true
-      
-     
+          python <<EOF
+          from selenium import webdriver
+          from selenium.webdriver.chrome.service import Service
+          from webdriver_manager.chrome import ChromeDriverManager
+          from selenium.webdriver.chrome.options import Options
+
+          options = Options()
+          options.add_argument('--headless=new')
+          options.add_argument('--no-sandbox')
+          options.add_argument('--disable-dev-shm-usage')
+
+          try:
+              driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+              driver.get("https://www.stooq.pl")
+              print("Chrome launched successfully for target site stooq.pl!")
+              driver.quit()
+          except Exception as e:
+              print(f"Error: {e}")
+          EOF
+  
       - name: Create Google Credentials File
         run: |
           echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
@@ -68,7 +67,7 @@ jobs:
           PATH: /usr/local/bin:$PATH
         run: |
             # Here, use your Python script or notebook, and load credentials
-            python -c "from google.oauth2 import service_account; creds = service_account.Credentials.from_service_account_file('/tmp/credentials.json', scopes=['https://www.googleapis.com/auth/drive'])"
+           # python -c "from google.oauth2 import service_account; creds = service_account.Credentials.from_service_account_file('/tmp/credentials.json', scopes=['https://www.googleapis.com/auth/drive'])"
             papermill download_FI.ipynb output.ipynb
 
       - name: Upload Output Notebook as Artifact
