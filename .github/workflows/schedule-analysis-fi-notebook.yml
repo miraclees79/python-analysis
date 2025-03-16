@@ -30,7 +30,7 @@ jobs:
           libnss3 libx11-xcb1 libxcomposite1 libxdamage1 \
           libxrandr2 xdg-utils libgbm-dev libasound2-plugins \
           libatk-bridge2.0-0 libgtk-3-0 libdbus-glib-1-2 libxtst6 \
-          fonts-liberation libu2f-udev chromium-chromedriver
+          fonts-liberation libu2f-udev dbus-x11 upower chromium-chromedriver
 
       - name: Debug Chrome and ChromeDriver
         run: |
@@ -41,7 +41,9 @@ jobs:
 
       - name: Test Chrome in Headless Mode
         run: |
-          google-chrome --headless=new --disable-gpu --no-sandbox --remote-debugging-port=9222 https://www.google.com & sleep 5
+          google-chrome --headless=new --disable-gpu --no-sandbox \
+          --disable-software-rasterizer --disable-dev-shm-usage \
+          --remote-debugging-port=9222 https://www.google.com & sleep 5
           pkill chrome || true
       
      
