@@ -44,10 +44,9 @@ jobs:
          # Ensure any running Chrome processes are stopped
          pkill -f "chrome" || true
          # Run Chrome headlessly with proper flags
-         google-chrome --headless --disable-gpu --no-sandbox \
+         google-chrome --headless=new --disable-gpu --no-sandbox \
          --disable-software-rasterizer --disable-features=UseOzonePlatform \
          --remote-debugging-port=9222 https://www.google.com & sleep 5
-
          # Stop any lingering chrome processes (optional step)
          pkill -f "chrome" || true
       
