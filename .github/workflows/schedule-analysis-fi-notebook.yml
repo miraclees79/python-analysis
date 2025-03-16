@@ -26,7 +26,7 @@ jobs:
       - name: Install Dependencies for Chrome
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget curl unzip libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 xdg-utils libgbm-dev libasound2-plugins libatk-bridge2.0-0 libgtk-3-0 libdbus-glib-1-2 libxtst6 fonts-liberation libu2f-udev
+          sudo apt-get install -y wget curl unzip libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 xdg-utils libgbm-dev libasound2-plugins libatk-bridge2.0-0 libgtk-3-0 libdbus-glib-1-2 libxtst6 fonts-liberation libu2f-udev chromium-chromedriver
 
       - name: Debug Chrome and ChromeDriver
         run: |
@@ -35,54 +35,7 @@ jobs:
           which chromedriver
           chromedriver --version
 
-      - name: Remove Old Chrome and ChromeDriver
-        run: |
-          sudo apt-get remove -y google-chrome-stable chromium-chromedriver || true
-          sudo rm -f /usr/bin/chromedriver
-
-      - name: Get Latest ChromeDriver Version
-        run: |
-          LATEST_CHROMEDRIVER_VERSION=$(curl -s https://chromedriver.storage.googleapis.com/LATEST_RELEASE)
-          echo "Latest ChromeDriver version: $LATEST_CHROMEDRIVER_VERSION"
-          echo "CHROMEDRIVER_VERSION=$LATEST_CHROMEDRIVER_VERSION" >> $GITHUB_ENV
-
-      - name: Install Matching Google Chrome Version
-        run: |
-          CHROME_MAJOR_VERSION=$(echo "$CHROMEDRIVER_VERSION" | cut -d. -f1)
-          echo "Installing Chrome matching ChromeDriver major version: $CHROME_MAJOR_VERSION"
-
-          # Fetch the matching Chrome version
-          CHROME_VERSION=$(curl -s "https://chromiumdash.appspot.com/fetch_releases?channel=Stable&platform=Linux" | jq -r --arg VER "$CHROME_MAJOR_VERSION" '.releases[] | select(.version | startswith($VER)) | .version' | head -n 1)
-          
-          if [ -z "$CHROME_VERSION" ]; then
-            echo "Failed to find matching Chrome version for ChromeDriver $CHROMEDRIVER_VERSION"
-            exit 1
-          fi
-
-          echo "Installing Chrome version: $CHROME_VERSION"
-
-          wget -q -O google-chrome.deb "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_${CHROME_VERSION}-1_amd64.deb"
-          sudo dpkg -i google-chrome.deb || sudo apt-get -f install -y
-          rm google-chrome.deb
-          google-chrome --version
-
-      - name: Install ChromeDriver
-        run: |
-          echo "Installing ChromeDriver version: $CHROMEDRIVER_VERSION"
-
-          wget -q -O chromedriver.zip "https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip"
-          unzip chromedriver.zip
-          sudo mv chromedriver /usr/bin/chromedriver
-          sudo chmod +x /usr/bin/chromedriver
-          rm chromedriver.zip
-          chromedriver --version
-
-      - name: Debug Chrome and ChromeDriver
-        run: |
-          which google-chrome
-          google-chrome --version
-          which chromedriver
-          chromedriver --version
+   
       
      
       - name: Create Google Credentials File
