@@ -23,23 +23,26 @@ jobs:
     
           pip install --no-cache-dir pandas numpy requests beautifulsoup4 selenium webdriver-manager google-api-python-client jupyter papermill
       
-      - name: Install dependencies for Chrome
+      - name: Install additional dependencies for Chrome
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            wget \
-            curl \
-            unzip \
-            libnss3 \
             libx11-xcb1 \
+            libnss3 \
+            libxss1 \
+            libappindicator3-1 \
+            libatk-bridge2.0-0 \
+            libgtk-3-0 \
+            libdbus-glib-1-2 \
+            libxtst6 \
+            libgbm-dev \
+            libasound2-plugins \
             libxcomposite1 \
             libxdamage1 \
             libxrandr2 \
-            xdg-utils \
-            libgbm-dev \
-            libasound2-plugins \
+            xdg-utils
             # Removed the problematic libgconf-2-4 and libasound2
-            
+      
       - name: Install Chrome and ChromeDriver
         run: |
           # Install Google Chrome
