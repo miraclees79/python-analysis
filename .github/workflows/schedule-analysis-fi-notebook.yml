@@ -27,31 +27,28 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libx11-xcb1 \
-            libnss3 \
-            libxss1 \
-            libappindicator3-1 \
-            libatk-bridge2.0-0 \
-            libgtk-3-0 \
-            libdbus-glib-1-2 \
-            libxtst6 \
-            libgbm-dev \
-            libasound2-plugins \
-            libxcomposite1 \
-            libxdamage1 \
-            libxrandr2 \
-            xdg-utils
-            # Removed the problematic libgconf-2-4 and libasound2
-      
+          libx11-xcb1 \
+          libnss3 \
+          libxss1 \
+          libappindicator3-1 \
+          libatk-bridge2.0-0 \
+          libgtk-3-0 \
+          libdbus-glib-1-2 \
+          libxtst6 \
+          libgbm-dev \
+          libasound2-plugins \
+          libxcomposite1 \
+          libxdamage1 \
+          libxrandr2 \
+          xdg-utils \
+          fonts-liberation \
+          libu2f-udev  
       - name: Install Chrome and ChromeDriver
         run: |
           # Install Google Chrome
           wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo dpkg -i google-chrome-stable_current_amd64.deb
-          sudo apt-get install -f
-
-          # Install ChromeDriver using WebDriver Manager
-          pip install webdriver-manager
+          sudo dpkg -i google-chrome-stable_current_amd64.deb || sudo apt-get -f install -y
+          sudo apt-get install -y google-chrome-stable
 
      
       - name: Create Google Credentials File
