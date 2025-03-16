@@ -117,7 +117,7 @@ for xxxx in range(1000, 1010):
     title_url = title_base_url.format(xxxx)
 
     print(f"Processing: {csv_url}")
-    result = process_data(csv_url, "https://stooq.pl/q/g/?s=1006.n", csv_filename)
+    result = process_data(csv_url, title_url, csv_filename)
 
     all_results.append(result)
    # print("✅ Processed and appended Data:", all_results)
