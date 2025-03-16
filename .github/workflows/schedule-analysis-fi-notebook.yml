@@ -31,6 +31,10 @@ jobs:
           which chromedriver
           chromedriver --version
 
+      - name: Create chrome data directory
+        run: |
+          mkdir -p /tmp/chrome_test_data
+
       - name: Run Minimal Selenium Test
         run: |
           python <<EOF
@@ -60,8 +64,12 @@ jobs:
      
       - name: Validate JSON Format
         run: |
-              python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
-     
+          python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
+      
+      - name: Check for Chrome processes
+        run: |
+          ps aux | grep google-chrome
+      
       - name: Execute Notebook
         env:
           PATH: /usr/local/bin:$PATH
