@@ -1,4 +1,4 @@
-name: Download and analyse FI from Stooq
+name: Download  FI names from Stooq
 
 on:
   workflow_dispatch:  # Allows manual trigger
