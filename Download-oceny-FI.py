@@ -12,7 +12,21 @@ from google.oauth2 import service_account
 from googleapiclient.http import MediaIoBaseUpload
 
 import tempfile
+import logging
 
+# Setup logging
+LOG_FILE = "download.log"
+logging.basicConfig(
+    filename=LOG_FILE,
+    filemode="w",  # Overwrites the log file each run
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+
+# Also log to console
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+logging.getLogger().addHandler(console_handler)
 
 # Get the temporary directory
 tmp_dir = tempfile.gettempdir()
@@ -43,41 +57,36 @@ all_results = []
 def download_csv(url, filename):
     try:
         headers = {"User-Agent": random.choice(USER_AGENTS)}
+        logging.info(f"Downloading {url} with User-Agent: {headers['User-Agent']}")
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
 
-        # Get content type
         content_type = response.headers.get("Content-Type", "")
-
-        # Allow "text/csv" and "text/plain" (if not empty)
         if "text/csv" not in content_type and "text/plain" not in content_type:
-            print(f"⚠️ Unexpected content type: {content_type}. Attempting to proceed...")
+            logging.warning(f"Unexpected content type: {content_type}. Proceeding anyway...")
 
-        # Check if content is actually empty
         if not response.content.strip():
-            print(f"⚠️ The file from {url} is empty.")
+            logging.warning(f"The file from {url} is empty.")
             return False
 
-        # Save the file
         with open(filename, "wb") as file:
             file.write(response.content)
 
-        # Verify file size
         if os.path.getsize(filename) == 0:
-            print(f"⚠️ The downloaded file {filename} is empty.")
+            logging.warning(f"The downloaded file {filename} is empty.")
             return False
 
-        print(f"✅ Successfully downloaded: {filename}  with User-Agent: {headers['User-Agent']}")
+        logging.info(f"✅ Using User-Agent: {headers['User-Agent'] Successfully downloaded: {filename}"  )
         return True
 
     except requests.exceptions.Timeout:
-        print(f"❌ Timeout error: The request to {url} took too long.")
+        logging.error(f"❌ Timeout error: The request to {url} took too long.")
     except requests.exceptions.HTTPError as e:
-        print(f"❌ HTTP error: {e}")
+        logging.error(f"❌ HTTP error: {e}")
     except requests.exceptions.RequestException as e:
-        print(f"❌ Request error: {e}")
+        logging.error(f"❌ Request error: {e}")
     except Exception as e:
-        print(f"❌ Unexpected error: {e}")
+        logging.error(f"❌ Unexpected error: {e}")
 
     return False
 
@@ -110,11 +119,11 @@ def process_data(url, numer, filename):
     try:
         df = pd.read_csv(filename, on_bad_lines='skip', delimiter=',', decimal='.', encoding='utf-8')
     except Exception as e:
-        print(f"❌ Error reading CSV file: {e}")
+         logging.error(f"❌ Error reading CSV file: {e}")
         return None
 
     if df.empty:
-        print("⚠️ The DataFrame is empty.")
+         logging.warning("⚠️ The DataFrame is empty.")
         return None
 
     # Strip any leading or trailing whitespace from the column names
@@ -123,7 +132,7 @@ def process_data(url, numer, filename):
     # Ensure the date column is in datetime format
     date_column = 'Data'  # The actual name of the date column
     if date_column not in df.columns:
-        print(f"⚠️ Warning: Column '{date_column}' not found. Available columns: {df.columns}")
+        logging.warning(f"⚠️ Warning: Column '{date_column}' not found. Available columns: {df.columns}")
         return None
 
     # Convert date column
@@ -141,7 +150,7 @@ def process_data(url, numer, filename):
 
     # Check if we have enough data points
     if len(daily_returns) == 0 or len(returns_22) == 0:
-        print("⚠️ Not enough data to calculate returns.")
+        logging.warning("⚠️ Not enough data to calculate returns.")
         return None
 
     # Calculate statistics for the last 66 22-day returns
@@ -162,12 +171,12 @@ def process_data(url, numer, filename):
         newest_1_day_return,  # Newest 1-day return
         newest_22_day_return  # Newest 22-day return
     ]    
-    print("✅ Processed Data:", result)
+    logging.info("✅ Processed Data:", result)
     return result
   
   
   # Loop through each XXXX value
-for xxxx in range(1000, 1200):
+for xxxx in range(1000, 5500):
     csv_url = csv_base_url.format(xxxx)
     
 
@@ -182,7 +191,7 @@ for xxxx in range(1000, 1200):
     
     delay = random.uniform(0, 5)
 
-    print(f"Sleeping for {delay:.2f} seconds...")
+    logging.info(f"Sleeping for {delay:.2f} seconds...")
     time.sleep(delay)
 
     print("Done!")  # Optional delay
@@ -209,7 +218,7 @@ items = results.get('files', [])
 if items:
     folder_id = items[0]['id']
 else:
-    print(f"❌ Folder '{folder_name}' not found in Google Drive.")
+    logging.error(f"❌ Folder '{folder_name}' not found in Google Drive.")
     exit()
 
 # Now use the correct folder ID in the file search query
@@ -236,5 +245,5 @@ else:
     file_id = created_file.get('id')
     print(f"File '{file_name}' created. File ID: {file_id}")
 
-print(f"Analysis complete. Extracted data from {len(cleaned_results)} pages saved in 'oceny.csv'.")
+logging.info(f"Analysis complete. Extracted data from {len(cleaned_results)} pages saved in 'oceny.csv'.")
 

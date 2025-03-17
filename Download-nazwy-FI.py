@@ -7,6 +7,9 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 from bs4 import BeautifulSoup
 import os
@@ -124,7 +127,7 @@ def process_data(url_title, filename, numer):
   
   
   # Loop through each XXXX value
-for xxxx in range(1000, 6001):
+for xxxx in range(1000, 5500):
     csv_url = csv_base_url.format(xxxx)
     title_url = title_base_url.format(xxxx)
 
