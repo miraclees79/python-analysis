@@ -171,7 +171,7 @@ def process_data(url, numer, filename):
         newest_1_day_return,  # Newest 1-day return
         newest_22_day_return  # Newest 22-day return
     ]    
-    logging.info("✅ Processed Data:", result)
+    logging.info("✅ Processed Data: %s", result)
     return result
   
   
@@ -184,7 +184,7 @@ for xxxx in range(1000, 5500):
     result = process_data(csv_url, xxxx, csv_filename)
 
     all_results.append(result)
-   # print("✅ Processed and appended Data:", all_results)
+  
     # Delete CSV file after processing
     if os.path.exists(csv_filename):
         os.remove(csv_filename)
