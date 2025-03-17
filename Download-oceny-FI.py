@@ -36,17 +36,42 @@ all_results = []
 # Function to download the CSV file
 def download_csv(url, filename):
     try:
-        response = requests.get(url, timeout=10)
-        if response.status_code != 200:
-            print(f"Failed to download {url} (Status Code: {response.status_code})")
+        headers = {"User-Agent": "Mozilla/5.0"}  # Mimic a real browser
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()  # Raise error for HTTP 4xx/5xx
+
+        # Check for unexpected content type
+        if "text/csv" not in response.headers.get("Content-Type", ""):
+            print(f"⚠️ Unexpected content type: {response.headers.get('Content-Type')}")
             return False
+
+        # Check if the content is empty
+        if not response.content.strip():
+            print(f"⚠️ The file from {url} is empty.")
+            return False
+
+        # Save the file
         with open(filename, "wb") as file:
             file.write(response.content)
-        return True
-    except Exception as e:
-        print(f"Error downloading {url}: {e}")
-        return False
 
+        # Verify if the file is empty after saving
+        if os.path.getsize(filename) == 0:
+            print(f"⚠️ The downloaded file {filename} from URL: {url} is empty.")
+            return False
+
+        print(f"✅ Successfully downloaded: {filename}"  )
+        return True
+
+    except requests.exceptions.Timeout:
+        print(f"❌ Timeout error: The request to {url} took too long.")
+    except requests.exceptions.HTTPError as e:
+        print(f"❌ HTTP error: {e}")
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Request error: {e}")
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+
+    return False
 
 # Function to calculate daily returns
 def calculate_daily_returns(prices):
@@ -134,7 +159,7 @@ def process_data(url, numer, filename):
   
   
   # Loop through each XXXX value
-for xxxx in range(1000, 6001):
+for xxxx in range(1000, 1200):
     csv_url = csv_base_url.format(xxxx)
     title_url = title_base_url.format(xxxx)
 
