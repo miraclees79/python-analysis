@@ -120,11 +120,11 @@ def process_data(url, numer, filename):
         df = pd.read_csv(filename, on_bad_lines='skip', delimiter=',', decimal='.', encoding='utf-8')
     except Exception as e:
          logging.error(f"❌ Error reading CSV file: {e}")
-        return None
+         return None
 
     if df.empty:
          logging.warning("⚠️ The DataFrame is empty.")
-        return None
+         return None
 
     # Strip any leading or trailing whitespace from the column names
     df.columns = df.columns.str.strip()
