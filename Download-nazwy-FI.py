@@ -1,8 +1,14 @@
 import pandas as pd
 import numpy as np
 import requests
-import time
 import random
+import time
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.options import Options
+
+from bs4 import BeautifulSoup
 import os
 import io
 
@@ -25,7 +31,7 @@ csv_filename = os.path.join(tmp_dir, "data.csv")
 
 # Base URLs
 csv_base_url = "https://stooq.pl/q/d/l/?s={}.n&i=d"
-
+title_base_url = "https://stooq.pl/q/g/?s={}.n"
 
 
 
@@ -47,87 +53,71 @@ def download_csv(url, filename):
         print(f"Error downloading {url}: {e}")
         return False
 
-
-# Function to calculate daily returns
-def calculate_daily_returns(prices):
-    return prices.pct_change().dropna()
-
-# Function to calculate 22-day returns
-def calculate_22_day_returns(prices):
-    return prices.pct_change(periods=22).dropna()
-
-# Function to calculate statistics on 22-day returns
-def calculate_22_day_statistics(returns_22):
-    last_66_returns = returns_22.iloc[-66:]  # Use iloc for integer-based indexing
-    min_return = last_66_returns.min()
-    max_return = last_66_returns.max()
-    first_quartile = np.percentile(last_66_returns, 25)
-    return min_return, max_return, first_quartile
-
-
+def get_webpage_title(url):
+    # Set up Chrome options for headless mode (no GUI)
+    options = Options()
+    options.add_argument('--headless=new')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--user-data-dir=/tmp/chrome_test_data') 
+    options.add_argument('--disable-dev-shm-usage')
+    
+    print("URL: ", url)
+    
+    # Automatically download and manage ChromeDriver
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    
+    print("URL: ", url)
+    # Open the webpage URL
+    driver.get(url)
+    
+    # Wait for the cookie acceptance pop-up to appear
+    try:
+        # Wait until the button is present and clickable
+        accept_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.CLASS_NAME, "fc-cta-consent"))
+        )
+        accept_button.click()  # Click the accept button
+        print("Cookie pop-up accepted.")
+    
+    except Exception as e:
+        print("No cookie acceptance pop-up found or timeout occurred:", e)
+    
+    # Wait for the page to load fully
+    time.sleep(3)  
+    
+    # Get the rendered HTML of the page
+    page_source = driver.page_source
+    
+    # Parse the HTML with BeautifulSoup
+    soup = BeautifulSoup(page_source, 'html.parser')
+    
+    # Look for the <title> tag
+    title_tag = soup.find('title')
+    if title_tag:
+        title = title_tag.get_text(strip=True)
+    else:
+        title = "No <title> tag found"
+    
+    # Close the Selenium driver
+    driver.quit()
+    
+    return title
 
 
 # Main function to process the data
-def process_data(url, numer, filename):
+def process_data(url_title, filename, numer):
     
-    # Download the CSV file
-    download_csv(url, filename)
 
-    # Read the CSV into a DataFrame with proper settings
-    try:
-        df = pd.read_csv(filename, on_bad_lines='skip', delimiter=',', decimal='.', encoding='utf-8')
-    except Exception as e:
-        print(f"❌ Error reading CSV file: {e}")
+    # Get the title of the webpage
+    nazwa = get_webpage_title(url_title)
+    if nazwa == "Wyszukiwanie symbolu - Stooq" or nazwa == "No <title> tag found":
+        print("⚠️ Brak symbolu w bazie Stooq")
         return None
-
-    if df.empty:
-        print("⚠️ The DataFrame is empty.")
-        return None
-
-    # Strip any leading or trailing whitespace from the column names
-    df.columns = df.columns.str.strip()
-
-    # Ensure the date column is in datetime format
-    date_column = 'Data'  # The actual name of the date column
-    if date_column not in df.columns:
-        print(f"⚠️ Warning: Column '{date_column}' not found. Available columns: {df.columns}")
-        return None
-
-    # Convert date column
-    df['date'] = pd.to_datetime(df[date_column])
-
-    # Sort the data by date in ascending order
-    df = df.sort_values(by='date')
-
-    # Calculate daily returns from the second column (prices)
-    prices_column = df.columns[1]  # Assuming the second column contains the prices
-    daily_returns = calculate_daily_returns(df[prices_column])
-
-    # Calculate 22-day returns
-    returns_22 = calculate_22_day_returns(df[prices_column])
-
-    # Check if we have enough data points
-    if len(daily_returns) == 0 or len(returns_22) == 0:
-        print("⚠️ Not enough data to calculate returns.")
-        return None
-
-    # Calculate statistics for the last 66 22-day returns
-    min_return, max_return, first_quartile = calculate_22_day_statistics(returns_22)
-
-    # Get the newest 1-day and 22-day returns
-    newest_1_day_return = daily_returns.iloc[-1] if len(daily_returns) > 0 else None
-    newest_22_day_return = returns_22.iloc[-1] if len(returns_22) > 0 else None
-
-    
     
     # Save the required data into an array
     result = [
-        numer,  # numer kolejny
-        min_return,  # Minimum of the last 66 22-day returns
-        max_return,  # Maximum of the last 66 22-day returns
-        first_quartile,  # First quartile of the last 66 22-day returns
-        newest_1_day_return,  # Newest 1-day return
-        newest_22_day_return  # Newest 22-day return
+        nazwa,  # Name of the file
+        numer  # numer kolejny
     ]    
     print("✅ Processed Data:", result)
     return result
@@ -138,8 +128,8 @@ for xxxx in range(1000, 6001):
     csv_url = csv_base_url.format(xxxx)
     title_url = title_base_url.format(xxxx)
 
-    print(f"Processing: {csv_url}")
-    result = process_data(csv_url, xxxx, csv_filename)
+    print(f"Processing: {title_url}")
+    result = process_data(title_url, csv_filename, xxxx)
 
     all_results.append(result)
    # print("✅ Processed and appended Data:", all_results)
@@ -156,7 +146,7 @@ for xxxx in range(1000, 6001):
     
   # Convert results to DataFrame and save
 cleaned_results = [row for row in all_results if row is not None]
-final_df = pd.DataFrame(cleaned_results, columns=["Numer", "Min 22-day Return", "Max 22-day Return", "1st Quartile", "Latest 1-day Return", "Latest 22-day Return"])
+final_df = pd.DataFrame(cleaned_results, columns=["Title",  "Numer kolejny"])
 csv_data = final_df.to_csv(index=False, header=True, sep=";").encode('utf-8')
 print(final_df.head())
 
@@ -165,7 +155,7 @@ creds = service_account.Credentials.from_service_account_file('/tmp/credentials.
 drive_service = build('drive', 'v3', credentials=creds)
 
 # File details
-file_name = "oceny.csv"
+file_name = "nazwy.csv"
 
 # Correctly get the folder ID (replace 'Dane' with the actual folder name)
 folder_name = 'Dane'
@@ -203,5 +193,5 @@ else:
     file_id = created_file.get('id')
     print(f"File '{file_name}' created. File ID: {file_id}")
 
-print(f"Analysis complete. Extracted data from {len(cleaned_results)} pages saved in 'oceny.csv'.")
+print(f"Name download complete. Extracted titles from {len(all_results)} pages saved in 'nazwy.csv'.")
 
