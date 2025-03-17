@@ -27,7 +27,13 @@ csv_filename = os.path.join(tmp_dir, "data.csv")
 csv_base_url = "https://stooq.pl/q/d/l/?s={}.n&i=d"
 
 
-
+# List of User-Agent headers for different browsers
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/118.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_5_2) AppleWebKit/537.36 (KHTML, like Gecko) Safari/605.1.15"
+]
 
 
 # List to store all results
@@ -36,16 +42,18 @@ all_results = []
 # Function to download the CSV file
 def download_csv(url, filename):
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}  # Mimic a real browser
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
         response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()  # Raise error for HTTP 4xx/5xx
+        response.raise_for_status()
 
-        # Check for unexpected content type
-        if "text/csv" not in response.headers.get("Content-Type", ""):
-            print(f"⚠️ Unexpected content type: {response.headers.get('Content-Type')}")
-            return False
+        # Get content type
+        content_type = response.headers.get("Content-Type", "")
 
-        # Check if the content is empty
+        # Allow "text/csv" and "text/plain" (if not empty)
+        if "text/csv" not in content_type and "text/plain" not in content_type:
+            print(f"⚠️ Unexpected content type: {content_type}. Attempting to proceed...")
+
+        # Check if content is actually empty
         if not response.content.strip():
             print(f"⚠️ The file from {url} is empty.")
             return False
@@ -54,12 +62,12 @@ def download_csv(url, filename):
         with open(filename, "wb") as file:
             file.write(response.content)
 
-        # Verify if the file is empty after saving
+        # Verify file size
         if os.path.getsize(filename) == 0:
-            print(f"⚠️ The downloaded file {filename} from URL: {url} is empty.")
+            print(f"⚠️ The downloaded file {filename} is empty.")
             return False
 
-        print(f"✅ Successfully downloaded: {filename}"  )
+        print(f"✅ Successfully downloaded: {filename}  with User-Agent: {headers['User-Agent']}")
         return True
 
     except requests.exceptions.Timeout:
