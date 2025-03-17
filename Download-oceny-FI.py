@@ -161,7 +161,7 @@ def process_data(url, numer, filename):
   # Loop through each XXXX value
 for xxxx in range(1000, 1200):
     csv_url = csv_base_url.format(xxxx)
-    title_url = title_base_url.format(xxxx)
+    
 
     print(f"Processing: {csv_url}")
     result = process_data(csv_url, xxxx, csv_filename)
