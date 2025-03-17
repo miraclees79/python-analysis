@@ -76,7 +76,7 @@ def download_csv(url, filename):
             logging.warning(f"The downloaded file {filename} is empty.")
             return False
 
-        logging.info(f"✅ Using User-Agent: {headers['User-Agent'] }Successfully downloaded: {filename}"  )
+        logging.info(f"✅ Using User-Agent: {headers['User-Agent']} successfully downloaded: {filename}"  )
         return True
 
     except requests.exceptions.Timeout:
