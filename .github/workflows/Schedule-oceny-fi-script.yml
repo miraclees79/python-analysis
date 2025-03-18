@@ -32,6 +32,10 @@ jobs:
         run: |
           python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
           
+      - name: Set range of indexes to run
+        env:
+          MIN_INDEX: 1000 
+          MAX_INDEX: 1500 
 
       - name: Run Python script
         run: |
