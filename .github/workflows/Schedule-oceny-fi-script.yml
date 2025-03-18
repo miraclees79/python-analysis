@@ -34,13 +34,11 @@ jobs:
           
    
 
-      - name: Set range of indexes to run
+      - name: Set range of indexes and run Python script
         env:
           MIN_INDEX: 1000 
           MAX_INDEX: 1500 
 
-
-      - name: Run Python script
         run: |
           python Download-oceny-FI.py
       
