@@ -39,7 +39,7 @@ jobs:
         run: |
               python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
      
-      - name: Execute Notebook
+      - name: Execute Python Script
         
         env:
           ZIP_URL: ${{ secrets.ZIP_URL }} 
@@ -47,11 +47,6 @@ jobs:
           
         run: |
           # Here, use your Python script or notebook, and load credentials
-          python -c "from google.oauth2 import service_account; creds = service_account.Credentials.from_service_account_file('/tmp/credentials.json', scopes=['https://www.googleapis.com/auth/drive'])"
-          zip_password="${{ secrets.ZIP_PASSWORD }}"
-
-        
-          
           pyton  download-ppe-data.py
 
       - name: Upload log file as artifact

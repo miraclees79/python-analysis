@@ -139,7 +139,7 @@ def process_data(url_title, filename, numer):
   
   # Loop through each XXXX value
 min_index = os.getenv('MIN_INDEX')
-max_index = os.getenv('MIN_INDEX')
+max_index = os.getenv('MAX_INDEX')
 
 for xxxx in range(min_index, max_index)
     csv_url = csv_base_url.format(xxxx)
@@ -172,7 +172,7 @@ creds = service_account.Credentials.from_service_account_file('/tmp/credentials.
 drive_service = build('drive', 'v3', credentials=creds)
 
 # File details
-file_name = "nazwy.csv"
+file_name = f"nazwy{min_index}.csv"
 
 # Correctly get the folder ID (replace 'Dane' with the actual folder name)
 folder_name = 'Dane'
