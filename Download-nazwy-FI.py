@@ -134,7 +134,7 @@ def process_data(url_title, filename, numer):
         nazwa,  # Name of the file
         numer  # numer kolejny
     ]    
-    logging.info("✅ Processed Data:", result)
+    logging.info(f"✅ Processed Data: {result}")
     return result
   
   # Loop through each XXXX value
@@ -159,7 +159,7 @@ for xxxx in range(min_index, max_index):
     logging.info(f"Sleeping for {delay:.2f} seconds...")
     time.sleep(delay)
 
-    logging.info("Done!")  # Optional delay
+    logging.info(f"Done!")  # Optional delay
     
   # Convert results to DataFrame and save
 cleaned_results = [row for row in all_results if row is not None]
