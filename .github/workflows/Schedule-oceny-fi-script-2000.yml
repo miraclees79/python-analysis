@@ -1,9 +1,9 @@
-name: Download 1000 and analyse FI from Stooq
+name: Download 2000 and analyse FI from Stooq
 
 on:
   workflow_dispatch:  # Allows manual trigger
   schedule:
-    - cron: "0 0 * * *"  # Runs daily at midn UTC
+    - cron: "0 23 * * *"  # Runs daily at 23 UTC
 
 jobs: 
   process_stooq_data:
@@ -36,8 +36,8 @@ jobs:
 
       - name: Set range of indexes and run Python script
         env:
-          MIN_INDEX: 1000 
-          MAX_INDEX: 1500 
+          MIN_INDEX: 2000 
+          MAX_INDEX: 2500 
 
         run: |
           python Download-oceny-FI.py
