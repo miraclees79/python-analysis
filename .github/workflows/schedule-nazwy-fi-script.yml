@@ -57,6 +57,12 @@ jobs:
       - name: Validate JSON Format
         run: |
           python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
+      
+      - name: Set range of indexes to run
+        env:
+          MIN_INDEX: 1000 
+          MAX_INDEX: 1500 
+
           
       - name: Install Xvfb
         run: |
@@ -64,3 +70,9 @@ jobs:
       - name: Run Xvfb
         run: |
           xvfb-run --server-args="-screen 0 1280x720x24" python Download-nazwy-FI.py
+          
+      - name: Upload log file as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: download-logs
+          path: download.log

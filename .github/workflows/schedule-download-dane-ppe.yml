@@ -52,10 +52,10 @@ jobs:
 
         
           
-          papermill download_extract.ipynb output.ipynb
+          pyton  download-ppe-data.py
 
-      - name: Upload Output Notebook as Artifact
+      - name: Upload log file as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: executed-notebook
-          path: output.ipynb
+          name: download-logs
+          path: download.log

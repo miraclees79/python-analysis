@@ -21,7 +21,7 @@ from google.oauth2 import service_account
 from googleapiclient.http import MediaIoBaseUpload
 
 import tempfile
-
+import logging
 
 # Get the temporary directory
 tmp_dir = tempfile.gettempdir()
@@ -30,6 +30,18 @@ print(f"Temporary directory: {tmp_dir}")
 # Create a temporary file inside the temp directory # Filepath for CSV
 csv_filename = os.path.join(tmp_dir, "data.csv")
 
+# Setup logging
+LOG_FILE = "download.log"
+logging.basicConfig(
+    filename=LOG_FILE,
+    filemode="w",  # Overwrites the log file each run
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+# Also log to console
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+logging.getLogger().addHandler(console_handler)
 
 
 # Base URLs
@@ -47,13 +59,13 @@ def download_csv(url, filename):
     try:
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
-            print(f"Failed to download {url} (Status Code: {response.status_code})")
+            logging.error(f"Failed to download {url} (Status Code: {response.status_code})")
             return False
         with open(filename, "wb") as file:
             file.write(response.content)
         return True
     except Exception as e:
-        print(f"Error downloading {url}: {e}")
+        logging.error(f"Error downloading {url}: {e}")
         return False
 
 def get_webpage_title(url):
@@ -80,10 +92,10 @@ def get_webpage_title(url):
             EC.element_to_be_clickable((By.CLASS_NAME, "fc-cta-consent"))
         )
         accept_button.click()  # Click the accept button
-        print("Cookie pop-up accepted.")
+        logging.info("Cookie pop-up accepted.")
     
     except Exception as e:
-        print("No cookie acceptance pop-up found or timeout occurred:", e)
+        logging.error("No cookie acceptance pop-up found or timeout occurred:", e)
     
     # Wait for the page to load fully
     time.sleep(3)  
@@ -114,7 +126,7 @@ def process_data(url_title, filename, numer):
     # Get the title of the webpage
     nazwa = get_webpage_title(url_title)
     if nazwa == "Wyszukiwanie symbolu - Stooq" or nazwa == "No <title> tag found":
-        print("⚠️ Brak symbolu w bazie Stooq")
+        logging.warning("⚠️ Brak symbolu w bazie Stooq")
         return None
     
     # Save the required data into an array
@@ -122,16 +134,18 @@ def process_data(url_title, filename, numer):
         nazwa,  # Name of the file
         numer  # numer kolejny
     ]    
-    print("✅ Processed Data:", result)
+    logging.info("✅ Processed Data:", result)
     return result
   
-  
   # Loop through each XXXX value
-for xxxx in range(1000, 5500):
+min_index = os.getenv('MIN_INDEX')
+max_index = os.getenv('MIN_INDEX')
+
+for xxxx in range(min_index, max_index)
     csv_url = csv_base_url.format(xxxx)
     title_url = title_base_url.format(xxxx)
 
-    print(f"Processing: {title_url}")
+    logging.info(f"Processing: {title_url}")
     result = process_data(title_url, csv_filename, xxxx)
 
     all_results.append(result)
@@ -142,10 +156,10 @@ for xxxx in range(1000, 5500):
     
     delay = random.uniform(0, 5)
 
-    print(f"Sleeping for {delay:.2f} seconds...")
+    logging.info(f"Sleeping for {delay:.2f} seconds...")
     time.sleep(delay)
 
-    print("Done!")  # Optional delay
+    logging.info("Done!")  # Optional delay
     
   # Convert results to DataFrame and save
 cleaned_results = [row for row in all_results if row is not None]
@@ -169,7 +183,7 @@ items = results.get('files', [])
 if items:
     folder_id = items[0]['id']
 else:
-    print(f"❌ Folder '{folder_name}' not found in Google Drive.")
+    logging.error(f"❌ Folder '{folder_name}' not found in Google Drive.")
     exit()
 
 # Now use the correct folder ID in the file search query
@@ -183,7 +197,7 @@ if items:
     # The MediaIoBaseUpload class needs to be called directly, not as an attribute of drive_service.
     media = MediaIoBaseUpload(io.BytesIO(csv_data), mimetype='text/csv', resumable=True)
     updated_file = drive_service.files().update(fileId=file_id, media_body=media).execute()
-    print(f"File '{file_name}' updated as a new version. File ID: {file_id}")
+    logging.info(f"File '{file_name}' updated as a new version. File ID: {file_id}")
 else:
     # If the file doesn't exist, create it
     file_metadata = {
@@ -194,7 +208,7 @@ else:
     media = MediaIoBaseUpload(io.BytesIO(csv_data), mimetype='text/csv', resumable=True)
     created_file = drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
     file_id = created_file.get('id')
-    print(f"File '{file_name}' created. File ID: {file_id}")
+    logging.info(f"File '{file_name}' created. File ID: {file_id}")
 
-print(f"Name download complete. Extracted titles from {len(all_results)} pages saved in 'nazwy.csv'.")
+logging.info(f"Name download complete. Extracted titles from {len(all_results)} pages saved in 'nazwy.csv'.")
 
