@@ -178,7 +178,7 @@ def process_data(url, numer, filename):
   # Loop through each XXXX value
 min_index = os.getenv('MIN_INDEX')
 max_index = os.getenv('MAX_INDEX')
-for xxxx in range(min_index, max_index)
+for xxxx in range(min_index, max_index):
     csv_url = csv_base_url.format(xxxx)
     
 
