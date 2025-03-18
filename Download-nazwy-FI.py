@@ -95,7 +95,7 @@ def get_webpage_title(url):
         logging.info("Cookie pop-up accepted.")
     
     except Exception as e:
-        logging.error("No cookie acceptance pop-up found or timeout occurred:", e)
+        logging.error("No cookie acceptance pop-up found or timeout occurred: {e} ")
     
     # Wait for the page to load fully
     time.sleep(3)  
