@@ -45,8 +45,8 @@ logging.getLogger().addHandler(console_handler)
 
 
 # Base URLs
-csv_base_url = "https://stooq.pl/q/d/l/?s={}.n&i=d"
-title_base_url = "https://stooq.pl/q/g/?s={}.n"
+
+title_base_url = os.getenv('TITLE_BASE_URL')
 
 
 
@@ -54,19 +54,7 @@ title_base_url = "https://stooq.pl/q/g/?s={}.n"
 # List to store all results
 all_results = []
 
-# Function to download the CSV file
-def download_csv(url, filename):
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code != 200:
-            logging.error(f"Failed to download {url} (Status Code: {response.status_code})")
-            return False
-        with open(filename, "wb") as file:
-            file.write(response.content)
-        return True
-    except Exception as e:
-        logging.error(f"Error downloading {url}: {e}")
-        return False
+
 
 def get_webpage_title(url):
     # Set up Chrome options for headless mode (no GUI)
@@ -141,8 +129,10 @@ def process_data(url_title, filename, numer):
 min_index = int(os.getenv('MIN_INDEX'))
 max_index = int(os.getenv('MAX_INDEX'))
 
+
+
 for xxxx in range(min_index, max_index):
-    csv_url = csv_base_url.format(xxxx)
+    
     title_url = title_base_url.format(xxxx)
 
     logging.info(f"Processing: {title_url}")
@@ -174,8 +164,10 @@ drive_service = build('drive', 'v3', credentials=creds)
 # File details
 file_name = f"nazwy{min_index}.csv"
 
-# Correctly get the folder ID (replace 'Dane' with the actual folder name)
-folder_name = 'Dane'
+target_folder_name = os.getenv('FOLDER_NAME')
+
+# Correctly get the folder ID (replace '' with the actual folder name)
+folder_name = target_folder_name
 query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
 results = drive_service.files().list(q=query, spaces='drive', fields='files(id)').execute()
 items = results.get('files', [])

@@ -66,6 +66,8 @@ jobs:
         env:
           MIN_INDEX: 3000 
           MAX_INDEX: 4000
+          FOLDER_NAME: ${{ secrets.FOLDER_NAME }} 
+          TITLE_BASE_URL: ${{ secrets.TITLE_BASE_URL }}
         run: |
           xvfb-run --server-args="-screen 0 1280x720x24" python Download-nazwy-FI.py
           

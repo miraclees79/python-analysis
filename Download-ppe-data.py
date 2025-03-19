@@ -1,14 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Sat Mar 15 10:46:13 2025
-
-@author: adamg
-"""
-
-# -*- coding: utf-8 -*-
-#pip install --user pdfplumber pandas pyzipper requests google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
-
-
 import requests
 import pyzipper  # To handle password-protected ZIP files
 
@@ -16,7 +5,6 @@ import pyzipper  # To handle password-protected ZIP files
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 from googleapiclient.http import MediaIoBaseUpload
-
 import os
 import cv2
 import pytesseract
@@ -25,10 +13,6 @@ import numpy as np
 import re
 import pandas as pd
 import io
-
-# from google.colab import drive
-# drive.mount('/content/drive')
-
 import logging
 
 # Setup logging
@@ -70,7 +54,7 @@ else:
 # -----------------------------
 
 zip_password_bytes = zip_password.encode('utf-8')
-pdf_filename = "BJ_SFIO_wycena.pdf"  # 🔹 Replace with the actual PDF file name inside ZIP
+pdf_filename = os.getenv('INT_FILE_NAME')  # 🔹 Replace with the actual PDF file name inside ZIP
 pdf_path = f"/tmp/{pdf_filename}"  # 🔹 Extracted PDF storage
 
 
@@ -89,7 +73,7 @@ with pyzipper.AESZipFile(zip_path, 'r') as zf:
 # 3️⃣ EXTRACT TABLE FROM PDF
 # -----------------------------
 
-pdf_path = "/tmp/BJ_SFIO_wycena.pdf"
+pdf_path = "/tmp/extracted.pdf"
 
 
 # Convert all pages of the PDF to images
@@ -171,8 +155,10 @@ drive_service = build('drive', 'v3', credentials=creds)
 # File details
 file_name = "filtered_table.csv"
 
-# Correctly get the folder ID (replace 'Dane' with the actual folder name)
-folder_name = 'Dane'
+# Correctly get the folder ID (replace  with the actual folder name)
+
+folder_name = os.getenv('FOLDER_NAME')
+
 query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
 results = drive_service.files().list(q=query, spaces='drive', fields='files(id)').execute()
 items = results.get('files', [])
@@ -208,6 +194,5 @@ else:
     logging.info(f"File '{file_name}' created. File ID: {file_id}")
 
 logging.info(f"Filtering complete. Extracted data from {len(images)} pages saved in 'filtered_table.csv'.")
-
 
 

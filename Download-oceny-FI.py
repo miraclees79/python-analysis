@@ -38,7 +38,7 @@ csv_filename = os.path.join(tmp_dir, "data.csv")
 
 
 # Base URLs
-csv_base_url = "https://stooq.pl/q/d/l/?s={}.n&i=d"
+csv_base_url = os.getenv('CSV_BASE_URL')
 
 
 # List of User-Agent headers for different browsers
@@ -212,7 +212,7 @@ drive_service = build('drive', 'v3', credentials=creds)
 file_name = f"oceny{min_index}.csv"
 
 # Correctly get the folder ID (replace 'Dane' with the actual folder name)
-folder_name = 'Dane'
+folder_name = os.getenv('FOLDER_NAME')
 query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
 results = drive_service.files().list(q=query, spaces='drive', fields='files(id)').execute()
 items = results.get('files', [])

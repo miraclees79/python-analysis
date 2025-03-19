@@ -37,7 +37,9 @@ jobs:
       - name: Set range of indexes and run Python script
         env:
           MIN_INDEX: 4500 
-          MAX_INDEX: 5000 
+          MAX_INDEX: 5000
+          CSV_BASE_URL: ${{ secrets.CSV_BASE_URL }}
+          FOLDER_NAME: ${{ secrets.FOLDER_NAME }} 
 
         run: |
           python Download-oceny-FI.py

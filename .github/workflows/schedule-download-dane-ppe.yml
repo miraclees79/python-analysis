@@ -44,7 +44,8 @@ jobs:
         env:
           ZIP_URL: ${{ secrets.ZIP_URL }} 
           ZIP_PASSWORD : ${{ secrets.ZIP_PASSWORD }} 
-          
+          FOLDER_NAME : ${{ secrets.FOLDER_NAME }}
+          INT_FILE_NAME : ${{ secrets.INT_FILE_NAME }}
         run: |
           # Here, use your Python script or notebook, and load credentials
           pyton  download-ppe-data.py
