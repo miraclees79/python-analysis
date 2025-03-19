@@ -44,9 +44,9 @@ response = requests.get(zip_url)
 if response.status_code == 200:
     with open(zip_path, "wb") as f:
         f.write(response.content)
-    logging.info((f"✅ ZIP file downloaded successfully: {zip_path}")
+    logging.info(f"✅ ZIP file downloaded successfully: {zip_path}")
 else:
-    logging.error(("❌ Failed to download ZIP file")
+    logging.error("❌ Failed to download ZIP file")
     exit()
 
 # -----------------------------
