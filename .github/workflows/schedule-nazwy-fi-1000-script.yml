@@ -1,4 +1,4 @@
-name: Download  FI names index below 3000 from Stooq
+name: Download  FI names index below 2000 from Stooq
 
 on:
   workflow_dispatch:  # Allows manual trigger
@@ -65,7 +65,7 @@ jobs:
       - name: Set range of indexes to run Xvfb
         env:
           MIN_INDEX: 1000 
-          MAX_INDEX: 3000
+          MAX_INDEX: 2000
         run: |
           xvfb-run --server-args="-screen 0 1280x720x24" python Download-nazwy-FI.py
           
