@@ -76,12 +76,12 @@ def get_webpage_title(url):
     options.add_argument('--user-data-dir=/tmp/chrome_test_data') 
     options.add_argument('--disable-dev-shm-usage')
     
-    print("URL: ", url)
+    logging.info("URL: ", url)
     
     # Automatically download and manage ChromeDriver
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     
-    print("URL: ", url)
+    #    print("URL: ", url)
     # Open the webpage URL
     driver.get(url)
     
@@ -149,7 +149,7 @@ for xxxx in range(min_index, max_index):
     result = process_data(title_url, csv_filename, xxxx)
 
     all_results.append(result)
-   # print("✅ Processed and appended Data:", all_results)
+    # print("✅ Processed and appended Data:", all_results)
     # Delete CSV file after processing
     if os.path.exists(csv_filename):
         os.remove(csv_filename)
@@ -165,7 +165,7 @@ for xxxx in range(min_index, max_index):
 cleaned_results = [row for row in all_results if row is not None]
 final_df = pd.DataFrame(cleaned_results, columns=["Title",  "Numer kolejny"])
 csv_data = final_df.to_csv(index=False, header=True, sep=";").encode('utf-8')
-print(final_df.head())
+logging.info(final_df.head())
 
 creds = service_account.Credentials.from_service_account_file('/tmp/credentials.json', scopes=['https://www.googleapis.com/auth/drive'])
 
@@ -210,5 +210,5 @@ else:
     file_id = created_file.get('id')
     logging.info(f"File '{file_name}' created. File ID: {file_id}")
 
-logging.info(f"Name download complete. Extracted titles from {len(all_results)} pages saved in 'nazwy.csv'.")
+logging.info(f"Name download complete. Extracted titles from {len(all_results)} pages saved in {file_name}.")
 
