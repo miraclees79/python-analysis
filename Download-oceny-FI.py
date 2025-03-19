@@ -182,7 +182,7 @@ for xxxx in range(min_index, max_index):
     csv_url = csv_base_url.format(xxxx)
     
 
-    print(f"Processing: {csv_url}")
+    logging.info(f"Processing: {csv_url}")
     result = process_data(csv_url, xxxx, csv_filename)
 
     all_results.append(result)
