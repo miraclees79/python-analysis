@@ -73,7 +73,6 @@ with pyzipper.AESZipFile(zip_path, 'r') as zf:
 # 3️⃣ EXTRACT TABLE FROM PDF
 # -----------------------------
 
-pdf_path = "/tmp/extracted.pdf"
 
 
 # Convert all pages of the PDF to images
