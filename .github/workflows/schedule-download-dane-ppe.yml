@@ -7,7 +7,7 @@ on:
   workflow_dispatch:   # This allows the workflow to be triggered manually
 
 jobs:
-  run-notebook:
+  run-script:
     runs-on: ubuntu-latest
 
     steps:
@@ -28,7 +28,7 @@ jobs:
           sudo apt-get install -y libtesseract-dev
           sudo apt-get install -y tesseract-ocr-pol
           sudo apt-get install -y poppler-utils
-          pip install --no-cache-dir pyzipper pytesseract pdf2image google-api-python-client jupyter papermill opencv-python-headless pandas
+          pip install --no-cache-dir pyzipper pytesseract pdf2image google-api-python-client opencv-python-headless pandas
           
       - name: Create Google Credentials File
         run: |
@@ -48,10 +48,14 @@ jobs:
           INT_FILE_NAME : ${{ secrets.INT_FILE_NAME }}
         run: |
           # Here, use your Python script or notebook, and load credentials
-          pyton  download-ppe-data.py
+          python  download-ppe-data.py
 
       - name: Upload log file as artifact
         uses: actions/upload-artifact@v4
         with:
           name: download-logs
           path: download.log
+      
+      - name: Cleanup Credentials
+        run: rm -f /tmp/credentials.json
+        
