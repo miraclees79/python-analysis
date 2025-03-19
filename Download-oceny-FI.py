@@ -30,7 +30,7 @@ logging.getLogger().addHandler(console_handler)
 
 # Get the temporary directory
 tmp_dir = tempfile.gettempdir()
-print(f"Temporary directory: {tmp_dir}")
+logging.info(f"Temporary directory: {tmp_dir}")
 
 # Create a temporary file inside the temp directory # Filepath for CSV
 csv_filename = os.path.join(tmp_dir, "data.csv")
