@@ -196,7 +196,7 @@ for xxxx in range(min_index, max_index):
     logging.info(f"Sleeping for {delay:.2f} seconds...")
     time.sleep(delay)
 
-    print("Done!")  # Optional delay
+    logging.info("Done!")  # Optional delay
     
   # Convert results to DataFrame and save
 cleaned_results = [row for row in all_results if row is not None]
