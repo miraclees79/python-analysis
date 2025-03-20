@@ -56,6 +56,5 @@ jobs:
           name: download-logs
           path: download.log
       
-      - name: Cleanup Credentials
-        run: rm -f /tmp/credentials.json
+
         

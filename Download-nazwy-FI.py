@@ -204,3 +204,7 @@ else:
 
 logging.info(f"Name download complete. Extracted titles from {len(all_results)} pages saved in {file_name}.")
 
+# credentials cleanup
+if os.path.exists("/tmp/credentials.json"):
+    os.remove("/tmp/credentials.json")
+
