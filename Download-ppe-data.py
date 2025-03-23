@@ -194,4 +194,6 @@ else:
 
 logging.info(f"Filtering complete. Extracted data from {len(images)} pages saved in 'filtered_table.csv'.")
 
-
+# credentials cleanup
+if os.path.exists("/tmp/credentials.json"):
+    os.remove("/tmp/credentials.json")

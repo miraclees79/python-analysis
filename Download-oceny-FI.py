@@ -211,7 +211,7 @@ drive_service = build('drive', 'v3', credentials=creds)
 # File details
 file_name = f"oceny{min_index}.csv"
 
-# Correctly get the folder ID (replace 'Dane' with the actual folder name)
+# Correctly get the folder ID (replace with the actual folder name)
 folder_name = os.getenv('FOLDER_NAME')
 query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
 results = drive_service.files().list(q=query, spaces='drive', fields='files(id)').execute()
@@ -248,4 +248,8 @@ else:
     print(f"File '{file_name}' created. File ID: {file_id}")
 
 logging.info(f"Analysis complete. Extracted data from {len(cleaned_results)} pages saved in 'oceny.csv'.")
+
+# credentials cleanup
+if os.path.exists("/tmp/credentials.json"):
+    os.remove("/tmp/credentials.json")
 
