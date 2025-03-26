@@ -139,10 +139,28 @@ def load_csv(filename):
 
     # Set the "Data" column as the index
     df.set_index(date_column, inplace=True)
+    # Sort the data by the "Data" column in ascending order and set as index
+    df = df.sort_values(by=date_column).set_index(date_column)
 
+    # Check 1: Discard the data if the newest observation is older than 10 days
+    newest_date = df.index.max()
+    if (dt.datetime.now() - newest_date).days > 10:
+        logging.warning(f"⚠️ The newest observation ({newest_date}) is older than 10 days. Data is discarded.")
+        return None
+
+    # Check 2: Discard data before the most recent break longer than 30 days
+    date_diffs = df.index.to_series().diff().dt.days  # Calculate gaps in the date series
+    breaks = date_diffs[date_diffs > 30].index  # Identify breaks longer than 30 days
+
+    if not breaks.empty:
+        # Keep only the data from the newest observation to the most recent break
+        last_valid_date = breaks[-1]
+        df = df.loc[last_valid_date:]  # Slice the DataFrame from the break to the end
+        logging.info(f"ℹ️ Data contains a break longer than 30 days. Keeping data from {last_valid_date} onward.")
+    
     logging.info("✅ CSV file loaded successfully and processed.")
     return df
-
+    
 
 # Comparison with index
 def compare_to_index(filename, index2_filename):
