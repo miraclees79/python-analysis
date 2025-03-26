@@ -161,8 +161,8 @@ def compare_to_index(filename, index2_filename):
     data_series_df = data_series_df.loc[common_dates]
     
     output_dir = os.getenv('GITHUB_WORKSPACE', '.')
-    data_index2_df.to_csv(os.path.join(output_dir, "out_index.csv"), index=False)
-    data_series_df.to_csv(os.path.join(output_dir, "out_series.csv"), index=False)
+    data_index2_df.to_csv(os.path.join(output_dir, "out_index.csv"), index=True)
+    data_series_df.to_csv(os.path.join(output_dir, "out_series.csv"), index=True)
 
     #data_index2_df.to_csv("out_index.csv", index=False)
     #data_series_df.to_csv("out_series.csv", index=False)
