@@ -160,11 +160,13 @@ def compare_to_index(filename, index2_filename):
     data_index2_df = data_index2_df.loc[common_dates]
     data_series_df = data_series_df.loc[common_dates]
     
-    #data_index2_df.to_csv(os.path.join(tmp_dir, "out_index.csv"), index=False)
-    #data_series_df.to_csv(os.path.join(tmp_dir, "out_series.csv"), index=False)
+    data_index2_df.to_csv(os.path.join(tmp_dir, "out_index.csv"), index=False)
+    data_series_df.to_csv(os.path.join(tmp_dir, "out_series.csv"), index=False)
     #print("DataFrame has been saved to 'output.csv'.")
     
     
+
+
     # Get the price column name (e.g., 'Price', or any other column with prices)
     prices_column_name = data_series_df.columns[3]  # Assuming the second column contains prices  - USING Column indexed as 3 - close price
     
