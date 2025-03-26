@@ -122,20 +122,25 @@ def load_csv(filename):
     # Strip any leading or trailing whitespace from the column names
     df.columns = df.columns.str.strip()
 
-    # Ensure the date column is in datetime format
-    date_column = 'Data'  # The actual name of the date column
+    # Ensure the date column exists and convert it to datetime
+    date_column = 'Data'  # Name of the date column in your CSV
     if date_column not in df.columns:
-        logging.warning(f"⚠️ Warning: Column '{date_column}' not found. Available columns: {df.columns}")
+        logging.warning(f"⚠️ Warning: Column '{date_column}' not found. Available columns: {list(df.columns)}")
         return None
 
-    # Convert date column
-    df['date'] = pd.to_datetime(df[date_column])
+    # Convert the "Data" column to datetime format directly
+    df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
 
-    # Sort the data by date in ascending order
-    df = df.sort_values(by='date')
+    # Drop rows with invalid dates
+    df.dropna(subset=[date_column], inplace=True)
 
-    # Set the date as the index
-    df.set_index('date', inplace=True)
+    # Sort the data by the "Data" column in ascending order
+    df = df.sort_values(by=date_column)
+
+    # Set the "Data" column as the index
+    df.set_index(date_column, inplace=True)
+
+    logging.info("✅ CSV file loaded successfully and processed.")
     return df
 
 
@@ -155,11 +160,17 @@ def compare_to_index(filename, index2_filename):
     data_index2_df = data_index2_df.loc[common_dates]
     data_series_df = data_series_df.loc[common_dates]
     
+    data_index2_df.to_csv(os.path.join(tmp_dir, "out_index.csv"), index=False)
+    data_series_df.to_csv(os.path.join(tmp_dir, "out_series.csv"), index=False)
+    print("DataFrame has been saved to 'output.csv'.")
+    
+    
     # Get the price column name (e.g., 'Price', or any other column with prices)
     prices_column_name = data_series_df.columns[1]  # Assuming the second column contains prices
     prices_column_series = data_series_df[prices_column_name]
 
     # Get index-2 returns for comparison
+    
     index_2 = data_index2_df.iloc[:, 1]  # Assuming the second column of the index DataFrame
     index_2_returns = {
         '22-day': calculate_returns(index_2, 22),
@@ -198,9 +209,9 @@ def compare_to_index_portfolio(filename, index1_filename, index2_filename, index
     
     # Align both datasets to have a common date range
     common_dates = data_index1_df.index.intersection(data_series_df.index).intersection(data_index2_df.index).intersection(data_index3_df.index)
-    data_index1_df = data_index2_df.loc[common_dates]
+    data_index1_df = data_index1_df.loc[common_dates]
     data_index2_df = data_index2_df.loc[common_dates]
-    data_index3_df = data_index2_df.loc[common_dates]
+    data_index3_df = data_index3_df.loc[common_dates]
     data_series_df = data_series_df.loc[common_dates]
     
     # Get the price column name (e.g., 'Price', or any other column with prices)
@@ -375,9 +386,9 @@ def process_data(url, numer, filename, index1_filename, index2_filename, index3_
   
   # Loop through each XXXX value
 # min_index = int(os.getenv('MIN_INDEX'))
-min_index = 1006
+min_index = 1007
 # max_index = int(os.getenv('MAX_INDEX'))
-max_index = 1010
+max_index = 1008
 
 
 # download indexes for comparispn
@@ -444,6 +455,8 @@ final_df = pd.DataFrame(cleaned_results,
                                  ])
 csv_data = final_df.to_csv(index=False, header=True, sep=";").encode('utf-8')
 print(final_df.head())
+
+
 
 
 #credentials_path='/tmp/credentials.json'
