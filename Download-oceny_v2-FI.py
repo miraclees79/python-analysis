@@ -182,6 +182,7 @@ def compare_to_index(filename, index2_filename):
 
     if data_index2_df is None or data_series_df is None:
         raise ValueError("Error loading one or both CSV files. Please check the logs.")
+        return None
 
     
     # Align both datasets to have a common date range
@@ -203,8 +204,8 @@ def compare_to_index(filename, index2_filename):
     # Get the price column name (e.g., 'Price', or any other column with prices)
     prices_column_name = data_series_df.columns[3]  # Assuming the second column contains prices  - USING Column indexed as 3 - close price
     
-    print(f"For the prices of FI, I am using column named:  {prices_column_name} ")
-    print(f"For the prices of FI, the columns ar named:  {data_series_df.columns[0] } {data_series_df.columns[1] } {data_series_df.columns[2] } {data_series_df.columns[3] }")
+    #print(f"For the prices of FI, I am using column named:  {prices_column_name} ")
+    #print(f"For the prices of FI, the columns ar named:  {data_series_df.columns[0] } {data_series_df.columns[1] } {data_series_df.columns[2] } {data_series_df.columns[3] }")
 
 
     prices_column_series = data_series_df[prices_column_name]
@@ -212,8 +213,8 @@ def compare_to_index(filename, index2_filename):
     # Get index-2 returns for comparison
     
     index_2_column_name = data_index2_df.columns[3]
-    print(f"For the index, the columns ar named:  {data_index2_df.columns[0] } {data_index2_df.columns[1] } {data_index2_df.columns[2] } {data_index2_df.columns[3] }")
-    print(f"For the prices of index, I am using column named:  {index_2_column_name} ")
+    #print(f"For the index, the columns ar named:  {data_index2_df.columns[0] } {data_index2_df.columns[1] } {data_index2_df.columns[2] } {data_index2_df.columns[3] }")
+    #print(f"For the prices of index, I am using column named:  {index_2_column_name} ")
     index_2 = data_index2_df[index_2_column_name]
 
     # index_2 = data_index2_df.iloc[:, 1]  # Assuming the second column of the index DataFrame
@@ -256,7 +257,7 @@ def compare_to_index_portfolio(filename, index1_filename, index2_filename, index
 
     if data_index2_df is None or data_series_df is None or data_index1_df is None or data_index3_df is None:
         raise ValueError("Error loading one or more CSV files. Please check the logs.")
-
+        return None
     
     # Align both datasets to have a common date range
     common_dates = data_index1_df.index.intersection(data_series_df.index).intersection(data_index2_df.index).intersection(data_index3_df.index)
