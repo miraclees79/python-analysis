@@ -40,10 +40,10 @@ csv_filename_m40tr = os.path.join(tmp_dir, "m40tr.csv")
 csv_filename_s80tr = os.path.join(tmp_dir, "s80tr.csv")
 csv_filename_wbbwz = os.path.join(tmp_dir, "wbbwz.csv")
 
-csv_base_url = "https://stooq.pl/q/d/l/?s={}.n&i=d"
+# csv_base_url = "https://stooq.pl/q/d/l/?s={}.n&i=d"
 
 # Base URLs
-# csv_base_url = os.getenv('CSV_BASE_URL')
+csv_base_url = os.getenv('CSV_BASE_URL')
 # csv_base_url = os.getenv('CSV_BASE_URL')
 
 # List of User-Agent headers for different browsers
@@ -189,9 +189,9 @@ def compare_to_index(filename, index2_filename):
     data_index2_df = data_index2_df.loc[common_dates]
     data_series_df = data_series_df.loc[common_dates]
     
-    output_dir = os.getenv('GITHUB_WORKSPACE', '.')
-    data_index2_df.to_csv(os.path.join(output_dir, "out_index.csv"), index=True)
-    data_series_df.to_csv(os.path.join(output_dir, "out_series.csv"), index=True)
+    #output_dir = os.getenv('GITHUB_WORKSPACE', '.')
+    #data_index2_df.to_csv(os.path.join(output_dir, "out_index.csv"), index=True)
+    #data_series_df.to_csv(os.path.join(output_dir, "out_series.csv"), index=True)
 
     #data_index2_df.to_csv("out_index.csv", index=False)
     #data_series_df.to_csv("out_series.csv", index=False)
@@ -224,10 +224,10 @@ def compare_to_index(filename, index2_filename):
     }
 
     # Combine the three return Series into a DataFrame
-    combined_returns_df = pd.DataFrame(index_2_returns)
+    # combined_returns_df = pd.DataFrame(index_2_returns)
 
     # Save the DataFrame to a CSV file, keeping the index (e.g., dates)
-    combined_returns_df.to_csv(os.path.join(output_dir,"index_2_returns.csv"), index=True)
+    # combined_returns_df.to_csv(os.path.join(output_dir,"index_2_returns.csv"), index=True)
 
     # Calculate returns for the comparison series (your main data series)
     comparison_returns = {
@@ -380,7 +380,7 @@ def process_data(url, numer, filename, index1_filename, index2_filename, index3_
     result.extend([latest_252_day_return_index]) # Add the last 252 return of index
     
     # compare with index2
-    percentages, latest_252_day_return_series, latest_252_day_return_index  = compare_to_index(filename, index1_filename)
+    percentages, latest_252_day_return_series, latest_252_day_return_index  = compare_to_index(filename, index2_filename)
 
     # Display the results
     print("Comparison results:")
@@ -393,7 +393,7 @@ def process_data(url, numer, filename, index1_filename, index2_filename, index3_
     
     
     # compare with index3
-    percentages, latest_252_day_return_series, latest_252_day_return_index   = compare_to_index(filename, index1_filename)
+    percentages, latest_252_day_return_series, latest_252_day_return_index   = compare_to_index(filename, index3_filename)
 
     # Display the results
     print("Comparison results:")
@@ -405,7 +405,7 @@ def process_data(url, numer, filename, index1_filename, index2_filename, index3_
     result.extend([latest_252_day_return_index]) # Add the last 252 return of index
     
     # compare with index4
-    percentages, latest_252_day_return_series, latest_252_day_return_index   = compare_to_index(filename, index1_filename)
+    percentages, latest_252_day_return_series, latest_252_day_return_index   = compare_to_index(filename, index4_filename)
 
     # Display the results
     print("Comparison results:")
@@ -436,10 +436,10 @@ def process_data(url, numer, filename, index1_filename, index2_filename, index3_
 
   
   # Loop through each XXXX value
-# min_index = int(os.getenv('MIN_INDEX'))
-min_index = 1007
-# max_index = int(os.getenv('MAX_INDEX'))
-max_index = 1008
+min_index = int(os.getenv('MIN_INDEX'))
+# min_index = 1007
+max_index = int(os.getenv('MAX_INDEX'))
+# max_index = 1008
 
 
 # download indexes for comparispn
