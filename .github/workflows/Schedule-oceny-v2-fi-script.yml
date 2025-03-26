@@ -1,4 +1,4 @@
-name: Download 1000 and analyse FI from Stooq
+name: Test oceny v2 
 
 on:
   workflow_dispatch:  # Allows manual trigger
