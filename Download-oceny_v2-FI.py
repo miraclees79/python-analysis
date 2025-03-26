@@ -166,7 +166,7 @@ def compare_to_index(filename, index2_filename):
     
     
     # Get the price column name (e.g., 'Price', or any other column with prices)
-    prices_column_name = data_series_df.columns[1]  # Assuming the second column contains prices
+    prices_column_name = data_series_df.columns[0]  # Assuming the second column contains prices  - NOW CHANGED TO FIRST COLUMN
     
     print(f"For the prices of FI, I am using second column named:  {prices_column_name} ")
     
@@ -174,7 +174,7 @@ def compare_to_index(filename, index2_filename):
 
     # Get index-2 returns for comparison
     
-    index_2_column_name = data_index2_df.columns[1]
+    index_2_column_name = data_index2_df.columns[4]
     print(f"For the prices of index, the second column is named:  {index_2_column_name} ")
 
     index_2 = data_index2_df.iloc[:, 1]  # Assuming the second column of the index DataFrame
