@@ -108,46 +108,48 @@ def calculate_22_day_statistics(returns_22):
     return min_return, max_return, first_quartile
 
 def load_csv(filename):
-    # Read the CSV into a DataFrame with proper settings
     try:
         df = pd.read_csv(filename, on_bad_lines='skip', delimiter=',', decimal='.', encoding='utf-8')
     except Exception as e:
         logging.error(f"❌ Error reading CSV file: {e}")
         return None
 
-    if df.empty:
-        logging.warning("⚠️ The DataFrame is empty.")
+    if df.empty or df.columns.size == 0:
+        logging.error("❌ CSV file is empty or corrupted.")
         return None
 
-    # Strip any leading or trailing whitespace from the column names
-    # Strip leading/trailing spaces and inspect column names
+    # Strip whitespace and inspect column names
     df.columns = df.columns.str.strip()
     print("Available columns after stripping:", df.columns)
-    date_column = 'Data'  # Name of the date column in your CSV
-    
-    # Check if the date column exists; otherwise, warn and return None
+
+    date_column = 'Data'  # Expected date column
+
+    # Double-check the column names for hidden characters
     if date_column not in df.columns:
-        logging.warning(f"⚠️ Column '{date_column}' not found. Available columns: {list(df.columns)}")
+        exact_matches = [col for col in df.columns if col.strip() == date_column]
+        if exact_matches:
+            date_column = exact_matches[0]  # If a match is found, update the column name
+            logging.info(f"ℹ️ Using corrected column name: '{date_column}'")
+        else:
+            # If still not found, display and exit
+            logging.error(f"❌ Column '{date_column}' not found after processing. Available columns: {df.columns}")
+            return None
+
+    # Check if the date column contains valid data
+    if df[date_column].isnull().all():
+        logging.error(f"❌ Column '{date_column}' contains only NaN values.")
         return None
 
-    # Ensure the date column exists and convert it to datetime
-
-    if date_column not in df.columns:
-        logging.warning(f"⚠️ Warning: Column '{date_column}' not found. Available columns: {list(df.columns)}")
-        return None
-
-    # Convert the "Data" column to datetime format directly
+    # Convert to datetime, handling errors and dropping invalid dates
     df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
-
-    # Drop rows with invalid dates
     df.dropna(subset=[date_column], inplace=True)
 
-    # Sort the data by the "Data" column in ascending order
-    df = df.sort_values(by=date_column)
+    # Check if there are still valid dates left
+    if df.empty:
+        logging.error("❌ No valid dates after conversion. Data is discarded.")
+        return None
 
-    # Set the "Data" column as the index
-    df.set_index(date_column, inplace=True)
-    # Sort the data by the "Data" column in ascending order and set as index
+    # Sort by date and set as index
     df = df.sort_values(by=date_column).set_index(date_column)
 
     # Check 1: Discard the data if the newest observation is older than 10 days
