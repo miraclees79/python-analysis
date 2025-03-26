@@ -54,4 +54,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: csv-files
-          path: /tmp/out_index.csv, /tmp/out_series.csv
+          path: out_index.csv, out_series.csv
