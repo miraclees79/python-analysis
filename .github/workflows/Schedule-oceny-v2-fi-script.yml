@@ -2,8 +2,8 @@ name: Test oceny v2
 
 on:
   workflow_dispatch:  # Allows manual trigger
-  schedule:
-    - cron: "0 0 * * *"  # Runs daily at midn UTC
+ # schedule:
+ #   - cron: "0 0 * * *"  # Runs daily at midn UTC
 
 jobs: 
   process_stooq_data:
