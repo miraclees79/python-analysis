@@ -174,7 +174,7 @@ def compare_to_index(filename, index2_filename):
 
     # Get index-2 returns for comparison
     
-    index_2_column_name = data_index2_df.columns[4]
+    index_2_column_name = data_index2_df.columns[3]
     print(f"For the prices of index, the second column is named:  {index_2_column_name} ")
 
     index_2 = data_index2_df.iloc[:, 1]  # Assuming the second column of the index DataFrame
