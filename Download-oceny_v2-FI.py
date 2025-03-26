@@ -166,9 +166,9 @@ def compare_to_index(filename, index2_filename):
     
     
     # Get the price column name (e.g., 'Price', or any other column with prices)
-    prices_column_name = data_series_df.columns[0]  # Assuming the second column contains prices  - NOW CHANGED TO FIRST COLUMN
+    prices_column_name = data_series_df.columns[3]  # Assuming the second column contains prices  - USING Column indexed as 3 - close price
     
-    print(f"For the prices of FI, I am using second column named:  {prices_column_name} ")
+    print(f"For the prices of FI, I am using column named:  {prices_column_name} ")
     print(f"For the prices of FI, the columns ar named:  {data_series_df.columns[0] } {data_series_df.columns[1] } {data_series_df.columns[2] } {data_series_df.columns[3] }")
 
 
@@ -178,9 +178,10 @@ def compare_to_index(filename, index2_filename):
     
     index_2_column_name = data_index2_df.columns[3]
     print(f"For the index, the columns ar named:  {data_index2_df.columns[0] } {data_index2_df.columns[1] } {data_index2_df.columns[2] } {data_index2_df.columns[3] }")
+    print(f"For the prices of index, I am using column named:  {index_2_column_name} ")
+    index_2 = data_index2_df[index_2_column_name]
 
-
-    index_2 = data_index2_df.iloc[:, 1]  # Assuming the second column of the index DataFrame
+    # index_2 = data_index2_df.iloc[:, 1]  # Assuming the second column of the index DataFrame
     index_2_returns = {
         '22-day': calculate_returns(index_2, 22),
         '66-day': calculate_returns(index_2, 66),
