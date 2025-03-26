@@ -50,11 +50,3 @@ jobs:
           name: download-logs
           path: download.log
 
-      - name: Upload outfiles file as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: csv-files
-          path: |
-            out_index.csv
-            out_series.csv
-            index_2_returns.csv
