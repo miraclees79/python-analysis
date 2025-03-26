@@ -36,8 +36,8 @@ jobs:
 
       - name: Set range of indexes and run Python script
         env:
-          MIN_INDEX: 1006 
-          MAX_INDEX: 1010 
+          MIN_INDEX: 1006
+          MAX_INDEX: 1008 
           CSV_BASE_URL: ${{ secrets.CSV_BASE_URL }}
           FOLDER_NAME: ${{ secrets.FOLDER_NAME }} 
           

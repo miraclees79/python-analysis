@@ -160,17 +160,23 @@ def compare_to_index(filename, index2_filename):
     data_index2_df = data_index2_df.loc[common_dates]
     data_series_df = data_series_df.loc[common_dates]
     
-    data_index2_df.to_csv(os.path.join(tmp_dir, "out_index.csv"), index=False)
-    data_series_df.to_csv(os.path.join(tmp_dir, "out_series.csv"), index=False)
-    print("DataFrame has been saved to 'output.csv'.")
+    #data_index2_df.to_csv(os.path.join(tmp_dir, "out_index.csv"), index=False)
+    #data_series_df.to_csv(os.path.join(tmp_dir, "out_series.csv"), index=False)
+    #print("DataFrame has been saved to 'output.csv'.")
     
     
     # Get the price column name (e.g., 'Price', or any other column with prices)
     prices_column_name = data_series_df.columns[1]  # Assuming the second column contains prices
+    
+    print(f"For the prices of FI, I am using second column named:  {prices_column_name} ")
+    
     prices_column_series = data_series_df[prices_column_name]
 
     # Get index-2 returns for comparison
     
+    index_2_column_name = data_index2_df.columns[1]
+    print(f"For the prices of index, the second column is named:  {index_2_column_name} ")
+
     index_2 = data_index2_df.iloc[:, 1]  # Assuming the second column of the index DataFrame
     index_2_returns = {
         '22-day': calculate_returns(index_2, 22),
