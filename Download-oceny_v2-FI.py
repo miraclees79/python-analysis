@@ -120,7 +120,14 @@ def load_csv(filename):
         return None
 
     # Strip any leading or trailing whitespace from the column names
+    # Strip leading/trailing spaces and inspect column names
     df.columns = df.columns.str.strip()
+    print("Available columns after stripping:", df.columns)
+
+    # Check if the date column exists; otherwise, warn and return None
+    if date_column not in df.columns:
+        logging.warning(f"⚠️ Column '{date_column}' not found. Available columns: {list(df.columns)}")
+        return None
 
     # Ensure the date column exists and convert it to datetime
     date_column = 'Data'  # Name of the date column in your CSV
