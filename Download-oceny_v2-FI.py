@@ -330,8 +330,8 @@ def process_data(url, numer, filename, index1_filename, index2_filename, index3_
     
 
     if  data_series_df is None:
-        raise ValueError("Error loading fund data CSV file. Please check the logs.")
-
+        logging.error("Error loading fund data CSV file. Please check the logs.")
+        return None
 
     
     # Get the price column name (e.g., 'Price', or any other column with prices)
