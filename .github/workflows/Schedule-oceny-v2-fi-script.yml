@@ -57,3 +57,4 @@ jobs:
           path: |
             out_index.csv
             out_series.csv
+            index_2_returns.csv

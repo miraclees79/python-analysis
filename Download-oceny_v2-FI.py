@@ -194,6 +194,12 @@ def compare_to_index(filename, index2_filename):
         '252-day': calculate_returns(index_2, 252),
     }
 
+    # Combine the three return Series into a DataFrame
+    combined_returns_df = pd.DataFrame(index_2_returns)
+
+    # Save the DataFrame to a CSV file, keeping the index (e.g., dates)
+    combined_returns_df.to_csv(os.path.join(output_dir,"index_2_returns.csv"), index=True)
+
     # Calculate returns for the comparison series (your main data series)
     comparison_returns = {
         '22-day': calculate_returns(prices_column_series, 22),
@@ -345,7 +351,7 @@ def process_data(url, numer, filename, index1_filename, index2_filename, index3_
     result.extend([latest_252_day_return_index]) # Add the last 252 return of index
     
     # compare with index2
-    percentages, latest_252_day_return_series, latest_252_day_return_index  = compare_to_index(filename, index2_filename)
+    percentages, latest_252_day_return_series, latest_252_day_return_index  = compare_to_index(filename, index1_filename)
 
     # Display the results
     print("Comparison results:")
@@ -358,7 +364,7 @@ def process_data(url, numer, filename, index1_filename, index2_filename, index3_
     
     
     # compare with index3
-    percentages, latest_252_day_return_series, latest_252_day_return_index   = compare_to_index(filename, index3_filename)
+    percentages, latest_252_day_return_series, latest_252_day_return_index   = compare_to_index(filename, index1_filename)
 
     # Display the results
     print("Comparison results:")
@@ -370,7 +376,7 @@ def process_data(url, numer, filename, index1_filename, index2_filename, index3_
     result.extend([latest_252_day_return_index]) # Add the last 252 return of index
     
     # compare with index4
-    percentages, latest_252_day_return_series, latest_252_day_return_index   = compare_to_index(filename, index4_filename)
+    percentages, latest_252_day_return_series, latest_252_day_return_index   = compare_to_index(filename, index1_filename)
 
     # Display the results
     print("Comparison results:")
