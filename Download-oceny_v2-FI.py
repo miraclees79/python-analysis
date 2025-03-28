@@ -44,7 +44,7 @@ csv_filename_wbbwz = os.path.join(tmp_dir, "wbbwz.csv")
 
 # Base URLs
 csv_base_url = os.getenv('CSV_BASE_URL')
-# csv_base_url = os.getenv('CSV_BASE_URL')
+
 
 # List of User-Agent headers for different browsers
 USER_AGENTS = [
@@ -194,18 +194,15 @@ def compare_to_index(filename, index2_filename):
     #data_index2_df.to_csv(os.path.join(output_dir, "out_index.csv"), index=True)
     #data_series_df.to_csv(os.path.join(output_dir, "out_series.csv"), index=True)
 
-    #data_index2_df.to_csv("out_index.csv", index=False)
-    #data_series_df.to_csv("out_series.csv", index=False)
-    #print("DataFrame has been saved to 'output.csv'.")
-    
     
 
 
     # Get the price column name (e.g., 'Price', or any other column with prices)
-    prices_column_name = data_series_df.columns[3]  # Assuming the second column contains prices  - USING Column indexed as 3 - close price
+    prices_column_name = data_series_df.columns[3]  # - USING Column indexed as 3 - close price
     
-    #print(f"For the prices of FI, I am using column named:  {prices_column_name} ")
     #print(f"For the prices of FI, the columns ar named:  {data_series_df.columns[0] } {data_series_df.columns[1] } {data_series_df.columns[2] } {data_series_df.columns[3] }")
+    #print(f"For the prices of FI, I am using column named:  {prices_column_name} ")
+    
 
 
     prices_column_series = data_series_df[prices_column_name]
@@ -215,9 +212,10 @@ def compare_to_index(filename, index2_filename):
     index_2_column_name = data_index2_df.columns[3]
     #print(f"For the index, the columns ar named:  {data_index2_df.columns[0] } {data_index2_df.columns[1] } {data_index2_df.columns[2] } {data_index2_df.columns[3] }")
     #print(f"For the prices of index, I am using column named:  {index_2_column_name} ")
+    
     index_2 = data_index2_df[index_2_column_name]
 
-    # index_2 = data_index2_df.iloc[:, 1]  # Assuming the second column of the index DataFrame
+    
     index_2_returns = {
         '22-day': calculate_returns(index_2, 22),
         '66-day': calculate_returns(index_2, 66),
@@ -561,3 +559,6 @@ else:
 
 logging.info(f"Analysis complete. Extracted data from {len(cleaned_results)} pages saved in {file_name}.")
 
+# credentials cleanup
+if os.path.exists("/tmp/credentials.json"):
+    os.remove("/tmp/credentials.json")
