@@ -3,7 +3,7 @@ name: Download 3500 and analyse FI from Stooq
 on:
   workflow_dispatch:  # Allows manual trigger
   schedule:
-    - cron: "45 0 * * *"  # Runs daily at 0:45 UTC
+    - cron: "45 22 * * *"  # Runs daily at 22:45 UTC
 
 jobs: 
   process_stooq_data:
