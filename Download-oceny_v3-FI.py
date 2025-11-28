@@ -540,11 +540,11 @@ print(final_df.head())
 
 
 #credentials_path='/tmp/credentials.json'
-#credentials_path=os.path.join(tmp_dir, "credentials.json")
+credentials_path=os.path.join(tmp_dir, "credentials.json")
 
-#creds = service_account.Credentials.from_service_account_file(credentials_path, scopes=['https://www.googleapis.com/auth/drive'])
+creds = service_account.Credentials.from_service_account_file(credentials_path, scopes=['https://www.googleapis.com/auth/drive'])
 
-#drive_service = build('drive', 'v3', credentials=creds)
+drive_service = build('drive', 'v3', credentials=creds)
 
 # File details
 file_name = f"ocenyv2{min_index}.csv"
