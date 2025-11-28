@@ -58,85 +58,67 @@ USER_AGENTS = [
 # List to store all results
 all_results = []
 
-# Function to download the CSV file
-def download_csv(url, filename):
+def download_csv(url, filename, numer):
     try:
         headers = {"User-Agent": random.choice(USER_AGENTS)}
         logging.info(f"Downloading {url} with User-Agent: {headers['User-Agent']}")
+        
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-
-        content_type = response.headers.get("Content-Type", "")
-        if "text/csv" not in content_type and "text/plain" not in content_type:
-            logging.warning(f"Unexpected content type: {content_type}. Proceeding anyway...")
 
         if not response.content.strip():
             logging.warning(f"The file from {url} is empty.")
             return False
 
-        with open(filename, "wb") as file:
-            file.write(response.content)
+        # Save file locally
+        with open(filename, "wb") as f:
+            f.write(response.content)
 
-        if os.path.getsize(filename) == 0:
-            logging.warning(f"The downloaded file {filename} is empty.")
+        logging.info(f"Downloaded and saved: {filename}")
+
+        # Build Drive file name
+        file_name = f"historia{numer}.csv"
+
+        # Locate folder
+        folder_name = "Dane"
+        query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        res = drive_service.files().list(q=query, fields='files(id)').execute()
+        items = res.get('files', [])
+
+        if not items:
+            logging.error(f"Folder '{folder_name}' not found in Drive.")
             return False
 
-        logging.info(f"✅ Using User-Agent: {headers['User-Agent']} successfully downloaded: {filename}"  )
-        
-        
-        # File details
-        file_name = f"ocenyv2{min_index}.csv" #DO ZMIANY TU KONIEC PRACY NA RAZIE. PONIŻSZE LINIJKI DO FUNKCJI ABY ZAPISAĆ SCIAGNIETY PLIK CSV
+        folder_id = items[0]['id']
 
-        # Correctly get the folder ID (replace 'Dane' with the actual folder name)
-# folder_name = os.getenv('FOLDER_NAME')
-folder_name = 'Dane'
+        # Check if file exists in folder
+        query = f"name='{file_name}' and '{folder_id}' in parents and trashed=false"
+        res = drive_service.files().list(q=query, fields='files(id)').execute()
+        items = res.get('files', [])
 
-query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-results = drive_service.files().list(q=query, spaces='drive', fields='files(id)').execute()
-items = results.get('files', [])
+        with open(filename, "rb") as f:
+            media = MediaIoBaseUpload(f, mimetype='text/csv', resumable=True)
 
-if items:
-    folder_id = items[0]['id']
-else:
-    logging.error(f"❌ Folder '{folder_name}' not found in Google Drive.")
-    exit()
+            if items:
+                file_id = items[0]['id']
+                drive_service.files().update(fileId=file_id, media_body=media).execute()
+                logging.info(f"Updated file: {file_name}")
+            else:
+                metadata = {'name': file_name, 'parents': [folder_id]}
+                drive_service.files().create(body=metadata, media_body=media).execute()
+                logging.info(f"Created file: {file_name}")
 
-# Now use the correct folder ID in the file search query
-query = f"name='{file_name}' and '{folder_id}' in parents"
-results = drive_service.files().list(q=query, spaces='drive', fields='files(id)').execute()
-items = results.get('files', [])
-
-if items:
-    file_id = items[0]['id']
-    # Update the existing file as a new version
-    # The MediaIoBaseUpload class needs to be called directly, not as an attribute of drive_service.
-    media = MediaIoBaseUpload(io.BytesIO(csv_data), mimetype='text/csv', resumable=True)
-    updated_file = drive_service.files().update(fileId=file_id, media_body=media).execute()
-    print(f"File '{file_name}' updated as a new version. File ID: {file_id}")
-else:
-    # If the file doesn't exist, create it
-    file_metadata = {
-        'name': file_name,
-        'parents': [folder_id] 
-    }
-    # The MediaIoBaseUpload class needs to be called directly, not as an attribute of drive_service.
-    media = MediaIoBaseUpload(io.BytesIO(csv_data), mimetype='text/csv', resumable=True)
-    created_file = drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-    file_id = created_file.get('id')
-    print(f"File '{file_name}' created. File ID: {file_id}")
-        
         return True
 
     except requests.exceptions.Timeout:
-        logging.error(f"❌ Timeout error: The request to {url} took too long.")
+        logging.error(f"Timeout while downloading {url}")
     except requests.exceptions.HTTPError as e:
-        logging.error(f"❌ HTTP error: {e}")
-    except requests.exceptions.RequestException as e:
-        logging.error(f"❌ Request error: {e}")
+        logging.error(f"HTTP error: {e}")
     except Exception as e:
-        logging.error(f"❌ Unexpected error: {e}")
+        logging.error(f"Unexpected error: {e}")
 
     return False
+    
 
 # Function to calculate returns for given periods
 def calculate_returns(series, periods):
@@ -365,8 +347,8 @@ def compare_to_index_portfolio(filename, index1_filename, index2_filename, index
 # Main function to process the data
 def process_data(url, numer, filename, index1_filename, index2_filename, index3_filename, index4_filename):
     
-    # download the fund data for analysi
-    download_csv(url, filename)
+    # download the fund data for analysis
+    download_csv(url, filename, numer)
     data_series_df = load_csv(filename)
  
     
@@ -486,10 +468,10 @@ max_index = int(os.getenv('MAX_INDEX'))
 
 # download indexes for comparispn
 
-download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr)
-download_csv('https://stooq.pl/q/d/l/?s=mwig40tr&i=d', csv_filename_m40tr)
-download_csv('https://stooq.pl/q/d/l/?s=swig80tr&i=d', csv_filename_s80tr)
-download_csv('https://stooq.pl/q/d/l/?s=^gpwbbwz&i=d', csv_filename_wbbwz)
+download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr, 'w20tr')
+download_csv('https://stooq.pl/q/d/l/?s=mwig40tr&i=d', csv_filename_m40tr, 'm40tr')
+download_csv('https://stooq.pl/q/d/l/?s=swig80tr&i=d', csv_filename_s80tr, 's80tr')
+download_csv('https://stooq.pl/q/d/l/?s=^gpwbbwz&i=d', csv_filename_wbbwz, 'wbbwz')
 
 credentials_path=os.path.join(tmp_dir, "credentials.json")
 
