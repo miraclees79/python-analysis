@@ -485,7 +485,7 @@ drive_service = build('drive', 'v3', credentials=creds)
 
 
 
-for xxxx in range(min_index, max_index):
+for xxxx in range(min_index, max_index+1):
     csv_url = csv_base_url.format(xxxx)
     
 
