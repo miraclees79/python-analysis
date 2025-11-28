@@ -195,6 +195,9 @@ def load_csv(filename):
         logging.info(f"ℹ️ Data contains a break longer than 30 days. Keeping data from {last_valid_date} onward.")
     
     logging.info("✅ CSV file loaded successfully and processed.")
+
+
+    
     return df
     
 
@@ -294,7 +297,7 @@ def compare_to_index_portfolio(filename, index1_filename, index2_filename, index
     prices_column_series = data_series_df[prices_column_name]
 
     # Get index-1 returns for comparison
-    index_1 = data_index2_df.iloc[:, 1]  # Assuming the second column of the index DataFrame
+    index_1 = data_index1_df.iloc[:, 1]  # Assuming the second column of the index DataFrame
     index_1_returns = {
         '22-day': calculate_returns(index_1, 22),
         '66-day': calculate_returns(index_1, 66),
