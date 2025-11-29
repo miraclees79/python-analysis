@@ -471,10 +471,10 @@ max_index = int(os.getenv('MAX_INDEX'))
 
 # download indexes for comparispn
 
-download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr, 'w20tr')
-download_csv('https://stooq.pl/q/d/l/?s=mwig40tr&i=d', csv_filename_m40tr, 'm40tr')
-download_csv('https://stooq.pl/q/d/l/?s=swig80tr&i=d', csv_filename_s80tr, 's80tr')
-download_csv('https://stooq.pl/q/d/l/?s=^gpwbbwz&i=d', csv_filename_wbbwz, 'wbbwz')
+download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr, 9020)
+download_csv('https://stooq.pl/q/d/l/?s=mwig40tr&i=d', csv_filename_m40tr, 9040)
+download_csv('https://stooq.pl/q/d/l/?s=swig80tr&i=d', csv_filename_s80tr, 9080)
+download_csv('https://stooq.pl/q/d/l/?s=^gpwbbwz&i=d', csv_filename_wbbwz, 9090)
 
 credentials_path=os.path.join(tmp_dir, "credentials.json")
 
