@@ -469,20 +469,19 @@ max_index = int(os.getenv('MAX_INDEX'))
 # max_index = 1008
 
 
-# download indexes for comparispn
 
-download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr, 9020)
-download_csv('https://stooq.pl/q/d/l/?s=mwig40tr&i=d', csv_filename_m40tr, 9040)
-download_csv('https://stooq.pl/q/d/l/?s=swig80tr&i=d', csv_filename_s80tr, 9080)
-download_csv('https://stooq.pl/q/d/l/?s=^gpwbbwz&i=d', csv_filename_wbbwz, 9090)
+
 
 credentials_path=os.path.join(tmp_dir, "credentials.json")
-
 creds = service_account.Credentials.from_service_account_file(credentials_path, scopes=['https://www.googleapis.com/auth/drive'])
-
 drive_service = build('drive', 'v3', credentials=creds)
+# download indexes for comparison
+download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr, 'w20t')
+download_csv('https://stooq.pl/q/d/l/?s=mwig40tr&i=d', csv_filename_m40tr, 'm40t')
+download_csv('https://stooq.pl/q/d/l/?s=swig80tr&i=d', csv_filename_s80tr, 's80t')
+download_csv('https://stooq.pl/q/d/l/?s=^gpwbbwz&i=d', csv_filename_wbbwz, 'wbbw')
 
-
+# separate download
 
 
 for xxxx in range(min_index, max_index+1):
@@ -542,7 +541,7 @@ print(final_df.head())
 
 
 
-#credentials_path='/tmp/credentials.json'
+
 credentials_path=os.path.join(tmp_dir, "credentials.json")
 
 creds = service_account.Credentials.from_service_account_file(credentials_path, scopes=['https://www.googleapis.com/auth/drive'])
