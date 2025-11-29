@@ -154,7 +154,7 @@ id_list = [
 
 for xxxx in id_list:
     xxxx_lcase = xxxx.lower()
-    csv_url = csv_base_url.format(xxxx)
+    csv_url = csv_base_url.format(xxxx_lcase)
 
     download_csv(csv_url, csv_filename, xxxx)
   
