@@ -38,8 +38,8 @@ csv_filename = os.path.join(tmp_dir, "data.csv")
 
 
 # Base URLs
-csv_base_url = os.getenv('CSV_BASE_URL')
 
+csv_base_url = "https://stooq.pl/q/d/l/?s={}&i=d"
 
 # List of User-Agent headers for different browsers
 USER_AGENTS = [
