@@ -2,7 +2,7 @@ name: Test oceny v2
 
 on:
   workflow_dispatch:  # Allows manual trigger
- # schedule:
+ # schedule: ONLY MANUAL
  #   - cron: "0 0 * * *"  # Runs daily at midn UTC
 
 jobs: 
