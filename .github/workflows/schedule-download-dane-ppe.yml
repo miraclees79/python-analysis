@@ -3,7 +3,7 @@ name: Download dane PPE
 on:
   schedule:
     # This cron expression runs the workflow once every 24 hours (UTC time)
-    - cron: '0 23 * * *'   # This means every day at 1 am (UTC)
+    - cron: '0 23 * * *'   # This means every day at 23 00 (UTC)
   workflow_dispatch:   # This allows the workflow to be triggered manually
 
 jobs:
