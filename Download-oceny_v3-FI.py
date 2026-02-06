@@ -55,6 +55,14 @@ USER_AGENTS = [
 ]
 
 
+def get_folder_id(name):
+    query = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    res = drive_service.files().list(q=query, fields='files(id)').execute()
+    items = res.get('files', [])
+    return items[0]['id'] if items else None
+
+
+
 # List to store all results
 all_results = []
 
@@ -80,16 +88,17 @@ def download_csv(url, filename, numer):
         file_name = f"historia{numer}.csv"
 
         # Locate folder
-        folder_name = "Dane"
-        query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        res = drive_service.files().list(q=query, fields='files(id)').execute()
-        items = res.get('files', [])
+        #folder_name = "Dane"
+        #query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        #res = drive_service.files().list(q=query, fields='files(id)').execute()
+        #items = res.get('files', [])
 
-        if not items:
-            logging.error(f"Folder '{folder_name}' not found in Drive.")
-            return False
+        #if not items:
+        #    logging.error(f"Folder '{folder_name}' not found in Drive.")
+        #    return False
 
-        folder_id = items[0]['id']
+        #folder_id = items[0]['id']
+        folder_id = FOLDER_ID
 
         # Check if file exists in folder
         query = f"name='{file_name}' and '{folder_id}' in parents and trashed=false"
@@ -202,10 +211,10 @@ def load_csv(filename):
     
 
 # Comparison with index
-def compare_to_index(filename, index2_filename):
+def compare_to_index(filename, index2_df):
     # Comparison with Index-2
     data_series_df = load_csv(filename)
-    data_index2_df = load_csv(index2_filename)
+    data_index2_df = index2_df
     
 
     if data_index2_df is None or data_series_df is None:
@@ -274,12 +283,12 @@ def compare_to_index(filename, index2_filename):
 
 
 # Comparison with index
-def compare_to_index_portfolio(filename, index1_filename, index2_filename, index3_filename):
+def compare_to_index_portfolio(filename, index1_df, index2_df, index3_df):
     # Comparison with average of Indexes 1 to 3
     data_series_df = load_csv(filename)
-    data_index1_df = load_csv(index1_filename)
-    data_index2_df = load_csv(index2_filename)
-    data_index3_df = load_csv(index3_filename)
+    data_index1_df = index1_df
+    data_index2_df = index2_df
+    data_index3_df = index3_df
 
     if data_index2_df is None or data_series_df is None or data_index1_df is None or data_index3_df is None:
         raise ValueError("Error loading one or more CSV files. Please check the logs.")
@@ -348,7 +357,7 @@ def compare_to_index_portfolio(filename, index1_filename, index2_filename, index
 
 
 # Main function to process the data
-def process_data(url, numer, filename, index1_filename, index2_filename, index3_filename, index4_filename):
+def process_data(url, numer, filename, index1_df, index2_df, index3_df, index4_df):
     
     # download the fund data for analysis
     download_csv(url, filename, numer)
@@ -384,7 +393,7 @@ def process_data(url, numer, filename, index1_filename, index2_filename, index3_
     newest_22_day_return = returns_22_series.iloc[-1] if len(returns_22_series) > 0 else None
 
     # compare with index1
-    percentages, latest_252_day_return_series, latest_252_day_return_index  = compare_to_index(filename, index1_filename)
+    percentages, latest_252_day_return_series, latest_252_day_return_index  = compare_to_index(filename, index1_df)
 
     # Display the results
     print("Comparison results:")
@@ -407,7 +416,7 @@ def process_data(url, numer, filename, index1_filename, index2_filename, index3_
     result.extend([latest_252_day_return_index]) # Add the last 252 return of index
     
     # compare with index2
-    percentages, latest_252_day_return_series, latest_252_day_return_index  = compare_to_index(filename, index2_filename)
+    percentages, latest_252_day_return_series, latest_252_day_return_index  = compare_to_index(filename, index2_df)
 
     # Display the results
     print("Comparison results:")
@@ -420,7 +429,7 @@ def process_data(url, numer, filename, index1_filename, index2_filename, index3_
     
     
     # compare with index3
-    percentages, latest_252_day_return_series, latest_252_day_return_index   = compare_to_index(filename, index3_filename)
+    percentages, latest_252_day_return_series, latest_252_day_return_index   = compare_to_index(filename, index3_df)
 
     # Display the results
     print("Comparison results:")
@@ -432,7 +441,7 @@ def process_data(url, numer, filename, index1_filename, index2_filename, index3_
     result.extend([latest_252_day_return_index]) # Add the last 252 return of index
     
     # compare with index4
-    percentages, latest_252_day_return_series, latest_252_day_return_index   = compare_to_index(filename, index4_filename)
+    percentages, latest_252_day_return_series, latest_252_day_return_index   = compare_to_index(filename, index4_df)
 
     # Display the results
     print("Comparison results:")
@@ -445,7 +454,7 @@ def process_data(url, numer, filename, index1_filename, index2_filename, index3_
 
     # compare with average returns of indexes 1-3 (return on equal weight portfolio in each index)
 
-    percentages, latest_252_day_return_index = compare_to_index_portfolio(filename, index1_filename, index2_filename, index3_filename)
+    percentages, latest_252_day_return_index = compare_to_index_portfolio(filename, index1_df, index2_df, index3_df)
 
     # Display the results
     print("Comparison results:")
@@ -475,11 +484,23 @@ max_index = int(os.getenv('MAX_INDEX'))
 credentials_path=os.path.join(tmp_dir, "credentials.json")
 creds = service_account.Credentials.from_service_account_file(credentials_path, scopes=['https://www.googleapis.com/auth/drive'])
 drive_service = build('drive', 'v3', credentials=creds)
+
+# get folder ID
+FOLDER_ID = get_folder_id("Dane")
+
 # download indexes for comparison
 download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr, 'w20t')
 download_csv('https://stooq.pl/q/d/l/?s=mwig40tr&i=d', csv_filename_m40tr, 'm40t')
 download_csv('https://stooq.pl/q/d/l/?s=swig80tr&i=d', csv_filename_s80tr, 's80t')
 download_csv('https://stooq.pl/q/d/l/?s=^gpwbbwz&i=d', csv_filename_wbbwz, 'wbbw')
+
+# convert to dataframes
+
+INDEX_W20 = load_csv(csv_filename_w20tr)
+INDEX_M40 = load_csv(csv_filename_m40tr)
+INDEX_S80 = load_csv(csv_filename_s80tr)
+INDEX_WBBW = load_csv(csv_filename_wbbwz)
+
 
 # separate download
 
@@ -489,7 +510,7 @@ for xxxx in range(min_index, max_index+1):
     
 
     logging.info(f"Processing: {csv_url}")
-    result = process_data(csv_url, xxxx, csv_filename, csv_filename_w20tr, csv_filename_m40tr,csv_filename_s80tr,csv_filename_wbbwz)
+    result = process_data(csv_url, xxxx, csv_filename, INDEX_W20, INDEX_M40, INDEX_S80, INDEX_WBBW)
 
     all_results.append(result)
   
@@ -497,7 +518,7 @@ for xxxx in range(min_index, max_index+1):
     if os.path.exists(csv_filename):
         os.remove(csv_filename)
     
-    delay = random.uniform(0, 5)
+    delay = random.uniform(0.3, 1)
 
     logging.info(f"Sleeping for {delay:.2f} seconds...")
     time.sleep(delay)
@@ -551,19 +572,7 @@ drive_service = build('drive', 'v3', credentials=creds)
 # File details
 file_name = f"ocenyv2{min_index}.csv"
 
-# Correctly get the folder ID (replace 'Dane' with the actual folder name)
-# folder_name = os.getenv('FOLDER_NAME')
-folder_name = 'Dane'
 
-query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-results = drive_service.files().list(q=query, spaces='drive', fields='files(id)').execute()
-items = results.get('files', [])
-
-if items:
-    folder_id = items[0]['id']
-else:
-    logging.error(f"❌ Folder '{folder_name}' not found in Google Drive.")
-    exit()
 
 # Now use the correct folder ID in the file search query
 query = f"name='{file_name}' and '{folder_id}' in parents"
