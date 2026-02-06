@@ -575,7 +575,7 @@ file_name = f"ocenyv2{min_index}.csv"
 
 
 # Now use the correct folder ID in the file search query
-query = f"name='{file_name}' and '{folder_id}' in parents"
+query = f"name='{file_name}' and '{FOLDER_ID}' in parents"
 results = drive_service.files().list(q=query, spaces='drive', fields='files(id)').execute()
 items = results.get('files', [])
 
@@ -590,7 +590,7 @@ else:
     # If the file doesn't exist, create it
     file_metadata = {
         'name': file_name,
-        'parents': [folder_id] 
+        'parents': [FOLDER_ID] 
     }
     # The MediaIoBaseUpload class needs to be called directly, not as an attribute of drive_service.
     media = MediaIoBaseUpload(io.BytesIO(csv_data), mimetype='text/csv', resumable=True)
