@@ -32,6 +32,8 @@ logging.getLogger().addHandler(console_handler)
 # Get the temporary directory
 tmp_dir = tempfile.gettempdir()
 logging.info(f"Temporary directory: {tmp_dir}")
+# %%
+
 
 # Create a temporary file inside the temp directory # Filepath for CSV
 csv_filename = os.path.join(tmp_dir, "data.csv")
@@ -165,6 +167,201 @@ def load_csv(filename):
     
 
 
+# ============================
+# Indicators
+# ============================
+
+def compute_ma(series, window):
+    return series.rolling(window).mean()
+
+
+def compute_momentum(series, lookback=252, skip=21):
+    return series.shift(skip) / series.shift(lookback) - 1
+
+
+# ============================
+# Performance Metrics
+# ============================
+
+def compute_metrics(equity, freq=252):
+
+    ret = equity.pct_change().dropna()
+
+    cagr = (equity.iloc[-1] / equity.iloc[0])**(freq/len(ret)) - 1
+    vol = ret.std() * np.sqrt(freq)
+    sharpe = cagr / vol if vol > 0 else 0
+
+    cummax = equity.cummax()
+    drawdown = equity / cummax - 1
+    max_dd = drawdown.min()
+
+    return {
+        "CAGR": cagr,
+        "Vol": vol,
+        "Sharpe": sharpe,
+        "MaxDD": max_dd
+    }
+
+
+# ============================
+# Strategy Engine
+# ============================
+
+def run_strategy(
+    df,
+    X=0.2,
+    Y=0.1,
+    ma_window=200,
+    use_momentum=True,
+    safe_rate=0.0
+):
+
+    df = df.copy()
+
+    # Indicators
+    df["MA"] = compute_ma(df["price"], ma_window)
+
+    if use_momentum:
+        df["MOM"] = compute_momentum(df["price"])
+    else:
+        df["MOM"] = 1
+
+    # Trend filter
+    df["FILTER"] = (
+        (df["price"] > df["MA"]) &
+        (df["MOM"] > 0)
+    )
+
+    state = "OUT"
+    equity = 1.0
+    equity_curve = []
+
+    M = None  # rolling max
+    m = None  # rolling min
+
+    prev_price = df["price"].iloc[0]
+
+    for i, row in df.iterrows():
+
+        price = row["price"]
+        filter_on = row["FILTER"]
+
+        # -------------------
+        # IN Market
+        # -------------------
+        if state == "IN":
+
+            M = max(M, price)
+
+            ret = price / prev_price
+
+            equity *= ret
+
+            # Exit
+            if (price < (1-X)*M) or not filter_on:
+
+                state = "OUT"
+                m = price
+
+        # -------------------
+        # OUT of Market
+        # -------------------
+        else:
+
+            equity *= (1 + safe_rate/252)
+
+            m = price if m is None else min(m, price)
+
+            # Entry
+            if (price > (1+Y)*m) and filter_on:
+
+                state = "IN"
+                M = price
+
+        equity_curve.append(equity)
+        prev_price = price
+
+    df["equity"] = equity_curve
+
+    metrics = compute_metrics(df["equity"])
+
+    return df, metrics
+
+
+
+def walk_forward(
+    df,
+    train_years=8,
+    test_years=2
+):
+
+    results = []
+
+    dates = df.index
+
+    start = dates.min()
+
+    while True:
+
+        train_start = start
+        train_end = train_start + pd.DateOffset(years=train_years)
+        test_end = train_end + pd.DateOffset(years=test_years)
+
+        train = df.loc[train_start:train_end]
+        test = df.loc[train_end:test_end]
+
+        if len(test) < 200:
+            break
+
+        best = None
+        best_score = -np.inf
+
+        # Parameter grid (small!)
+        for X in [0.15, 0.2, 0.25]:
+            for Y in [0.05, 0.1, 0.15]:
+                for ma in [150, 200, 250]:
+
+                    _, m = run_strategy(
+                        train,
+                        X=X,
+                        Y=Y,
+                        ma_window=ma
+                    )
+
+                    score = (
+                        m["CAGR"]
+                        - 0.5*m["Vol"]
+                        + 0.2*m["Sharpe"]
+                    )
+
+                    if score > best_score:
+                        best_score = score
+                        best = (X, Y, ma)
+
+        # Run on test
+        X, Y, ma = best
+
+        test_df, test_metrics = run_strategy(
+            test,
+            X=X,
+            Y=Y,
+            ma_window=ma
+        )
+
+        results.append({
+            "start": train_start,
+            "X": X,
+            "Y": Y,
+            "MA": ma,
+            **test_metrics
+        })
+
+        start += pd.DateOffset(years=test_years)
+
+    return pd.DataFrame(results)
+
+
+
 
 # Main function to process the data
 def process_data(url, numer, filename, index1_df, index2_df, index3_df, index4_df):
@@ -182,121 +379,26 @@ def process_data(url, numer, filename, index1_df, index2_df, index3_df, index4_d
     
     # Get the price column name (e.g., 'Price', or any other column with prices)
     prices_column_name = data_series_df.columns[1]  # Assuming the second column contains prices
-    prices_column_series = data_series_df[prices_column_name]
+   # prices_column_series = data_series_df[prices_column_name]
 
     # Calculate daily returns
-    daily_returns_series = calculate_returns(prices_column_series, 1)
+    # daily_returns_series = calculate_returns(prices_column_series, 1)
 
-    # Calculate 22-day returns
-    returns_22_series = calculate_returns(prices_column_series, 22)
-
-    # Check if we have enough data points
-    if len(daily_returns_series) == 0 or len(returns_22_series) == 0:
-        logging.warning("⚠️ Not enough data to calculate returns.")
-        return None
-
-    # Calculate statistics for the last 66 22-day returns
-    min_return, max_return, first_quartile = calculate_22_day_statistics(returns_22_series)
-
-    # Get the newest 1-day and 22-day returns
-    newest_1_day_return = daily_returns_series.iloc[-1] if len(daily_returns_series) > 0 else None
-    newest_22_day_return = returns_22_series.iloc[-1] if len(returns_22_series) > 0 else None
-
-    # compare with index1
-    percentages, latest_252_day_return_series, latest_252_day_return_index  = compare_to_index(filename, index1_df)
-
-    # Display the results
-    print("Comparison results:")
-    for period, percentage in percentages.items():
-        print(f"  {period} return: {percentage:.2f}% of events where the comparison series had a higher return than Index 1")
     
-    # Save the required data into an array
-    result = [
-        numer,  # numer kolejny
-        min_return,  # Minimum of the last 66 22-day returns
-        max_return,  # Maximum of the last 66 22-day returns
-        first_quartile,  # First quartile of the last 66 22-day returns
-        newest_1_day_return,  # Newest 1-day return
-        newest_22_day_return,  # Newest 22-day return
-        latest_252_day_return_series # Newest 252-day return
-    ]
 
-    # Add percentages to the result array
-    result.extend(list(percentages.values()))  # Add the values from percentages (22-day, 66-day, 252-day)  
-    result.extend([latest_252_day_return_index]) # Add the last 252 return of index
-    
-    # compare with index2
-    percentages, latest_252_day_return_series, latest_252_day_return_index  = compare_to_index(filename, index2_df)
 
-    # Display the results
-    print("Comparison results:")
-    for period, percentage in percentages.items():
-        print(f"  {period} return: {percentage:.2f}% of events where the comparison series had a higher return than Index 2")
 
-    # Add percentages to the result array
-    result.extend(list(percentages.values()))  # Add the values from percentages (22-day, 66-day, 252-day)  
-    result.extend([latest_252_day_return_index]) # Add the last 252 return of index
-    
-    
-    # compare with index3
-    percentages, latest_252_day_return_series, latest_252_day_return_index   = compare_to_index(filename, index3_df)
-
-    # Display the results
-    print("Comparison results:")
-    for period, percentage in percentages.items():
-        print(f"  {period} return: {percentage:.2f}% of events where the comparison series had a higher return than Index 3")
-
-    # Add percentages to the result array
-    result.extend(list(percentages.values()))  # Add the values from percentages (22-day, 66-day, 252-day)  
-    result.extend([latest_252_day_return_index]) # Add the last 252 return of index
-    
-    # compare with index4
-    percentages, latest_252_day_return_series, latest_252_day_return_index   = compare_to_index(filename, index4_df)
-
-    # Display the results
-    print("Comparison results:")
-    for period, percentage in percentages.items():
-        print(f"  {period} return: {percentage:.2f}% of events where the comparison series had a higher return than Index 4")
-
-    # Add percentages to the result array
-    result.extend(list(percentages.values()))  # Add the values from percentages (22-day, 66-day, 252-day)  
-    result.extend([latest_252_day_return_index]) # Add the last 252 return of index
-
-    # compare with average returns of indexes 1-3 (return on equal weight portfolio in each index)
-
-    percentages, latest_252_day_return_index = compare_to_index_portfolio(filename, index1_df, index2_df, index3_df)
-
-    # Display the results
-    print("Comparison results:")
-    for period, percentage in percentages.items():
-        print(f"  {period} return: {percentage:.2f}% of events where the comparison series had a higher return than average return on indexes 1 through 3")
-
-    # Add percentages to the result array
-    result.extend(list(percentages.values()))  # Add the values from percentages (22-day, 66-day, 252-day)  
-    result.extend([latest_252_day_return_index]) # Add the last 252 return of index
-
-    logging.info("✅ Processed Data: %s", result)
     return result
 
 
 
   
-  # Loop through each XXXX value
-min_index = int(os.getenv('MIN_INDEX'))
-# min_index = 1007
-max_index = int(os.getenv('MAX_INDEX'))
-# max_index = 1008
 
 
 
 
 
-credentials_path=os.path.join(tmp_dir, "credentials.json")
-creds = service_account.Credentials.from_service_account_file(credentials_path, scopes=['https://www.googleapis.com/auth/drive'])
-drive_service = build('drive', 'v3', credentials=creds)
 
-# get folder ID
-FOLDER_ID = get_folder_id("Dane")
 
 # download indexes for comparison
 download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr, 'w20t')
@@ -312,104 +414,7 @@ INDEX_S80 = load_csv(csv_filename_s80tr)
 INDEX_WBBW = load_csv(csv_filename_wbbwz)
 
 
-# separate download
-
-
-for xxxx in range(min_index, max_index+1):
-    csv_url = csv_base_url.format(xxxx)
-    
-
-    logging.info(f"Processing: {csv_url}")
-    result = process_data(csv_url, xxxx, csv_filename, INDEX_W20, INDEX_M40, INDEX_S80, INDEX_WBBW)
-
-    all_results.append(result)
-  
-    # Delete CSV file after processing
-    if os.path.exists(csv_filename):
-        os.remove(csv_filename)
-    
-    delay = random.uniform(0.3, 1)
-
-    logging.info(f"Sleeping for {delay:.2f} seconds...")
-    time.sleep(delay)
-
-    logging.info("Done!")  # Optional delay
-    
-  # Convert results to DataFrame and save
-cleaned_results = [row for row in all_results if row is not None]
-final_df = pd.DataFrame(cleaned_results, 
-                        columns=["Numer", 
-                                 "Min 22-day Return", 
-                                 "Max 22-day Return", 
-                                 "1st Quartile", 
-                                 "Latest 1-day Return", 
-                                 "Latest 22-day Return",
-                                 "Latest 252-day Return",
-                                 "Percentage of beating WIG20TR over 22D",
-                                 "Percentage of beating WIG20TR over 66D", 
-                                 "Percentage of beating WIG20TR over 252D",
-                                 "Latest 252-day Return - WIG20TR",
-                                 "Percentage of beating mWIG40TR over 22D",
-                                 "Percentage of beating mWIG40TR over 66D", 
-                                 "Percentage of beating mWIG40TR over 252D",
-                                 "Latest 252-day Return - mWIG40TR",
-                                 "Percentage of beating sWIG80TR over 22D",
-                                 "Percentage of beating sWIG80TR over 66D", 
-                                 "Percentage of beating sWIG80TR over 252D",
-                                 "Latest 252-day Return - sWIG80TR",
-                                 "Percentage of beating GPWB-BWZ over 22D",
-                                 "Percentage of beating GPWB-BWZ over 66D", 
-                                 "Percentage of beating GPWB-BWZ over 252D",
-                                 "Latest 252-day Return - GPWB-BWZ",
-                                 "Percentage of beating AVG204080 over 22D",
-                                 "Percentage of beating AVG204080 over 66D", 
-                                 "Percentage of beating AVG204080 over 252D",
-                                 "Latest 252-day Return - AVG204080"
-                                 ])
-csv_data = final_df.to_csv(index=False, header=True, sep=";").encode('utf-8')
-print(final_df.head())
 
 
 
 
-
-credentials_path=os.path.join(tmp_dir, "credentials.json")
-
-creds = service_account.Credentials.from_service_account_file(credentials_path, scopes=['https://www.googleapis.com/auth/drive'])
-
-drive_service = build('drive', 'v3', credentials=creds)
-
-# File details
-file_name = f"ocenyv2{min_index}.csv"
-
-
-
-# Now use the correct folder ID in the file search query
-query = f"name='{file_name}' and '{FOLDER_ID}' in parents"
-results = drive_service.files().list(q=query, spaces='drive', fields='files(id)').execute()
-items = results.get('files', [])
-
-if items:
-    file_id = items[0]['id']
-    # Update the existing file as a new version
-    # The MediaIoBaseUpload class needs to be called directly, not as an attribute of drive_service.
-    media = MediaIoBaseUpload(io.BytesIO(csv_data), mimetype='text/csv', resumable=True)
-    updated_file = drive_service.files().update(fileId=file_id, media_body=media).execute()
-    print(f"File '{file_name}' updated as a new version. File ID: {file_id}")
-else:
-    # If the file doesn't exist, create it
-    file_metadata = {
-        'name': file_name,
-        'parents': [FOLDER_ID] 
-    }
-    # The MediaIoBaseUpload class needs to be called directly, not as an attribute of drive_service.
-    media = MediaIoBaseUpload(io.BytesIO(csv_data), mimetype='text/csv', resumable=True)
-    created_file = drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-    file_id = created_file.get('id')
-    print(f"File '{file_name}' created. File ID: {file_id}")
-
-logging.info(f"Analysis complete. Extracted data from {len(cleaned_results)} pages saved in {file_name}.")
-
-# credentials cleanup
-if os.path.exists("/tmp/credentials.json"):
-    os.remove("/tmp/credentials.json")

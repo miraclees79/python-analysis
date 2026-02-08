@@ -1,0 +1,13 @@
+2026-02-08 14:17:09,680 - INFO - Temporary directory: C:\Users\adamg\AppData\Local\Temp
+2026-02-08 14:17:09,682 - INFO - Downloading https://stooq.pl/q/d/l/?s=wig20tr&i=d with User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 11_5_2) AppleWebKit/537.36 (KHTML, like Gecko) Safari/605.1.15
+2026-02-08 14:17:10,324 - INFO - Downloaded and saved: C:\Users\adamg\AppData\Local\Temp\w20tr.csv
+2026-02-08 14:17:10,326 - INFO - Downloading https://stooq.pl/q/d/l/?s=mwig40tr&i=d with User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36
+2026-02-08 14:17:10,919 - INFO - Downloaded and saved: C:\Users\adamg\AppData\Local\Temp\m40tr.csv
+2026-02-08 14:17:10,921 - INFO - Downloading https://stooq.pl/q/d/l/?s=swig80tr&i=d with User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/118.0
+2026-02-08 14:17:11,509 - INFO - Downloaded and saved: C:\Users\adamg\AppData\Local\Temp\s80tr.csv
+2026-02-08 14:17:11,510 - INFO - Downloading https://stooq.pl/q/d/l/?s=^gpwbbwz&i=d with User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/118.0
+2026-02-08 14:17:11,999 - INFO - Downloaded and saved: C:\Users\adamg\AppData\Local\Temp\wbbwz.csv
+2026-02-08 14:17:12,019 - INFO - \u2705 CSV file loaded successfully and processed.
+2026-02-08 14:17:12,034 - INFO - \u2705 CSV file loaded successfully and processed.
+2026-02-08 14:17:12,052 - INFO - \u2705 CSV file loaded successfully and processed.
+2026-02-08 14:17:12,066 - INFO - \u2705 CSV file loaded successfully and processed.
