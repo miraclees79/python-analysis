@@ -34,7 +34,7 @@ jobs:
           
    
 
-      #- name: Set range of indexes and run Python script
+      - name: run Python script, possibly later define list of indexes
       #  env:
       #    MIN_INDEX: 1006
       #    MAX_INDEX: 1008 
