@@ -23,14 +23,14 @@ jobs:
           pip install  pandas numpy requests  google-api-python-client
 
       
-      - name: Create Google Credentials File
-        run: |
-          echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
+      #- name: Create Google Credentials File
+      #  run: |
+      #    echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
           
      
-      - name: Validate JSON Format
-        run: |
-          python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
+      #- name: Validate JSON Format
+      #  run: |
+      #    python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
           
    
 
