@@ -325,7 +325,7 @@ def walk_forward(
 
                     _, m = run_strategy(
                         train,
-                        price_col="Zamkniecie"
+                        price_col="Zamkniecie",
                         X=X,
                         Y=Y,
                         ma_window=ma
