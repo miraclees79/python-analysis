@@ -377,7 +377,7 @@ INDEX_W20 = load_csv(csv_filename_w20tr)
 df = INDEX_W20
 
 # Basic backtest
-bt, metrics = run_strategy(df)
+bt, metrics = run_strategy(df, price_col="Zamkniecie")
 
 print("Single Run:")
 print(metrics)
