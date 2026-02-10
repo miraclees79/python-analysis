@@ -178,7 +178,16 @@ def compute_ma(series, window):
 def compute_momentum(series, lookback=252, skip=21):
     return series.shift(skip) / series.shift(lookback) - 1
 
+def add_dual_ma(df, fast=50, slow=200):
 
+    df["ma_fast"] = df["price"].rolling(fast).mean()
+    df["ma_slow"] = df["price"].rolling(slow).mean()
+
+    # Trend regime: 1 = bull, 0 = bear
+    df["trend"] = (df["ma_fast"] > df["ma_slow"]).astype(int)
+
+    return df
+    
 # ============================
 # Performance Metrics
 # ============================
