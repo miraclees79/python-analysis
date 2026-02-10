@@ -346,7 +346,7 @@ def walk_forward(
 
         test_df, test_metrics = run_strategy(
             test,
-            price_col="Zamkniecie"
+            price_col="Zamkniecie",
             X=X,
             Y=Y,
             ma_window=ma
