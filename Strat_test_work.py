@@ -209,7 +209,7 @@ def compute_metrics(equity, freq=252):
 
 def run_strategy(
     df,
-    price_col,
+    price_col="price",
     X=0.2,
     Y=0.1,
     ma_window=200,
@@ -325,7 +325,7 @@ def walk_forward(
 
                     _, m = run_strategy(
                         train,
-                        "Zamkniecie",
+                        price_col="Zamkniecie",
                         X=X,
                         Y=Y,
                         ma_window=ma
@@ -346,7 +346,7 @@ def walk_forward(
 
         test_df, test_metrics = run_strategy(
             test,
-            "Zamkniecie",
+            price_col="Zamkniecie",
             X=X,
             Y=Y,
             ma_window=ma
