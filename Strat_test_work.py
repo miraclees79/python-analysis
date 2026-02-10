@@ -209,14 +209,16 @@ def compute_metrics(equity, freq=252):
 
 def run_strategy(
     df,
+    price_col="price",
     X=0.2,
     Y=0.1,
     ma_window=200,
     use_momentum=True,
     safe_rate=0.0
 ):
-
+    
     df = df.copy()
+    df["price"] = df[price_col]
 
     # Indicators
     df["MA"] = compute_ma(df["price"], ma_window)
@@ -323,6 +325,7 @@ def walk_forward(
 
                     _, m = run_strategy(
                         train,
+                        price_col="Zamkniecie"
                         X=X,
                         Y=Y,
                         ma_window=ma
@@ -343,6 +346,7 @@ def walk_forward(
 
         test_df, test_metrics = run_strategy(
             test,
+            price_col="Zamkniecie"
             X=X,
             Y=Y,
             ma_window=ma
@@ -364,31 +368,29 @@ def walk_forward(
 
 
 # Main function to process the data
-def process_data(url, numer, filename, index1_df, index2_df, index3_df, index4_df):
-    
-    # download the fund data for analysis
-    download_csv(url, filename, numer)
-    data_series_df = load_csv(filename)
- 
-    
-
-    if  data_series_df is None:
-        logging.error("Error loading fund data CSV file. Please check the logs.")
-        return None
-
-    
-    # Get the price column name (e.g., 'Price', or any other column with prices)
-    prices_column_name = data_series_df.columns[1]  # Assuming the second column contains prices
-   # prices_column_series = data_series_df[prices_column_name]
-
-    # Calculate daily returns
-    # daily_returns_series = calculate_returns(prices_column_series, 1)
-
-    
 
 
+# Load data
+download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr, 'w20t')
+INDEX_W20 = load_csv(csv_filename_w20tr)
 
-    return result
+df = INDEX_W20
+
+# Basic backtest
+bt, metrics = run_strategy(df)
+
+print("Single Run:")
+print(metrics)
+
+
+# Walk-forward
+wf = walk_forward(df)
+
+print("\nWalk Forward Results:")
+print(wf)
+print("\nAverage:")
+print(wf.mean(numeric_only=True))
+
 
 
 
@@ -398,20 +400,6 @@ def process_data(url, numer, filename, index1_df, index2_df, index3_df, index4_d
 
 
 
-
-
-# download indexes for comparison
-download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr, 'w20t')
-download_csv('https://stooq.pl/q/d/l/?s=mwig40tr&i=d', csv_filename_m40tr, 'm40t')
-download_csv('https://stooq.pl/q/d/l/?s=swig80tr&i=d', csv_filename_s80tr, 's80t')
-download_csv('https://stooq.pl/q/d/l/?s=^gpwbbwz&i=d', csv_filename_wbbwz, 'wbbw')
-
-# convert to dataframes
-
-INDEX_W20 = load_csv(csv_filename_w20tr)
-INDEX_M40 = load_csv(csv_filename_m40tr)
-INDEX_S80 = load_csv(csv_filename_s80tr)
-INDEX_WBBW = load_csv(csv_filename_wbbwz)
 
 
 
