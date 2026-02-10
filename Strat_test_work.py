@@ -264,7 +264,7 @@ def run_strategy(
 
                 state = "OUT"
                 m = price
-
+                print(f"{i} EXIT  @ {price:.2f}  Equity={equity:.3f}")
         # -------------------
         # OUT of Market
         # -------------------
@@ -279,6 +279,7 @@ def run_strategy(
 
                 state = "IN"
                 M = price
+                print(f"{i} ENTER @ {price:.2f}  Equity={equity:.3f}")
 
         equity_curve.append(equity)
         prev_price = price
