@@ -37,10 +37,10 @@ logging.info(f"Temporary directory: {tmp_dir}")
 
 # Create a temporary file inside the temp directory # Filepath for CSV
 csv_filename = os.path.join(tmp_dir, "data.csv")
-csv_filename_w20tr = os.path.join(tmp_dir, "w20tr.csv")
-csv_filename_m40tr = os.path.join(tmp_dir, "m40tr.csv")
-csv_filename_s80tr = os.path.join(tmp_dir, "s80tr.csv")
-csv_filename_wbbwz = os.path.join(tmp_dir, "wbbwz.csv")
+#csv_filename_w20tr = os.path.join(tmp_dir, "w20tr.csv")
+#csv_filename_m40tr = os.path.join(tmp_dir, "m40tr.csv")
+#csv_filename_s80tr = os.path.join(tmp_dir, "s80tr.csv")
+#csv_filename_wbbwz = os.path.join(tmp_dir, "wbbwz.csv")
 
 # csv_base_url = "https://stooq.pl/q/d/l/?s={}.n&i=d"
 
@@ -56,6 +56,7 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_5_2) AppleWebKit/537.36 (KHTML, like Gecko) Safari/605.1.15"
 ]
 
+# Folder ID for Google Drive upload 
 
 #def get_folder_id(name):
 #    query = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
@@ -65,8 +66,8 @@ USER_AGENTS = [
 
 
 
-# List to store all results
-all_results = []
+# List to store all results - we'll see if necessary out for now
+# all_results = []
 
 def download_csv(url, filename, numer):
     try:
