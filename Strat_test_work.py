@@ -234,7 +234,7 @@ def run_strategy_with_trades(
     stop_loss=0.10,
 
     use_momentum=False,
-    safe_rate=0.0
+    safe_rate=0.0 # may be adjusted later for realism with a money market fund series, keep zero for now
 ):
 
     df = df.copy()
@@ -309,9 +309,9 @@ def run_strategy_with_trades(
             equity *= (1 + safe_rate / 252)
 
         exit_reason = None
-        entry_reason = None
+        entry_reason = None # Need to adjust  this so that it is kept until saved
         
-        # Stop loss
+        # Stop loss NEED CLEANUP HERE WITH X and stop_loss variables
         if position > 0:
 
             dd = (price - entry_price) / entry_price
