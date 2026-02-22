@@ -57,11 +57,11 @@ USER_AGENTS = [
 ]
 
 
-def get_folder_id(name):
-    query = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-    res = drive_service.files().list(q=query, fields='files(id)').execute()
-    items = res.get('files', [])
-    return items[0]['id'] if items else None
+#def get_folder_id(name):
+#    query = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+#    res = drive_service.files().list(q=query, fields='files(id)').execute()
+#    items = res.get('files', [])
+#    return items[0]['id'] if items else None
 
 
 
@@ -85,7 +85,7 @@ def download_csv(url, filename, numer):
             f.write(response.content)
 
         logging.info(f"Downloaded and saved: {filename}")
-
+        return True
 
     except requests.exceptions.Timeout:
         logging.error(f"Timeout while downloading {url}")
@@ -216,90 +216,192 @@ def compute_metrics(equity, freq=252):
 # Strategy Engine
 # ============================
 
-def run_strategy(
+def run_strategy_with_trades(
     df,
     price_col="price",
+
     X=0.2,
     Y=0.1,
-    ma_window=200,
-    use_momentum=True,
+
+    fast=50,
+    slow=200,
+
+    vol_window=20,
+    target_vol=0.10,
+    max_leverage=1.0,
+
+    stop_loss=0.10,
+
+    use_momentum=False,
     safe_rate=0.0
 ):
-    
+
     df = df.copy()
     df["price"] = df[price_col]
 
+    # -----------------------
     # Indicators
-    df["MA"] = compute_ma(df["price"], ma_window)
+    # -----------------------
 
+    min_len = max(vol_window, slow, fast, 252) + 5
+
+    if len(df) < min_len:
+        return None, None, pd.DataFrame()
+
+    # Returns
+    df["ret"] = df["price"].pct_change()
+
+    # Volatility
+    vol = df["ret"].rolling(vol_window).std() * np.sqrt(252)
+    df["vol"] = vol.shift(1)
+
+    # Dual MA
+    df["ma_fast"] = df["price"].rolling(fast).mean().shift(1)
+    df["ma_slow"] = df["price"].rolling(slow).mean().shift(1)
+
+    df["trend"] = (df["ma_fast"] > df["ma_slow"]).astype(int)
+
+    # Momentum
     if use_momentum:
         df["MOM"] = compute_momentum(df["price"])
     else:
         df["MOM"] = 1
 
-    # Trend filter
-    df["FILTER"] = (
-        (df["price"] > df["MA"]) &
-        (df["MOM"] > 0)
-    )
+    df.dropna(inplace=True)
 
-    state = "OUT"
+    # -----------------------
+    # State
+    # -----------------------
+
     equity = 1.0
     equity_curve = []
 
-    M = None  # rolling max
-    m = None  # rolling min
+    position = 0.0
 
-    prev_price = df["price"].iloc[0]
+    entry_price = None
+    entry_date = None
+
+    M = None
+    m = None
+
+    trades = []
+
+    # -----------------------
+    # Main Loop
+    # -----------------------
 
     for i, row in df.iterrows():
 
         price = row["price"]
-        filter_on = row["FILTER"]
+        ret = row["ret"]
 
-        # -------------------
-        # IN Market
-        # -------------------
-        if state == "IN":
+        trend = row["trend"]
+        mom = row["MOM"]
+        vol = row["vol"]
+
+        filter_on = (trend == 1) and (mom > 0)
+
+        # Update equity
+        if position > 0:
+            equity *= (1 + position * ret + safe_rate/252)
+        else:
+            equity *= (1 + safe_rate / 252)
+
+        exit_reason = None
+        entry_reason = None
+        
+        # Stop loss
+        if position > 0:
+
+            dd = (price - entry_price) / entry_price
+
+            if dd < -stop_loss:
+                exit_reason = "STOP"
+
+        # Trend / breakout exit
+        if position > 0:
 
             M = max(M, price)
 
-            ret = price / prev_price
+            if (price < (1 - X) * M) or not filter_on:
+                exit_reason = exit_reason or "FILTER"
 
-            equity *= ret
+        # EXIT
+        if position > 0 and exit_reason:
+            
+            COST = 0.0005  # 5 bps
+            trade_ret = price / entry_price - 1 - COST
+            days = (i - entry_date).days
 
-            # Exit
-            if (price < (1-X)*M) or not filter_on:
+            trades.append({
+                "EntryDate": entry_date,
+                "ExitDate": i,
+                "EntryPrice": entry_price,
+                "ExitPrice": price,
+                "Return": trade_ret,
+                "Days": days,
+                "Entry Reason": entry_reason,
+                "Exit Reason": exit_reason
+            })
 
-                state = "OUT"
-                m = price
-                print(f"{i} EXIT  @ {price:.2f}  Equity={equity:.3f}")
-        # -------------------
-        # OUT of Market
-        # -------------------
-        else:
+            position = 0
+            entry_price = None
+            entry_date = None
+            m = price
 
-            equity *= (1 + safe_rate/252)
-
+        # OUT market
+        if position == 0:
+            
             m = price if m is None else min(m, price)
 
-            # Entry
-            if (price > (1+Y)*m) and filter_on:
+            if (price > (1 + Y) * m) and filter_on:
+                entry_reason = "BREAKOUT & FILTER"
+                if pd.notna(vol) and vol > 0:
+                    position = target_vol / vol
+                else:
+                    position = 1.0
 
-                state = "IN"
+                position = min(position, max_leverage)
+
+                entry_price = price
+                entry_date = i
                 M = price
-                print(f"{i} ENTER @ {price:.2f}  Equity={equity:.3f}")
 
         equity_curve.append(equity)
-        prev_price = price
 
+     # -----------------------
+     # FORCE EXIT AT SAMPLE END
+     # -----------------------
+
+    if position > 0 and entry_price is not None:
+
+        last_date = df.index[-1]
+        last_price = df["price"].iloc[-1]
+
+        trade_ret = last_price / entry_price - 1
+        days = (last_date - entry_date).days
+
+        trades.append({
+            "EntryDate": entry_date,
+            "ExitDate": last_date,
+            "EntryPrice": entry_price,
+            "ExitPrice": last_price,
+            "Return": trade_ret,
+            "Days": days,
+            "Entry Reason": entry_reason,
+            "Reason": "SAMPLE_END"
+             })
+
+        position = 0   
+
+        
     df["equity"] = equity_curve
 
     metrics = compute_metrics(df["equity"])
 
-    return df, metrics
+    trades_df = pd.DataFrame(trades)
 
-
+    return df, metrics, trades_df
 
 def walk_forward(
     df,
@@ -309,9 +411,7 @@ def walk_forward(
 
     results = []
 
-    dates = df.index
-
-    start = dates.min()
+    start = df.index.min()
 
     while True:
 
@@ -322,51 +422,79 @@ def walk_forward(
         train = df.loc[train_start:train_end]
         test = df.loc[train_end:test_end]
 
-        if len(test) < 200:
+        if len(test) < 300:
             break
 
-        best = None
+        best_params = None
         best_score = -np.inf
 
-        # Parameter grid (small!)
-        for X in [0.15, 0.2, 0.25]:
-            for Y in [0.05, 0.1, 0.15]:
-                for ma in [150, 200, 250]:
+        # ------------------------
+        # GRID SEARCH
+        # ------------------------
 
-                    _, m = run_strategy(
-                        train,
-                        price_col="Zamkniecie",
-                        X=X,
-                        Y=Y,
-                        ma_window=ma
-                    )
+        for X in [0.15, 0.2]:
+            for Y in [0.02, 0.035, 0.05, 0.1]:
 
-                    score = (
-                        m["CAGR"]
-                        - 0.5*m["Vol"]
-                        + 0.2*m["Sharpe"]
-                    )
+                for fast, slow in [(50,200),(100,300)]:
 
-                    if score > best_score:
-                        best_score = score
-                        best = (X, Y, ma)
+                    for tv in [0.08, 0.10, 0.12]:
 
-        # Run on test
-        X, Y, ma = best
+                        bt, metrics, trades = run_strategy_with_trades(
+                            train,
+                            price_col="Zamkniecie",
 
-        test_df, test_metrics = run_strategy(
+                            X=X,
+                            Y=Y,
+
+                            fast=fast,
+                            slow=slow,
+
+                            target_vol=tv
+                        )
+
+                        # Skip failed runs
+                        if metrics is None:
+                            continue
+
+                        # Objective
+                        score = (
+                            metrics["CAGR"]
+                            - 0.5 * metrics["Vol"]
+                            + 0.2 * metrics["Sharpe"]
+                        )
+
+                        if score > best_score:
+
+                            best_score = score
+
+                            best_params = {
+                                "X": X,
+                                "Y": Y,
+                                "fast": fast,
+                                "slow": slow,
+                                "target_vol": tv
+                            }
+
+        if best_params is None:
+            break
+
+        # ------------------------
+        # TEST ON OOS
+        # ------------------------
+
+        bt, test_metrics, trades = run_strategy_with_trades(
             test,
             price_col="Zamkniecie",
-            X=X,
-            Y=Y,
-            ma_window=ma
+            **best_params
         )
-
+        
+        if test_metrics is None:
+            start += pd.DateOffset(years=test_years)
+            continue
+        
         results.append({
             "start": train_start,
-            "X": X,
-            "Y": Y,
-            "MA": ma,
+            **best_params,
             **test_metrics
         })
 
@@ -375,7 +503,22 @@ def walk_forward(
     return pd.DataFrame(results)
 
 
+def analyze_trades(trades):
 
+    # --- analyze_trades ---
+    loss = abs(trades.loc[trades["Return"] < 0, "Return"].sum())
+
+    pf = np.inf if loss == 0 else (
+    trades.loc[trades["Return"] > 0, "Return"].sum() / loss
+    )   
+    return {
+        "Trades": len(trades),
+        "WinRate": (trades["Return"] > 0).mean(),
+        "AvgWin": trades.loc[trades["Return"] > 0, "Return"].mean(),
+        "AvgLoss": trades.loc[trades["Return"] < 0, "Return"].mean(),
+        "ProfitFactor": pf,
+        "AvgDays": trades["Days"].mean()
+    }
 
 # Main function to process the data
 
@@ -387,7 +530,7 @@ INDEX_W20 = load_csv(csv_filename_w20tr)
 df = INDEX_W20
 
 # Basic backtest
-bt, metrics = run_strategy(df, price_col="Zamkniecie")
+bt, metrics, trades = run_strategy_with_trades(df, price_col="Zamkniecie")
 
 print("Single Run:")
 print(metrics)
@@ -402,8 +545,27 @@ print("\nAverage:")
 print(wf.mean(numeric_only=True))
 
 
+best_row = wf.sort_values("Sharpe", ascending=False).iloc[0]
 
+best_params = {
+    "X": best_row["X"],
+    "Y": best_row["Y"],
+    "fast": int(best_row["fast"]),
+    "slow": int(best_row["slow"]),
+    "target_vol": 0.10
+}
 
+bt, metrics, trades = run_strategy_with_trades(
+    df,
+    price_col="Zamkniecie",
+    **best_params
+)
+
+print(metrics)
+print(best_params)
+print(trades)
+
+print(analyze_trades(trades))
   
 
 
