@@ -37,7 +37,7 @@ logging.info(f"Temporary directory: {tmp_dir}")
 
 # Create a temporary file inside the temp directory # Filepath for CSV
 csv_filename = os.path.join(tmp_dir, "data.csv")
-#csv_filename_w20tr = os.path.join(tmp_dir, "w20tr.csv")
+csv_filename_w20tr = os.path.join(tmp_dir, "w20tr.csv")
 #csv_filename_m40tr = os.path.join(tmp_dir, "m40tr.csv")
 #csv_filename_s80tr = os.path.join(tmp_dir, "s80tr.csv")
 #csv_filename_wbbwz = os.path.join(tmp_dir, "wbbwz.csv")
@@ -533,8 +533,10 @@ df = INDEX_W20
 # Basic backtest
 bt, metrics, trades = run_strategy_with_trades(df, price_col="Zamkniecie")
 
-print("Single Run:")
-print(metrics)
+logging.info("Single Run:")
+logging.info(f"Metrics: \n {metrics}")
+## print("Single Run:")
+## print(metrics)
 
 
 # Walk-forward
