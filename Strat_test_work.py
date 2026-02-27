@@ -14,6 +14,8 @@ from googleapiclient.http import MediaIoBaseUpload
 
 import tempfile
 import logging
+from pprint import pformat
+
 
 # Setup logging
 LOG_FILE = "download.log"
@@ -36,8 +38,8 @@ logging.info(f"Temporary directory: {tmp_dir}")
 
 
 # Create a temporary file inside the temp directory # Filepath for CSV
-csv_filename = os.path.join(tmp_dir, "data.csv")
-#csv_filename_w20tr = os.path.join(tmp_dir, "w20tr.csv")
+#csv_filename = os.path.join(tmp_dir, "data.csv")
+csv_filename_w20tr = os.path.join(tmp_dir, "w20tr.csv")
 #csv_filename_m40tr = os.path.join(tmp_dir, "m40tr.csv")
 #csv_filename_s80tr = os.path.join(tmp_dir, "s80tr.csv")
 #csv_filename_wbbwz = os.path.join(tmp_dir, "wbbwz.csv")
@@ -231,7 +233,7 @@ def run_strategy_with_trades(
     target_vol=0.10,
     max_leverage=1.0,
 
-    stop_loss=0.10,
+    
 
     use_momentum=False,
     safe_rate=0.0 # may be adjusted later for realism with a money market fund series, keep zero for now
@@ -281,7 +283,7 @@ def run_strategy_with_trades(
 
     entry_price = None
     entry_date = None
-
+    entry_reason = None 
     M = None
     m = None
 
@@ -304,30 +306,36 @@ def run_strategy_with_trades(
 
         # Update equity
         if position > 0:
-            equity *= (1 + position * ret + safe_rate/252)
+            equity *= (1 + position * ret + (1 - position) * safe_rate/252)
         else:
             equity *= (1 + safe_rate / 252)
 
         exit_reason = None
-        entry_reason = None # Need to adjust  this so that it is kept until saved
         
-        # Stop loss NEED CLEANUP HERE WITH X and stop_loss variables
+        
+        # Stop loss 
         if position > 0:
 
             dd = (price - entry_price) / entry_price
 
-            if dd < -stop_loss:
+            if dd < -X:
                 exit_reason = "STOP"
 
         # Trend / breakout exit
         if position > 0:
 
-            M = max(M, price)
+            # Update running max
+            M = max(M, price) if M is not None else price
 
-            if (price < (1 - X) * M) or not filter_on:
-                exit_reason = exit_reason or "FILTER"
+            # Trailing stop from peak
+            if price < (1 - X) * M:
+                exit_reason = exit_reason or "TRAIL_STOP"
 
-        # EXIT
+            # Filter turns off
+            elif not filter_on:
+                exit_reason = exit_reason or "FILTER_EXIT"
+
+        # EXIT LOGGING OF TRADE
         if position > 0 and exit_reason:
             
             COST = 0.0005  # 5 bps
@@ -348,9 +356,11 @@ def run_strategy_with_trades(
             position = 0
             entry_price = None
             entry_date = None
-            m = price
+            entry_reason = None
+            M = None
+            m = None
 
-        # OUT market
+        # ENTRY
         if position == 0:
             
             m = price if m is None else min(m, price)
@@ -370,9 +380,9 @@ def run_strategy_with_trades(
 
         equity_curve.append(equity)
 
-     # -----------------------
-     # FORCE EXIT AT SAMPLE END
-     # -----------------------
+    # -----------------------
+    # FORCE EXIT AT SAMPLE END
+    # -----------------------
 
     if position > 0 and entry_price is not None:
 
@@ -390,7 +400,7 @@ def run_strategy_with_trades(
             "Return": trade_ret,
             "Days": days,
             "Entry Reason": entry_reason,
-            "Reason": "SAMPLE_END"
+            "Exit Reason": "SAMPLE_END"
              })
 
         position = 0   
@@ -522,6 +532,9 @@ def analyze_trades(trades):
     }
 
 # Main function to process the data
+logger = logging.getLogger(__name__)
+
+logger.info("RUN START: %s", dt.datetime.now())
 
 
 # Load data
@@ -532,50 +545,95 @@ df = INDEX_W20
 
 # Basic backtest
 bt, metrics, trades = run_strategy_with_trades(df, price_col="Zamkniecie")
-
-print("Single Run:")
-print(metrics)
-
-
-# Walk-forward
-wf = walk_forward(df)
-
-print("\nWalk Forward Results:")
-print(wf)
-print("\nAverage:")
-print(wf.mean(numeric_only=True))
+# ============================
+# REPORTING
+# ============================
 
 
-best_row = wf.sort_values("Sharpe", ascending=False).iloc[0]
 
-best_params = {
-    "X": best_row["X"],
-    "Y": best_row["Y"],
-    "fast": int(best_row["fast"]),
-    "slow": int(best_row["slow"]),
-    "target_vol": 0.10
-}
+
+
+
+# -------- Single Run --------
+
+logger.info("=" * 80)
+logger.info("SINGLE RUN RESULTS")
+logger.info("=" * 80)
 
 bt, metrics, trades = run_strategy_with_trades(
     df,
-    price_col="Zamkniecie",
-    **best_params
+    price_col="Zamkniecie"
 )
 
-print(metrics)
-print(best_params)
-print(trades)
+logger.info("Metrics:\n%s", pformat(metrics))
 
-print(analyze_trades(trades))
-  
-
-
+if not trades.empty:
+    logger.info("Trades:\n%s", trades.to_string(index=False))
+else:
+    logger.info("No trades in single run.")
 
 
+# -------- Walk Forward --------
+
+logger.info("=" * 80)
+logger.info("WALK-FORWARD OPTIMIZATION")
+logger.info("=" * 80)
+
+wf = walk_forward(df)
+
+if wf.empty:
+    logger.warning("Walk-forward produced no results.")
+else:
+
+    logger.info("Walk-forward Results:\n%s", wf.to_string(index=False))
+
+    avg = wf.mean(numeric_only=True)
+
+    logger.info("Walk-forward Averages:\n%s", avg.to_string())
 
 
+# -------- Best Parameters --------
+
+if not wf.empty:
+
+    best_row = wf.sort_values("Sharpe", ascending=False).iloc[0]
+
+    best_params = {
+        "X": best_row["X"],
+        "Y": best_row["Y"],
+        "fast": int(best_row["fast"]),
+        "slow": int(best_row["slow"]),
+        "target_vol": best_row["target_vol"]
+    }
+
+    logger.info("=" * 80)
+    logger.info("BEST PARAMETER SET (BY SHARPE)")
+    logger.info("=" * 80)
+
+    logger.info("Best Parameters:\n%s", pformat(best_params))
 
 
+    # -------- Full-Sample Backtest --------
+
+    bt, metrics, trades = run_strategy_with_trades(
+        df,
+        price_col="Zamkniecie",
+        **best_params
+    )
+
+    logger.info("FULL SAMPLE PERFORMANCE")
+    logger.info("Metrics:\n%s", pformat(metrics))
 
 
+    if not trades.empty:
 
+        logger.info("Trade Log:\n%s", trades.to_string(index=False))
+
+        trade_stats = analyze_trades(trades)
+
+        logger.info("Trade Statistics:\n%s", pformat(trade_stats))
+
+    else:
+        logger.warning("No trades generated in final backtest.")
+        
+logger.info("RUN END")
