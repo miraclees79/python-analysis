@@ -159,12 +159,14 @@ def compute_metrics(equity, freq=252):
     cummax = equity.cummax()
     drawdown = equity / cummax - 1
     max_dd = drawdown.min()
+    calmar = sharpe / max_dd
 
     return {
         "CAGR": cagr,
         "Vol": vol,
         "Sharpe": sharpe,
-        "MaxDD": max_dd
+        "MaxDD": max_dd,
+        "CalMAR": calmar
     }
 
 
@@ -176,11 +178,17 @@ def run_strategy_with_trades(
     df,
     price_col="price",
 
-    X=0.1,
-    Y=0.1,
+    X=0.1,  # trailing stop from max after entry 
+    Y=0.1,  # breakout from mininmum value after exit: if index rises
+            # Y% from minimum, then enter (combined with other conditions)
+    
+    stop_loss=0.1,  # additional stop loss only from entry price - to allow
+                    # to differentiate from trailing stop (i.e. limit nominal 
+                    # loss in any entry)
 
-    fast=50,
-    slow=200,
+    fast=50,    # for MA(fast) to do golden/death cross check e.g. is MA(50) 
+                # above MA(200)
+    slow=200,   # for MA(slow) to do golden/death cross check
 
     vol_window=20,
     target_vol=0.10,
@@ -190,8 +198,8 @@ def run_strategy_with_trades(
     # options: "vol_entry", "vol_dynamic", "full"
 
     use_momentum=False,
-    cash_df=None,          # NEW
-    safe_rate=0.0 # may be adjusted later for realism with a money market fund series, keep zero for now
+    cash_df=None,           # cash / money market fund price series
+    safe_rate=0.0           # Backstop if no MMF data is available 
 ):
 
     df = df.copy()
@@ -274,7 +282,10 @@ def run_strategy_with_trades(
         if position_mode == "full":
             return 1.0
 
-        # Vol targeting
+        # Vol targeting - used for mode vol_entry - when size of position 
+        # is set at entry based on vol and for vol_dynamic, when size
+        # of position is updated each day
+        
         if pd.notna(vol) and vol > 0:
             pos = target_vol / vol
         else:
@@ -312,17 +323,19 @@ def run_strategy_with_trades(
 
             dd = (price - entry_price) / entry_price
 
-            if dd < -X:
-                exit_reason = "STOP"
+            if dd < -stop_loss:
+                exit_reason = "ABSOLUTE_STOP"
 
         # Dynamic volatility targeting
         if position > 0 and position_mode == "vol_dynamic":
 
             new_pos = calc_position(vol)
 
-            # Optional: smooth / reduce turnover
-            position = new_pos
-
+            # Smooth / reduce turnover: only rebalance if
+            # change is greater than 10 percentage points
+            if abs(new_pos - position) > 0.1:
+                position = new_pos
+                
         # Trend / breakout exit
         if position > 0:
 
@@ -458,20 +471,21 @@ def walk_forward(
                 for fast, slow in [(50,200),(100,300)]:
 
                     for tv in [0.08, 0.10, 0.12]:
+                        for stop_loss in [0.05, 0.08, 0.10]:
 
-                        bt, metrics, trades = run_strategy_with_trades(
-                            train,
-                            cash_df=cash_train,
-                            price_col="Zamkniecie",
+                            bt, metrics, trades = run_strategy_with_trades(
+                                train,
+                                cash_df=cash_train,
+                                price_col="Zamkniecie",
                             
-                            X=X,
-                            Y=Y,
-
-                            fast=fast,
-                            slow=slow,
+                                X=X,
+                                Y=Y,
+                                stop_loss=stop_loss,
+                                fast=fast,
+                                slow=slow,
                             
-                            target_vol=tv,
-                            position_mode=selected_mode
+                                target_vol=tv,
+                                position_mode=selected_mode
                             
                         )
 
@@ -480,12 +494,17 @@ def walk_forward(
                             continue
 
                         # Objective
-                        score = (
-                            metrics["CAGR"]
-                            - 0.5 * metrics["Vol"]
-                            + 0.2 * metrics["Sharpe"]
-                        )
-
+                        # old score kept for transparency                        
+                        #score = (
+                         #   metrics["CAGR"]
+                          #  - 0.5 * metrics["Vol"]
+                           # + 0.2 * metrics["Sharpe"]
+                        #)
+                        
+                        # new objective: optimise over CalMAR ration
+                        
+                        score = (metrics["CalMAR"])
+                        
                         if score > best_score:
 
                             best_score = score
@@ -495,7 +514,8 @@ def walk_forward(
                                 "Y": Y,
                                 "fast": fast,
                                 "slow": slow,
-                                "target_vol": tv
+                                "target_vol": tv,
+                                "stop_loss": stop_loss
                             }
 
         if best_params is None:
@@ -558,12 +578,13 @@ def print_backtest_report(metrics, trades, trade_stats, best_params=None, positi
     if best_params:
         logging.info("BEST PARAMETERS USED:")
         logging.info(
-            "X: %.3f | Y: %.3f | Fast MA: %d | Slow MA: %d | Target Vol: %.2f",
+            "X: %.3f | Y: %.3f | Fast MA: %d | Slow MA: %d | Target Vol: %.2f | Stop loss: %.3f",
             best_params['X'],
             best_params['Y'],
             best_params['fast'],
             best_params['slow'],
-            best_params['target_vol']
+            best_params['target_vol'],
+            best_params['stop_loss']
         )
         logging.info("-"*80)
 
@@ -627,7 +648,7 @@ logging.getLogger().addHandler(console_handler)
 # Get the temporary directory
 tmp_dir = tempfile.gettempdir()
 logging.info(f"Temporary directory: {tmp_dir}")
-# %%
+
 
 
 # Create a temporary file inside the temp directory # Filepath for CSV
