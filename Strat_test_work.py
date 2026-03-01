@@ -715,8 +715,7 @@ def walk_forward(
     results_df    = pd.DataFrame(results)
     oos_trades_df = pd.concat(all_oos_trades) if all_oos_trades else pd.DataFrame()
 
-    wf_metrics = compute_metrics(oos_equity)
-    logging.info("Walk-forward OOS metrics: %s", pformat(wf_metrics))
+
 
     return oos_equity, results_df, oos_trades_df
         
@@ -975,8 +974,15 @@ else:
     # Now we report on the actual OOS track record.
     wf_metrics = compute_metrics(wf_equity)
     wf_metrics = {k: float(v) for k, v in wf_metrics.items()}
-    logging.info("Stitched OOS Metrics:\n%s", pformat(wf_metrics))
-
+    logging.info("Stitched OOS Metrics:\n%s")
+    logging.info(
+        "CAGR:  %.2f%% | Vol: %.2f%% | Sharpe: %.2f | MaxDD: %.2f%% | CalMAR: %.2f ",
+        wf_metrics["CAGR"]*100,
+        wf_metrics["Vol"]*100,
+        wf_metrics["Sharpe"],
+        wf_metrics["MaxDD"]*100,
+        wf_metrics["CalMAR"]
+    )
     # --- FIX 3: trade stats from OOS trades, not full-sample trades ---
     # Exclude boundary records from trade statistics
     
