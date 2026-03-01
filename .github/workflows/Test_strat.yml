@@ -20,7 +20,7 @@ jobs:
 
       - name: Install python deps
         run: |
-          pip install  pandas numpy requests  google-api-python-client
+          pip install  pandas numpy requests  google-api-python-client matplotlib
 
       
       #- name: Create Google Credentials File
