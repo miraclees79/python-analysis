@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 
 import tempfile
 import logging
-from pprint import pformat
+
 
 
 # ============================================================
@@ -162,7 +162,202 @@ def load_csv(filename):
 
     
     return df
+
+def download_fund_navs(fund_codes, tmp_dir):
+    """
+    Download fund NAV series from stooq.pl and build the FUND_FILES dict.
+
+    Each fund is identified by a four-digit stooq code. The URL pattern
+    is https://stooq.pl/q/d/l/?s={code}.n&i=d — the same format used
+    for the money market fund (2720.n).
+
+    Successfully downloaded funds are added to FUND_FILES. Failed
+    downloads are logged and skipped — the caller should check that
+    the returned dict has enough entries before passing to build_funds_df.
+
+    Parameters
+    ----------
+    fund_codes : dict[str, str] — mapping of four-digit stooq code to
+                 human-readable fund name, e.g. {"1234": "PKO_Akcji"}
+    tmp_dir    : str            — directory for temporary CSV files
+
+    Returns
+    -------
+    dict[str, str] — mapping of fund name to local CSV filepath,
+                     suitable for passing directly to build_funds_df.
+    """
+
+    BASE_URL = "https://stooq.pl/q/d/l/?s={code}.n&i=d"
+
+    fund_files = {}
+
+    for code, name in fund_codes.items():
+        url      = BASE_URL.format(code=code)
+        filepath = os.path.join(tmp_dir, f"fund_{code}_{name}.csv")
+
+        success = download_csv(url, filepath)
+
+        if success:
+            fund_files[name] = filepath
+            logging.info("Fund %s (%s) — downloaded to %s.", name, code, filepath)
+        else:
+            logging.warning(
+                "Fund %s (%s) — download failed, will be excluded from panel.",
+                name, code
+            )
+
+    logging.info(
+        "download_fund_navs: %d of %d funds downloaded successfully.",
+        len(fund_files), len(fund_codes)
+    )
+
+    return fund_files
+
     
+def build_funds_df(fund_files, price_col="Zamkniecie", min_history_years=10):
+    """
+    Build a combined fund NAV panel from a list of CSV files.
+
+    Each file is loaded via load_csv and the closing price column is
+    extracted and renamed to the fund identifier. Files that fail to
+    load, lack the price column, or have insufficient history are
+    skipped with a warning.
+
+    The panel is constructed as an outer join so no dates are dropped
+    if funds have slightly different trading calendars. Missing values
+    are forward-filled (fund NAV not published on a given day) and then
+    any remaining leading NaNs are dropped.
+
+    Funds with excessive missing data after forward-fill (more than
+    max_gap_days consecutive NaNs at any point) are excluded — this
+    catches funds that were suspended or had long reporting gaps.
+
+    Parameters
+    ----------
+    fund_files       : dict[str, str] — mapping of fund identifier to
+                       CSV filepath, e.g. {"fund_A": "C:/tmp/fund_a.csv"}
+    price_col        : str            — column name for NAV/closing price
+    min_history_years: int            — exclude funds with fewer than this
+                       many years of data (default 10)
+
+    Returns
+    -------
+    pd.DataFrame — date-indexed panel, one column per fund, forward-filled.
+                   Returns empty DataFrame if fewer than 2 funds loaded.
+    """
+
+    MAX_GAP_DAYS = 30   # fund suspended or data missing — exclude
+
+    series_list = []
+    excluded    = []
+
+    for fund_id, filepath in fund_files.items():
+
+        df = load_csv(filepath)
+
+        if df is None:
+            logging.warning("Fund %s — load_csv returned None, skipping.", fund_id)
+            excluded.append((fund_id, "load failed"))
+            continue
+
+        if price_col not in df.columns:
+            logging.warning(
+                "Fund %s — column '%s' not found. Available: %s. Skipping.",
+                fund_id, price_col, list(df.columns)
+            )
+            excluded.append((fund_id, f"missing column {price_col}"))
+            continue
+
+        series = df[price_col].copy()
+        series.name = fund_id
+
+        # Check minimum history
+        years = (series.index.max() - series.index.min()).days / 365.25
+        if years < min_history_years:
+            logging.warning(
+                "Fund %s — only %.1f years of history (min %.0f). Skipping.",
+                fund_id, years, min_history_years
+            )
+            excluded.append((fund_id, f"insufficient history ({years:.1f}y)"))
+            continue
+
+        series_list.append(series)
+        logging.info(
+            "Fund %s — loaded %d rows from %s to %s.",
+            fund_id,
+            len(series),
+            series.index.min().date(),
+            series.index.max().date()
+        )
+
+    if len(series_list) < 2:
+        logging.error(
+            "build_funds_df: fewer than 2 funds loaded successfully. "
+            "Fund breadth filter requires at least 2 funds."
+        )
+        return pd.DataFrame()
+
+    # Outer join — preserves all dates across funds
+    funds_df = pd.concat(series_list, axis=1, join="outer", sort=True)
+    funds_df.sort_index(inplace=True)
+
+    # Forward-fill NAV gaps (weekends, holidays, reporting lags)
+    funds_df = funds_df.ffill()
+
+    # Check for excessive gaps after forward-fill
+    # (remaining NaNs are leading NaNs before fund inception)
+    for fund_id in funds_df.columns:
+        col = funds_df[fund_id]
+        # Find longest consecutive NaN run in the interior of the series
+        # (exclude leading NaNs which are handled by dropna below)
+        first_valid = col.first_valid_index()
+        if first_valid is None:
+            logging.warning(
+                "Fund %s — entirely NaN after merge, dropping.", fund_id
+            )
+            funds_df.drop(columns=[fund_id], inplace=True)
+            excluded.append((fund_id, "entirely NaN"))
+            continue
+
+        interior = col.loc[first_valid:]
+        max_gap = interior.isna().astype(int).groupby(
+            interior.notna().astype(int).cumsum()
+        ).sum().max()
+
+        if pd.notna(max_gap) and max_gap > MAX_GAP_DAYS:
+            logging.warning(
+                "Fund %s — gap of %d consecutive missing days after "
+                "forward-fill. Dropping.",
+                fund_id, int(max_gap)
+            )
+            funds_df.drop(columns=[fund_id], inplace=True)
+            excluded.append((fund_id, f"gap of {int(max_gap)} days"))
+
+    # Drop leading rows where fewer than half the funds have data
+    # This avoids a sparse panel at the start where few funds existed
+    min_funds_required = max(2, len(funds_df.columns) // 2)
+    funds_df = funds_df.dropna(thresh=min_funds_required)
+
+    if funds_df.empty:
+        logging.error("build_funds_df: panel is empty after cleaning.")
+        return pd.DataFrame()
+
+    logging.info(
+        "build_funds_df: panel ready — %d funds, %d rows, %s to %s.",
+        len(funds_df.columns),
+        len(funds_df),
+        funds_df.index.min().date(),
+        funds_df.index.max().date()
+    )
+
+    if excluded:
+        logging.info(
+            "build_funds_df: excluded funds — %s",
+            ", ".join(f"{fid} ({reason})" for fid, reason in excluded)
+        )
+
+    return funds_df
+
 
 def prepare_cash_returns(cash_df, price_col="Zamkniecie"):
     
@@ -225,6 +420,109 @@ def compute_momentum(series, lookback=252, skip=21):
     return series.shift(skip) / series.shift(lookback) - 1
 
 
+
+# ============================
+# FUND BREADTH SIGNAL
+# ============================
+
+def compute_fund_breadth_signal(
+    funds_df,           # DataFrame: date index, one column per fund NAV
+    lookback_days=30,   # B / E — rolling window for return calculation
+    n_top=2,            # number of best/worst funds to consider
+    entry_roll_thresh=0.03,    # A — min return over lookback_days to trigger entry
+    entry_since_thresh=0.05,   # C — min return since last signal change for entry
+    exit_roll_thresh=-0.03,    # D — max return over lookback_days to trigger exit
+    exit_since_thresh=-0.05,   # F — max return since last signal change for exit
+):
+    """
+    Compute a binary IN/OUT signal from a panel of fund NAV series.
+
+    Entry (OUT -> IN) triggered if EITHER:
+      - The mean return of the top n_top funds over the last lookback_days
+        exceeds entry_roll_thresh
+      - The mean return of the top n_top funds since the last signal change
+        exceeds entry_since_thresh
+
+    Exit (IN -> OUT) triggered if EITHER:
+      - The mean return of the bottom n_top funds over the last lookback_days
+        is below exit_roll_thresh
+      - The mean return of the bottom n_top funds since the last signal change
+        is below exit_since_thresh
+
+    Returns
+    -------
+    pd.Series of 1 (IN) / 0 (OUT), indexed by date
+    """
+
+    # Daily returns for all funds
+    fund_rets = funds_df.pct_change()
+
+    # Rolling return over lookback_days for each fund
+    roll_ret = (1 + fund_rets).rolling(lookback_days).apply(
+        np.prod, raw=True
+    ) - 1
+
+    signal   = pd.Series(0, index=funds_df.index)
+    state    = 0       # 0 = OUT, 1 = IN
+    last_change_idx = funds_df.index[0]
+
+    for i, date in enumerate(funds_df.index):
+
+        if i < lookback_days:
+            signal.iloc[i] = state
+            continue
+
+        todays_roll = roll_ret.loc[date].dropna()
+
+        if todays_roll.empty:
+            signal.iloc[i] = state
+            continue
+
+        # "Since last signal change" returns
+        # Use last available value on or before last_change_idx
+        # to handle cases where that date is not in the fund index
+        ref_prices = funds_df.loc[:last_change_idx].iloc[-1]
+        curr_prices = funds_df.loc[date]
+
+        since_rets = (curr_prices / ref_prices - 1).dropna()
+
+        # Only rank funds that have valid data in BOTH rolling
+        # and since-last-change calculations — take intersection
+        common_funds = todays_roll.index.intersection(since_rets.index)
+
+        if len(common_funds) < n_top:
+            # Not enough funds with complete data — hold current state
+            signal.iloc[i] = state
+            continue
+
+        todays_roll  = todays_roll.loc[common_funds]
+        since_rets   = since_rets.loc[common_funds]
+
+        top_funds    = todays_roll.nlargest(n_top)
+        bottom_funds = todays_roll.nsmallest(n_top)
+
+        top_since    = since_rets.loc[top_funds.index]
+        bottom_since = since_rets.loc[bottom_funds.index]
+
+        if state == 0:   # currently OUT — look for entry
+            roll_condition  = top_funds.mean()  >= entry_roll_thresh
+            since_condition = top_since.mean()  >= entry_since_thresh
+
+            if roll_condition or since_condition:
+                state = 1
+                last_change_idx = date
+
+        elif state == 1:   # currently IN — look for exit
+            roll_condition  = bottom_funds.mean()  <= exit_roll_thresh
+            since_condition = bottom_since.mean()  <= exit_since_thresh
+
+            if roll_condition or since_condition:
+                state = 0
+                last_change_idx = date
+
+        signal.iloc[i] = state
+
+    return signal.shift(1).fillna(0)
     
 # ============================
 # Performance Metrics
@@ -295,7 +593,7 @@ def neighbour_mean(key, scores, X_grid, Y_grid):
 
     Parameters
     ----------
-    key    : tuple        — (use_momentum, X, Y, fast, slow, tv, stop_loss)
+    key    : tuple        — (filter_mode, fund_paras, X, Y, fast, slow, tv, stop_loss)
     scores : dict         — maps parameter tuples to CalMAR scores
     X_grid : list[float]  — ordered list of X values used in the search
     Y_grid : list[float]  — ordered list of Y values used in the search
@@ -306,10 +604,9 @@ def neighbour_mean(key, scores, X_grid, Y_grid):
             or the key's own score if no neighbours exist in scores.
     """
 
-    use_mom, X, Y, fast, slow, tv, sl = key
 
-    
-    # Use nearest match to avoid floating point equality failures
+    filter_mode, fund_idx, X, Y, fast, slow, tv, sl = key
+
     xi = min(range(len(X_grid)), key=lambda i: abs(X_grid[i] - X))
     yi = min(range(len(Y_grid)), key=lambda i: abs(Y_grid[i] - Y))
 
@@ -318,13 +615,13 @@ def neighbour_mean(key, scores, X_grid, Y_grid):
         for dy in [-1, 0, 1]:
             nxi, nyi = xi + dx, yi + dy
             if 0 <= nxi < len(X_grid) and 0 <= nyi < len(Y_grid):
-                nkey = (X_grid[nxi], Y_grid[nyi], fast, slow, tv, sl)
+                nkey = (filter_mode, fund_idx,
+                        X_grid[nxi], Y_grid[nyi],
+                        fast, slow, tv, sl)
                 if nkey in scores:
                     neighbours.append(scores[nkey])
 
     return np.mean(neighbours) if neighbours else scores[key]
-
-
 
 def calc_position(vol, position_mode, target_vol, max_leverage):
 
@@ -390,7 +687,7 @@ def compute_buy_and_hold(df, price_col="Zamkniecie", start=None, end=None):
 def run_strategy_with_trades(
     df,
     price_col="price",
-    X=0.1,
+        X=0.1,
     Y=0.1,
     stop_loss=0.1,
     fast=50,
@@ -403,7 +700,8 @@ def run_strategy_with_trades(
     cash_df=None,
     safe_rate=0.0,
     initial_state=None,       # NEW: accept carry-over state from prior window,
-    warmup_df=None    # NEW: pre-window data for indicator warm-up
+    warmup_df=None,    # NEW: pre-window data for indicator warm-up
+    fund_signal=None   # NEW: precomputed pd.Series from compute_fund_breadth_signal
 ):
 
 
@@ -498,6 +796,7 @@ def run_strategy_with_trades(
     safe_rate     : float      — fallback annual cash rate if cash_df is None
     initial_state : dict|None  — carry-over position state from prior window
     warmup_df     : DataFrame|None — price rows to prepend for indicator warm-up
+    fund_signal   : DataFrame  - series of signals computed from fund panel
 
     ---------------------------------------------------------------
     RETURNS
@@ -514,8 +813,11 @@ def run_strategy_with_trades(
     df["price"] = df[price_col]
 
     # Check length BEFORE adding warmup
-    if len(df) < max(vol_window, slow, fast, 252) + 5:
-        return None, None, pd.DataFrame(), None # extra None = end_state
+    min_required = max(vol_window, slow, fast, 252) + 5
+    if fund_signal is not None:
+        min_required = max(vol_window, 252) + 5   # MA params irrelevant
+    if len(df) < min_required:
+        return None, None, pd.DataFrame(), None
 
     # If warmup data is provided, prepend it for indicator calculation
     # but tag it so we can strip it from the equity curve after
@@ -542,7 +844,18 @@ def run_strategy_with_trades(
         logging.warning("Cash series missing — falling back to flat safe_rate")
         df["cash_ret"] = safe_rate / 252
 
-  
+    # Merge fund breadth signal if provided
+    if fund_signal is not None:
+        df = df.merge(
+            fund_signal.rename("fund_filter"),
+            left_index=True,
+            right_index=True,
+            how="left"
+        )
+        df["fund_filter"] = df["fund_filter"].ffill().fillna(0)
+    else:
+        df["fund_filter"] = 1   # always on if not provided
+
 
     df["ret"] = df["price"].pct_change()
     vol = df["ret"].rolling(vol_window).std() * np.sqrt(252)
@@ -589,7 +902,16 @@ def run_strategy_with_trades(
         entry_carried = False 
         rebal_count      = 0
         rebal_cost_total = 0.0    
-
+    
+    
+    # Determine filter mode once before the loop
+    if fund_signal is not None:
+        filter_mode_active = "fund"
+    elif use_momentum:
+        filter_mode_active = "mom"
+    else:
+        filter_mode_active = "ma"
+    
     # -----------------------
 
     # -----------------------
@@ -605,9 +927,14 @@ def run_strategy_with_trades(
         trend    = row["trend"]
         mom      = row["MOM"]
         vol      = row["vol"]
-        # In run_strategy_with_trades main loop:
         
-        filter_on = (mom > 0) if use_momentum else (trend == 1)
+        
+        if filter_mode_active == "fund":
+            filter_on = bool(row["fund_filter"])
+        elif filter_mode_active == "mom":
+            filter_on = mom > 0
+        else:
+            filter_on = (trend == 1)
         
                 
         is_warmup_row = row["_warmup"]    
@@ -766,7 +1093,10 @@ def run_strategy_with_trades(
     # NOW strip warmup rows
     df = df[~df["_warmup"]].copy()
     df.drop(columns=["_warmup"], inplace=True)
-
+    
+    if "fund_filter" in df.columns:
+        df.drop(columns=["fund_filter"], inplace=True)
+        
     # After strip, all remaining rows are test rows — just check directly
     if df.isnull().any().any():
         logging.warning("NaN values remain in test rows after dropna — check cash merge")
@@ -799,7 +1129,9 @@ def walk_forward(
     cash_df,
     train_years=8,
     test_years=2,
-    vol_window  = 20,   
+    vol_window  = 20,
+    funds_df=None,          # NEW: panel of fund NAV series
+    fund_params_grid=None,    # NEW, # NEW: dict of params for compute_fund_breadth_signal
     selected_mode="full"    
 ):
 
@@ -891,9 +1223,13 @@ def walk_forward(
     test_years    : int       — length of each test window in years
     vol_window    : int       — rolling volatility window passed to strategy
     selected_mode : str       — position mode passed to strategy engine
-    use_momentum  : bool      — whether to use momentum in strategy engine
-                                instead of MA cross
-
+    
+    funds_df         : DataFrame|None — panel of fund NAV series, one column
+                                    per fund, date-indexed. None disables
+                                    the fund breadth filter mode.
+    fund_params_grid : list[dict]|None — list of parameter dicts passed to
+                                    compute_fund_breadth_signal during
+                                    grid search. None disables fund mode.
     ---------------------------------------------------------------
     RETURNS
     ---------------------------------------------------------------
@@ -917,6 +1253,8 @@ def walk_forward(
     slow_grid = [150, 200, 250, 300]
     tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
     sl_grid     = [0.05, 0.08, 0.10, 0.15]
+    
+
     
     oos_equity_slices = []
     results           = []
@@ -964,59 +1302,96 @@ def walk_forward(
 
         # -------------------------------------------------------
         # Grid search — always runs WITHOUT carry state
-        # Training is always a clean run; carry only applies OOS
         # -------------------------------------------------------
-
         param_scores = {}
-        
-        
-        
-        for use_mom in [True, False]:
-            for X in X_grid:
-                for Y in Y_grid:
-                    for fast in fast_grid if not use_mom else [50]: 
-                        for slow in slow_grid if not use_mom else [200]:
-                            if not use_mom and slow - fast < 100:   # enforce minimum separation
-                                continue
-                            for tv in tv_grid if selected_mode!="full" else [0.10]:
-                                for stop_loss in sl_grid:
-                                    if stop_loss >= X:   # absolute stop only meaningful if tighter than trail
-                                        continue
-                                    bt, metrics, trades, _ = run_strategy_with_trades(
-                                        train,
-                                        cash_df=cash_train,
-                                        price_col="Zamkniecie",
-                                        X=X, 
-                                        Y=Y,
-                                        stop_loss=stop_loss,
-                                        fast=fast, 
-                                        slow=slow,
-                                        target_vol=tv,
-                                        vol_window=vol_window,
-                                        position_mode=selected_mode,
-                                        use_momentum=use_mom
-                                        # no initial_state for training runs
+
+        # Determine which filter modes to search
+        # "ma"   — MA cross filter (fast/slow grid)
+        # "mom"  — momentum filter (fixed MA params, ignored)
+        # "fund" — fund breadth filter (fund_params_grid)
+        filter_modes = ["ma", "mom"]
+        if funds_df is not None:
+            filter_modes.append("fund")
+
+        for filter_mode in filter_modes:
+
+            use_mom        = (filter_mode == "mom")
+            use_fund_filter = (filter_mode == "fund")
+
+            fast_iter = fast_grid if filter_mode == "ma" else [50]
+            slow_iter = slow_grid if filter_mode == "ma" else [200]
+            fund_iter = (
+                list(enumerate(fund_params_grid))   # [(0, params_dict), (1, ...), ...]
+                if filter_mode == "fund"
+                else [(None, None)]
+            )   
+            
+            
+            
+            
+            for fund_idx, fund_params in fund_iter:
+                for X in X_grid:
+                    for Y in Y_grid:
+                        for fast in fast_iter:
+                            for slow in slow_iter:
+                                if filter_mode == "ma" and slow - fast < 100:
+                                    continue
+                                for tv in tv_grid if selected_mode != "full" else [0.10]:
+                                    for stop_loss in sl_grid:
+                                        if stop_loss >= X:
+                                            continue
+
+                                        # Precompute fund signal over training window
+                                        # if fund filter mode is active
+                                        train_fund_signal = None
+                                        if use_fund_filter and fund_params is not None:
+                                            funds_train = funds_df.loc[
+                                                (funds_df.index >= train_start) &
+                                                (funds_df.index < train_end)
+                                            ]
+                                            train_fund_signal = compute_fund_breadth_signal(
+                                                funds_train,
+                                                **fund_params
+                                            )
+
+                                        bt, metrics, trades, _ = run_strategy_with_trades(
+                                            train,
+                                            cash_df=cash_train,
+                                            price_col="Zamkniecie",
+                                            X=X,
+                                            Y=Y,
+                                            stop_loss=stop_loss,
+                                            fast=fast,
+                                            slow=slow,
+                                            target_vol=tv,
+                                            vol_window=vol_window,
+                                            position_mode=selected_mode,
+                                            use_momentum=use_mom,
+                                            fund_signal=train_fund_signal
                                         )
-                                    
-                                    if metrics is None:
-                                        continue
 
-                                    max_dd = metrics.get("MaxDD", 0)
-                                    if max_dd == 0:
-                                        continue
+                                        if metrics is None:
+                                            continue
+                                        max_dd = metrics.get("MaxDD", 0)
+                                        if max_dd == 0:
+                                            continue
 
-                                    calmar = metrics["CAGR"] / abs(max_dd)
-                                    key = (use_mom, X, Y, fast, slow, tv, stop_loss)
-                                    param_scores[key] = calmar
+                                        calmar = metrics["CAGR"] / abs(max_dd)
+                                        key = (filter_mode,  fund_idx,
+                                               X, Y, fast, slow, tv, stop_loss)
+                                        param_scores[key] = calmar
 
-            if not param_scores:
-                start += pd.DateOffset(years=test_years)
-                carry_state = None   # reset carry if window is skipped
-                continue
+        if not param_scores:   # ← correctly outside all for loops, inside while
+            start += pd.DateOffset(years=test_years)
+            carry_state = None
+            continue
 
-        
-
+        # -------------------------------------------------------
         # Stability-penalised selection
+        # -------------------------------------------------------
+        # neighbour_mean only varies X and Y — filter_mode, fund_params,
+        # fast, slow, tv, stop_loss are all held fixed when finding neighbours
+        
         best_score  = -np.inf
         best_params = None
 
@@ -1026,17 +1401,19 @@ def walk_forward(
             if combined > best_score:
                 best_score  = combined
                 best_params = {
-                    "use_momentum": key[0],
-                    "X":            key[1],
-                    "Y":            key[2],
-                    "fast":         key[3],
-                    "slow":         key[4],
-                    "stop_loss":    key[6]
-}
-                # Only include target_vol if it's actually used
+                    "filter_mode":   key[0],
+                    "fund_idx":     fund_idx,
+                    "fund_params":  fund_params_grid[fund_idx] if fund_idx is not None else None,
+                    "X":             key[2],
+                    "Y":             key[3],
+                    "fast":          key[4],
+                    "slow":          key[5],
+                    "stop_loss":     key[7],
+                    "use_momentum":  (key[0] == "mom")
+                }
                 if selected_mode != "full":
-                    best_params["target_vol"] = key[5]
-                    
+                    best_params["target_vol"] = key[6]
+
         if best_params is None:
             break
 
@@ -1058,15 +1435,35 @@ def walk_forward(
             (cash_df.index < test_end)
             ]
         
+        
+        # In the OOS run section, after best_params selection:
+
+        oos_fund_signal = None
+        if best_params["filter_mode"] == "fund" and best_params["fund_params"] is not None:
+            funds_warmup_and_test = funds_df.loc[
+                (funds_df.index >= warmup.index.min()) &
+                (funds_df.index < test_end)
+            ]
+            full_fund_signal = compute_fund_breadth_signal(
+                funds_warmup_and_test,
+                **best_params["fund_params"]
+            )
+            # Strip warmup rows — state at test start inherits warmup computation
+            oos_fund_signal = full_fund_signal.loc[
+                full_fund_signal.index >= train_end
+            ]
+
         bt_oos, test_metrics, oos_trades, end_state = run_strategy_with_trades(
             test,
             price_col="Zamkniecie",
             cash_df=cash_warmup_and_test,
             position_mode=selected_mode,
             vol_window=vol_window,
-            initial_state=carry_state, # carry open position in
-            warmup_df=warmup, 
-            **best_params
+            initial_state=carry_state,
+            warmup_df=warmup,
+            fund_signal=oos_fund_signal,
+            **{k: v for k, v in best_params.items()
+               if k not in ("filter_mode", "fund_params")}
         )
 
         if test_metrics is None or bt_oos is None:
@@ -1093,12 +1490,15 @@ def walk_forward(
             all_oos_trades.append(oos_trades)
 
         results.append({
-            "TrainStart": train_start,
-            "TrainEnd":   train_end,
-            "TestStart":  train_end,
-            "TestEnd":    test_end,
-            **best_params,
-            "target_vol":  best_params.get("target_vol", "N/A"),
+            "TrainStart":   train_start,
+            "TrainEnd":     train_end,
+            "TestStart":    train_end,
+            "TestEnd":      test_end,
+            "filter_mode":  best_params["filter_mode"],
+            "fund_params":  str(best_params["fund_params"]),  # stringify for DataFrame
+            **{k: v for k, v in best_params.items()
+               if k not in ("filter_mode", "fund_params", "use_momentum")},
+            "target_vol":   best_params.get("target_vol", "N/A"),
             **test_metrics
         })
         
@@ -1254,10 +1654,13 @@ def print_backtest_report(metrics,
 
     # --- show per-window params if available, else single best_params ---
     if wf_results is not None and not wf_results.empty:
-        logging.info("PER-WINDOW PARAMETERS:")
-        logging.info("\n%s", wf_results[["TrainStart","TestStart","X","Y","fast","slow","target_vol","stop_loss"]].to_string(index=False))
-    elif best_params:
-        logging.info("PARAMETERS: %s", pformat(best_params))
+        cols = ["TrainStart", "TestStart", "filter_mode",
+                "X", "Y", "fast", "slow", "target_vol", "stop_loss"]
+        # Only show fund_params if fund filter was ever selected
+        if "fund_params" in wf_results.columns and \
+           wf_results["filter_mode"].eq("fund").any():
+            cols.insert(3, "fund_params")
+        logging.info("\n%s", wf_results[cols].to_string(index=False))
 
     logging.info("-"*80)
 
@@ -1360,11 +1763,9 @@ logging.info(f"Temporary directory: {tmp_dir}")
 
 
 
-# Create a temporary file inside the temp directory # Filepath for CSV
 
-csv_filename_w20tr = os.path.join(tmp_dir, "w20tr.csv")
 
-csv_filename_cash = os.path.join(tmp_dir, "GS_konserw2720.csv")
+
 
 # csv_base_url = "https://stooq.pl/q/d/l/?s={}.n&i=d"
 # Base URLs
@@ -1395,11 +1796,18 @@ USER_AGENTS = [
 logging.info("RUN START: %s", dt.datetime.now())
 
 
-# Load data
+
+# Create a temporary file inside the temp directory # Filepath for CSV
+# WIG20TR - target
+csv_filename_w20tr = os.path.join(tmp_dir, "w20tr.csv")
+
 download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr)
 INDEX_W20 = load_csv(csv_filename_w20tr)
 
 df = INDEX_W20
+
+# CASH series - Goldman Sachs Konserwatywny
+csv_filename_cash = os.path.join(tmp_dir, "GS_konserw2720.csv")
 
 # Download money market / bond fund
 download_csv(
@@ -1409,13 +1817,26 @@ download_csv(
 
 CASH = load_csv(csv_filename_cash)
 
+
+# funds for fund filter
+
+
+# Load data
+
+
+
 # Set POSITION MODE
 chosen_mode="full"  
 # options: "vol_entry", "vol_dynamic", "full"
 
-
-
 VOL_WINDOW  = 20   # keep in one place, pass explicitly if needed
+
+# FUNDS NAV download 
+
+
+
+
+
 
 # ============================
 # REPORTING
@@ -1439,11 +1860,91 @@ wf_metrics = None
 trade_stats = None
 
 
-wf_equity, wf_results, wf_trades = walk_forward(df, 
-                                                cash_df=CASH, 
-                                                selected_mode=chosen_mode, 
-                                                vol_window=VOL_WINDOW
-                                                )
+# -------------------------------------------------------
+# Fund NAV downloads for breadth filter
+# -------------------------------------------------------
+
+FUND_CODES = {
+    "2718": "GS_Akcji",
+    "3872": "Skarbiec_Akcji",
+    "2847": "Investor_FundamentalnyDywWzr",
+    "1422": "Allianz_Selektywny",
+    "1626": "Rockbridge_Akcji",
+    "4650": "Uniqa_Selektywny",
+    "2869": "Ipopema_MiS",
+    "4544": "Uniqa_Akcji",
+    "3165": "Rockbridge_NeoAkcji",
+    "3199": "Millenium_Akcji",
+    "3959": "GenKorona_Akcji",
+    "1056": "Superfund_Akcji",
+    "3396": "PKO_Akcji",
+    "3187": "Rockbridge_NeoAkcjiPL",
+    "3360": "Pekao_AkcjiAktywna",
+    "1137": "PZU_AkcjiPL",
+    "1140": "PZU_AkcjiKrak",
+    "1656": "Santander_AkcjiPL",
+    "1621": "INPZU_AkcjiPL",
+    "2159": "CA_Akcji",
+    "1692": "SantanderPR_AkcjiPL",
+    "2719": "GS_POI",
+    "3151": "Esaliens_Akcji",
+    "3165": "Rockbridge_NeoAkcji"
+    }
+
+FUND_FILES = download_fund_navs(FUND_CODES, tmp_dir)
+
+FUNDS = build_funds_df(
+    fund_files=FUND_FILES,
+    price_col="Zamkniecie",
+    min_history_years=10
+) if FUND_FILES else None
+
+if FUNDS is None or FUNDS.empty:
+    logging.warning(
+        "Fund panel unavailable — fund breadth filter will not be used."
+    )
+    FUNDS      = None
+    FUND_PARAMS_GRID = None
+else:
+    FUND_PARAMS_GRID = [
+        {
+            "lookback_days":      20,
+            "entry_roll_thresh":  0.02,
+            "entry_since_thresh": 0.04,
+            "exit_roll_thresh":  -0.02,
+            "exit_since_thresh": -0.04
+        },
+        {
+            "lookback_days":      30,
+            "entry_roll_thresh":  0.03,
+            "entry_since_thresh": 0.05,
+            "exit_roll_thresh":  -0.03,
+            "exit_since_thresh": -0.05
+        },
+        {
+            "lookback_days":      30,
+            "entry_roll_thresh":  0.05,
+            "entry_since_thresh": 0.08,
+            "exit_roll_thresh":  -0.04,
+            "exit_since_thresh": -0.07
+        },
+        {
+            "lookback_days":      20,
+            "entry_roll_thresh":  0.10,
+            "entry_since_thresh": 0.15,
+            "exit_roll_thresh":  -0.10,
+            "exit_since_thresh": -0.15
+        }
+    ]
+
+wf_equity, wf_results, wf_trades = walk_forward(
+    df,
+    cash_df=CASH,
+    selected_mode=chosen_mode,
+    vol_window=VOL_WINDOW,
+    funds_df=FUNDS,              # NEW — None if not using fund filter
+    fund_params_grid=FUND_PARAMS_GRID   # NEW
+)
 
 
 BOUNDARY_EXITS = {"CARRY", "SAMPLE_END"}
