@@ -415,7 +415,7 @@ def run_strategy_with_trades(
         trade_ret  = last_price / entry_price - 1
         days       = (last_date - entry_date).days
         
-        if entry_date < test_start:
+        if entry_date < test_start:  # recheck if still needed?
             logging.debug(
                 "CARRY trade entry date %s predates test window %s — "
                 "trade return and equity curve are on different bases",
