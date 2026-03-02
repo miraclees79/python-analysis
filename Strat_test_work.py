@@ -21,8 +21,26 @@ import logging
 from pprint import pformat
 
 
+# ============================================================
+# DATA ACQUISITION
+# ============================================================
 
 def download_csv(url, filename):
+
+
+    """
+    Download a CSV file from a URL and save it to disk.
+
+    Rotates User-Agent headers randomly to reduce the likelihood of
+    being blocked by the server. Returns True on success, False on
+    any failure (timeout, HTTP error, empty response).
+
+    Parameters
+    ----------
+    url      : str  — full URL to fetch
+    filename : str  — local path where the file will be saved
+    """
+
     try:
         headers = {"User-Agent": random.choice(USER_AGENTS)}
         logging.info(f"Downloading {url} with User-Agent: {headers['User-Agent']}")
@@ -53,6 +71,32 @@ def download_csv(url, filename):
 
 
 def load_csv(filename):
+    
+    """
+    Load and validate a price series CSV downloaded from stooq.pl.
+
+    Performs the following steps in order:
+      1. Read CSV with UTF-8 encoding, skipping malformed lines.
+      2. Strip whitespace from column names and locate the 'Data'
+         date column, including fuzzy matching for hidden characters.
+      3. Parse dates, drop invalid rows, sort ascending, set date index.
+      4. Staleness check: discard the entire series if the most recent
+         observation is older than 10 calendar days — this prevents
+         running a strategy on stale data without warning.
+      5. Continuity check: if a gap longer than 30 calendar days is
+         found in the date sequence, discard all data before the most
+         recent such gap. This handles fund/index series that have been
+         relaunched or restructured mid-history.
+
+    Returns a DataFrame indexed by date, or None if any validation
+    step fails.
+
+    Parameters
+    ----------
+    filename : str — path to the CSV file on disk
+    """
+    
+    
     try:
         df = pd.read_csv(filename, on_bad_lines='skip', delimiter=',', decimal='.', encoding='utf-8')
     except Exception as e:
@@ -121,6 +165,26 @@ def load_csv(filename):
     
 
 def prepare_cash_returns(cash_df, price_col="Zamkniecie"):
+    
+    """
+    Compute daily returns from a money market or bond fund price series.
+
+    The resulting 'cash_ret' column is used in run_strategy_with_trades
+    to credit the out-of-market portion of capital with a realistic
+    return rather than assuming zero. This avoids overstating the
+    opportunity cost of being flat.
+
+    Parameters
+    ----------
+    cash_df   : DataFrame — price series with a date index
+    price_col : str       — column containing the NAV/price
+    
+    Returns
+    -------
+    DataFrame with a single column 'cash_ret', indexed by date.
+    """
+    
+    
     cash = cash_df.copy()
 
     cash["cash_price"] = cash[price_col]
@@ -139,6 +203,25 @@ def prepare_cash_returns(cash_df, price_col="Zamkniecie"):
 
 
 def compute_momentum(series, lookback=252, skip=21):
+
+    """
+    Compute a 12-month momentum signal with a 1-month skip.
+
+    Returns the ratio of price 'skip' days ago to price 'lookback'
+    days ago, minus 1. The skip avoids the well-documented short-term
+    reversal effect that would otherwise contaminate a pure momentum
+    signal.
+
+    All values are shifted (lagged) so that the signal on any given
+    day uses only information available before that day's open.
+
+    Parameters
+    ----------
+    series   : pd.Series — price series
+    lookback : int       — total lookback in trading days (default 252 = 1 year)
+    skip     : int       — recent period to exclude (default 21 = 1 month)
+    """
+
     return series.shift(skip) / series.shift(lookback) - 1
 
 
@@ -148,6 +231,26 @@ def compute_momentum(series, lookback=252, skip=21):
 # ============================
 
 def compute_metrics(equity, freq=252):
+
+    """
+    Compute standard performance metrics from an equity curve.
+
+    Metrics returned:
+      CAGR   — compound annual growth rate
+      Vol    — annualised volatility of daily returns
+      Sharpe — CAGR divided by Vol (simplified, no risk-free rate)
+      MaxDD  — maximum peak-to-trough drawdown (negative value)
+      CalMAR — CAGR divided by absolute MaxDD
+
+    Note: Sharpe here uses CAGR as the return numerator rather than
+    mean daily return * freq. This is consistent across the codebase
+    but differs slightly from the textbook definition.
+
+    Parameters
+    ----------
+    equity : pd.Series — equity curve (should start at 1.0)
+    freq   : int       — trading days per year for annualisation
+    """
 
     ret = equity.pct_change().dropna()
 
@@ -169,9 +272,40 @@ def compute_metrics(equity, freq=252):
         "CalMAR": calmar
     }
 
+# ============================================================
+# PARAMETER STABILITY
+# ============================================================
 
 
 def neighbour_mean(key, scores, X_grid, Y_grid):
+
+    """
+    Compute the mean score of neighbouring parameter sets for a given key.
+
+    Used during walk-forward grid search to penalise parameter sets that
+    sit in a narrow performance spike rather than a broad plateau.
+    A strategy that is only optimal for very specific X/Y values is more
+    likely to be overfit than one that performs well across a range.
+
+    Neighbours are defined as all parameter sets that differ by at most
+    one step in the X or Y dimension, holding fast/slow/tv/stop_loss
+    fixed. The grids must be passed explicitly to guarantee they match
+    the grids used in the search loop — this prevents silent bugs if the
+    search grid is changed without updating this function.
+
+    Parameters
+    ----------
+    key    : tuple        — (X, Y, fast, slow, tv, stop_loss)
+    scores : dict         — maps parameter tuples to CalMAR scores
+    X_grid : list[float]  — ordered list of X values used in the search
+    Y_grid : list[float]  — ordered list of Y values used in the search
+
+    Returns
+    -------
+    float — mean CalMAR of all neighbours including the key itself,
+            or the key's own score if no neighbours exist in scores.
+    """
+
     X, Y, fast, slow, tv, sl = key
 
     
@@ -193,6 +327,32 @@ def neighbour_mean(key, scores, X_grid, Y_grid):
 
 
 def calc_position(vol, position_mode, target_vol, max_leverage):
+   
+       """
+    Compute the position size (fraction of capital to allocate).
+
+    Three modes are supported:
+
+      'full'        — always fully invested (position = 1.0).
+                      Volatility targeting is ignored.
+
+      'vol_entry'   — position sized at entry using volatility targeting:
+                      position = target_vol / realised_vol, capped at
+                      max_leverage. Size is fixed for the life of the trade.
+
+      'vol_dynamic' — same formula as vol_entry but recomputed daily.
+                      Rebalancing only occurs if the new size differs from
+                      the current size by more than 10 percentage points,
+                      to reduce unnecessary turnover.
+
+    Parameters
+    ----------
+    vol           : float — annualised realised volatility (rolling window)
+    position_mode : str   — one of 'full', 'vol_entry', 'vol_dynamic'
+    target_vol    : float — desired annualised portfolio volatility
+    max_leverage  : float — upper bound on position size (1.0 = no leverage)
+    """
+   
     if position_mode == "full":
         return 1.0
     if pd.notna(vol) and vol > 0:
@@ -222,6 +382,110 @@ def run_strategy_with_trades(
     initial_state=None,       # NEW: accept carry-over state from prior window,
     warmup_df=None    # NEW: pre-window data for indicator warm-up
 ):
+
+
+    """
+    Run the trend-following strategy on a single price series and return
+    the equity curve, performance metrics, and trade log.
+
+    ---------------------------------------------------------------
+    STRATEGY LOGIC
+    ---------------------------------------------------------------
+    The strategy is a breakout/trend filter system. It enters long
+    when two conditions are simultaneously met:
+
+      Breakout  : price rises more than Y% above the running minimum
+                  since the last exit (or start of data).
+      Filter    : the fast moving average is above the slow moving
+                  average (golden cross), AND momentum > 0 if enabled.
+
+    It exits on the first of three conditions:
+
+      TRAIL_STOP    : price falls more than X% below the running maximum
+                      since entry.
+      ABSOLUTE_STOP : price falls more than stop_loss% below entry price.
+                      This limits the nominal loss on any single trade
+                      independently of the trailing stop.
+      FILTER_EXIT   : the trend/momentum filter turns off.
+
+    When flat, capital earns the cash return (money market fund or
+    safe_rate). When invested, the position fraction earns the index
+    return and (1 - position) earns cash.
+
+    ---------------------------------------------------------------
+    WARMUP MECHANISM
+    ---------------------------------------------------------------
+    If warmup_df is provided, it is prepended to df before computing
+    indicators. Warmup rows are tagged with _warmup=True and are used
+    solely to initialise the rolling windows (MA, vol, momentum).
+    During the main loop, warmup rows update the equity curve but
+    suppress all entry/exit logic. After the loop, warmup rows are
+    stripped from the output so the returned equity curve covers only
+    the actual test period.
+
+    This eliminates the data gaps that would otherwise appear at the
+    start of each walk-forward test window due to rolling window
+    initialisation consuming the first slow+vol_window bars.
+
+    ---------------------------------------------------------------
+    CARRY STATE MECHANISM
+    ---------------------------------------------------------------
+    If initial_state is provided, the strategy resumes an open position
+    carried over from the previous walk-forward window. The position
+    size, entry price, entry date, running maximum (M), running minimum
+    (m), and cross-window flag are all restored from initial_state.
+
+    At the end of the window, if a position is still open, end_state
+    is returned containing the current position details. The caller
+    (walk_forward) passes this into the next window's initial_state,
+    ensuring seamless position continuity across window boundaries.
+
+    Positions that span window boundaries are marked CrossWindow=True
+    in the trade log. CARRY records (window-boundary snapshots of open
+    positions) are written to the trade log for completeness but should
+    be excluded from trade statistics — they are not real exits.
+
+    ---------------------------------------------------------------
+    EQUITY RENORMALISATION
+    ---------------------------------------------------------------
+    The equity curve is renormalised to start at 1.0 at the first test
+    row (after warmup stripping). This is necessary for correct chain-
+    linking in walk_forward, which assumes each window's equity slice
+    begins at 1.0 and scales it to continue from the previous window's
+    endpoint. Warmup-period P&L on carried positions is excluded from
+    the OOS equity curve because warmup rows cover training-period dates,
+    not OOS dates.
+
+    ---------------------------------------------------------------
+    PARAMETERS
+    ---------------------------------------------------------------
+    df            : DataFrame  — price series for the test period
+    price_col     : str        — column name containing prices
+    X             : float      — trailing stop threshold from peak (e.g. 0.10 = 10%)
+    Y             : float      — breakout threshold from trough (e.g. 0.10 = 10%)
+    stop_loss     : float      — absolute stop from entry price
+    fast          : int        — fast MA window (bars)
+    slow          : int        — slow MA window (bars)
+    vol_window    : int        — rolling window for volatility estimate (bars)
+    target_vol    : float      — target annualised volatility for position sizing
+    max_leverage  : float      — maximum allowed position size (1.0 = no leverage)
+    position_mode : str        — 'full', 'vol_entry', or 'vol_dynamic'
+    use_momentum  : bool       — whether to include momentum in the filter
+    cash_df       : DataFrame  — money market fund price series (optional)
+    safe_rate     : float      — fallback annual cash rate if cash_df is None
+    initial_state : dict|None  — carry-over position state from prior window
+    warmup_df     : DataFrame|None — price rows to prepend for indicator warm-up
+
+    ---------------------------------------------------------------
+    RETURNS
+    ---------------------------------------------------------------
+    df         : DataFrame  — test-period data with equity curve appended
+    metrics    : dict       — CAGR, Vol, Sharpe, MaxDD, CalMAR
+    trades_df  : DataFrame  — trade log including CARRY boundary records
+    end_state  : dict|None  — open position state to carry into next window,
+                              or None if flat at end of window
+    """
+
 
     df = df.copy()
     df["price"] = df[price_col]
@@ -488,6 +752,105 @@ def walk_forward(
     selected_mode="full"
 ):
 
+    """
+    Run a rolling walk-forward optimisation and return a stitched
+    out-of-sample equity curve.
+
+    ---------------------------------------------------------------
+    METHODOLOGY
+    ---------------------------------------------------------------
+    Walk-forward optimisation simulates live trading as faithfully as
+    possible by ensuring that no future information influences parameter
+    selection. Each iteration:
+
+      1. TRAIN  : Run a grid search over all parameter combinations on
+                  the training window. Score each combination by CalMAR,
+                  then apply a stability penalty that blends the raw
+                  score with the mean score of neighbouring X/Y values.
+                  This prefers parameter sets on broad performance
+                  plateaus over narrow spikes, reducing overfitting.
+
+      2. TEST   : Apply the best parameters to the OOS test window.
+                  Parameters are fixed before the test window opens —
+                  no peeking at test-period results.
+
+      3. STITCH : Chain-link the OOS equity slice to the previous
+                  slice so the combined curve compounds continuously.
+                  Each slice is renormalised to start at 1.0 and then
+                  scaled by the endpoint of the previous slice.
+
+      4. ADVANCE: Move the training start forward by test_years and
+                  repeat.
+
+    The final reported result is the stitched OOS equity curve. This
+    is the only honest performance measure — per-window metrics in
+    wf_results are useful for diagnosing parameter stability but
+    understate drawdowns that span window boundaries.
+
+    ---------------------------------------------------------------
+    PARAMETER GRIDS
+    ---------------------------------------------------------------
+    All search grids are defined once at the top of the function and
+    passed explicitly to neighbour_mean. This guarantees the stability
+    penalty always uses the same grid as the search loop — changing
+    one automatically changes the other.
+
+    When selected_mode='full', target_vol has no effect on position
+    sizing and is excluded from the search grid and best_params to
+    avoid misleading output.
+
+    ---------------------------------------------------------------
+    CARRY STATE
+    ---------------------------------------------------------------
+    Open positions are carried across window boundaries rather than
+    being force-closed. At the end of each OOS window, if a position
+    is open, its state (entry price, entry date, running max/min,
+    position size) is packaged into carry_state and passed into the
+    next window's initial_state. This avoids artificial stop-outs at
+    arbitrary calendar dates and produces a more realistic simulation
+    of how the strategy would actually be managed.
+
+    CARRY records in the trade log mark window-boundary snapshots of
+    open positions. They are excluded from trade statistics but retained
+    for transparency.
+
+    ---------------------------------------------------------------
+    LAST WINDOW EXTENSION
+    ---------------------------------------------------------------
+    If there is insufficient data for a further full test window after
+    the current one (fewer than test_years * 252 rows remaining), the
+    current test window is extended to the end of available data. This
+    prevents the final months of data from being silently ignored.
+
+    ---------------------------------------------------------------
+    WARMUP
+    ---------------------------------------------------------------
+    Each OOS run receives the last WARMUP_BARS rows of its training
+    window as warmup_df. WARMUP_BARS = slow + vol_window + 10 (padding),
+    using the best_params slow value for that window. This ensures
+    indicators are fully initialised at the start of each test window,
+    eliminating gaps in the stitched equity curve.
+
+    ---------------------------------------------------------------
+    PARAMETERS
+    ---------------------------------------------------------------
+    df            : DataFrame — full price series covering all windows
+    cash_df       : DataFrame — money market fund price series
+    train_years   : int       — length of each training window in years
+    test_years    : int       — length of each test window in years
+    vol_window    : int       — rolling volatility window passed to strategy
+    selected_mode : str       — position mode passed to strategy engine
+
+    ---------------------------------------------------------------
+    RETURNS
+    ---------------------------------------------------------------
+    oos_equity    : pd.Series   — stitched chain-linked OOS equity curve
+    results_df    : pd.DataFrame — per-window params and OOS metrics
+    oos_trades_df : pd.DataFrame — all OOS trades concatenated with
+                                   WF_Window and CrossWindow columns
+    """
+
+
     
     data_end          = df.index.max()   # capture once
     logging.info("walk_forward received data from %s to %s (%d rows)",
@@ -729,11 +1092,33 @@ def walk_forward(
 def analyze_trades(trades, 
                    boundary_exits= {"CARRY", "SAMPLE_END"}):
     
+        """
+    Compute summary statistics from a completed trade log.
+
+    Boundary records (CARRY, SAMPLE_END) are excluded before computing
+    statistics — these are window-management artefacts, not real strategy
+    decisions. For cross-window trades, the closing record in the later
+    window already contains the correct full return from the original
+    entry price, so no deduplication is needed once CARRY records are
+    excluded.
+
+    Parameters
+    ----------
+    trades         : DataFrame         — trade log from walk_forward
+    boundary_exits : set               — exit reason codes to exclude
+
+    Returns
+    -------
+    dict with keys: Trades, WinRate, AvgWin, AvgLoss, ProfitFactor,
+                    AvgDays, CrossWindow
+    Returns None if no qualifying trades remain after filtering.
+    """
+
     if trades.empty:
         return None
 
     # Drop window-boundary snapshots entirely
-    trades = trades[~trades["Exit Reason"].isin(BOUNDARY_EXITS)].copy()
+    trades = trades[~trades["Exit Reason"].isin(boundary_exits)].copy()
 
     if trades.empty:
         return None
@@ -769,6 +1154,29 @@ def analyze_trades(trades,
 # ------------------------
 def print_backtest_report(metrics, trades, trade_stats, best_params=None, wf_results=None, position_mode=None):
 
+        """
+    Write a formatted backtest report to the log.
+
+    Sections:
+      1. Per-window parameter table (from wf_results) or single
+         best_params if walk-forward was not used.
+      2. Aggregate performance metrics (CAGR, Vol, Sharpe, MaxDD, CalMAR).
+      3. Trade statistics (win rate, avg win/loss, profit factor, avg days).
+      4. Full trade log with returns formatted as percentages.
+      5. Open position summary if the last trade is a CARRY record,
+         showing entry date, entry price, current mark, and unrealised
+         return.
+
+    Parameters
+    ----------
+    metrics       : dict        — output of compute_metrics
+    trades        : DataFrame   — full trade log including CARRY records
+    trade_stats   : dict|None   — output of analyze_trades
+    best_params   : dict|None   — single parameter set (non-WF use)
+    wf_results    : DataFrame|None — per-window results from walk_forward
+    position_mode : str         — mode label for report header
+    """
+
     logging.info("="*80)
     logging.info(f"WALK-FORWARD OOS BACKTEST REPORT   mode = {position_mode}")
     logging.info("="*80)
@@ -798,7 +1206,8 @@ def print_backtest_report(metrics, trades, trade_stats, best_params=None, wf_res
     if trade_stats:
         logging.info("TRADE STATISTICS:")
         logging.info(
-            "Total Trades: %d | Win Rate: %.1f%% | Avg Win: %.2f%% | Avg Loss: %.2f%% | Profit Factor: %.2f | Avg Days: %.1f",
+            "Total Trades: %d | Win Rate: %.1f%% | Avg Win: %.2f%% | "
+            "Avg Loss: %.2f%% | Profit Factor: %.2f | Avg Days: %.1f",
             trade_stats['Trades'],
             trade_stats['WinRate']*100,
             trade_stats['AvgWin']*100,
@@ -807,25 +1216,35 @@ def print_backtest_report(metrics, trades, trade_stats, best_params=None, wf_res
             trade_stats['AvgDays']
         )
         logging.info("-"*80)
-        n_carry = (trades["Exit Reason"] == "CARRY").sum()
+    else:
+        logging.info("No trades executed in the backtest.")
+        logging.info("-"*80)
+
+    # Trade Log
+    # Initialise carry_trades here so it's always defined for the
+    # open position block below, regardless of whether trade_stats exists
+    carry_trades = pd.DataFrame()
+
+    if not trades.empty and "Exit Reason" in trades.columns:
+        carry_trades = trades[trades["Exit Reason"] == "CARRY"]
+
+        n_carry = len(carry_trades)
         if n_carry > 0:
             logging.info(
                 "Note: trade log includes %d CARRY boundary records "
                 "excluded from statistics above.", n_carry
-                )
-    else:
-        logging.info("No trades executed in the backtest.")
-        logging.info("-"*80)
-        
-    # Trade Log
-    if not trades.empty:
+            )
+
         trades_fmt = trades.copy()
         trades_fmt['Return'] = (trades_fmt['Return']*100).round(2).astype(str) + '%'
         trades_fmt['EntryPrice'] = trades_fmt['EntryPrice'].round(2)
         trades_fmt['ExitPrice'] = trades_fmt['ExitPrice'].round(2)
         logging.info("TRADE LOG:")
         logging.info("\n%s", trades_fmt.to_string(index=False))
-        last_carry = trades[trades["Exit Reason"] == "CARRY"].iloc[-1]
+
+    # Open position summary — only if there is a CARRY record
+    if not carry_trades.empty:
+        last_carry = carry_trades.iloc[-1]
         logging.info(
             "Open position at report date: entry %s at %.2f, "
             "current value %.2f, unrealised return %.1f%%",
@@ -833,7 +1252,7 @@ def print_backtest_report(metrics, trades, trade_stats, best_params=None, wf_res
             last_carry["EntryPrice"],
             last_carry["ExitPrice"],
             last_carry["Return"] * 100
-            )
+        )
     logging.info("="*80)
 
 
