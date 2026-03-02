@@ -974,7 +974,7 @@ else:
     # Now we report on the actual OOS track record.
     wf_metrics = compute_metrics(wf_equity)
     wf_metrics = {k: float(v) for k, v in wf_metrics.items()}
-    logging.info("Stitched OOS Metrics:\n%s")
+    logging.info("Stitched OOS Metrics:\n")
     logging.info(
         "CAGR:  %.2f%% | Vol: %.2f%% | Sharpe: %.2f | MaxDD: %.2f%% | CalMAR: %.2f ",
         wf_metrics["CAGR"]*100,
