@@ -1,4 +1,4 @@
-name: Test strategii
+name: Test strategii sygnał funduszowy
 
 on:
   workflow_dispatch:  # Allows manual trigger
