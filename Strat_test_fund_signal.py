@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import requests
-#import time
+import time
 import random
 import os
 #import io
@@ -205,7 +205,8 @@ def download_fund_navs(fund_codes, tmp_dir):
                 "Fund %s (%s) — download failed, will be excluded from panel.",
                 name, code
             )
-
+    delay = random.uniform(0.3, 1)
+    time.sleep(delay)
     logging.info(
         "download_fund_navs: %d of %d funds downloaded successfully.",
         len(fund_files), len(fund_codes)
@@ -1463,8 +1464,8 @@ def walk_forward(
             warmup_df=warmup,
             fund_signal=oos_fund_signal,
             **{k: v for k, v in best_params.items()
-               if k not in ("filter_mode", "fund_params")}
-        )
+               if k not in ("filter_mode", "fund_params", "fund_idx")}  # add fund_idx
+            )
 
         if test_metrics is None or bt_oos is None:
             start += pd.DateOffset(years=test_years)
