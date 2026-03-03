@@ -1763,11 +1763,6 @@ tmp_dir = tempfile.gettempdir()
 logging.info(f"Temporary directory: {tmp_dir}")
 
 
-
-
-
-
-
 # csv_base_url = "https://stooq.pl/q/d/l/?s={}.n&i=d"
 # Base URLs
 #csv_base_url = os.getenv('CSV_BASE_URL')
@@ -1792,9 +1787,16 @@ USER_AGENTS = [
 
 
 # Main function to process the data
-
-
 logging.info("RUN START: %s", dt.datetime.now())
+
+# Set parameters
+chosen_mode="full"  
+# options: "vol_entry", "vol_dynamic", "full"
+VOL_WINDOW  = 20   # keep in one place, pass explicitly if needed
+
+logging.info("=" * 80)
+logging.info("DOWNLOAD DATA")
+logging.info("=" * 80)
 
 
 
@@ -1818,47 +1820,6 @@ download_csv(
 
 CASH = load_csv(csv_filename_cash)
 
-
-# funds for fund filter
-
-
-# Load data
-
-
-
-# Set POSITION MODE
-chosen_mode="full"  
-# options: "vol_entry", "vol_dynamic", "full"
-
-VOL_WINDOW  = 20   # keep in one place, pass explicitly if needed
-
-# FUNDS NAV download 
-
-
-
-
-
-
-# ============================
-# REPORTING
-# ============================
-
-
-
-# -------- Walk Forward --------
-
-logging.info("=" * 80)
-logging.info("WALK-FORWARD OPTIMIZATION")
-logging.info("=" * 80)
-
-# -------------------------------------------------------
-# Walk-Forward
-# -------------------------------------------------------
-
-# Fix — initialise before the if/else block
-wf_trades = pd.DataFrame()
-wf_metrics = None
-trade_stats = None
 
 
 # -------------------------------------------------------
@@ -1937,6 +1898,31 @@ else:
             "exit_since_thresh": -0.15
         }
     ]
+
+
+
+# ============================
+# REPORTING
+# ============================
+
+
+
+# -------- Walk Forward --------
+
+logging.info("=" * 80)
+logging.info("WALK-FORWARD OPTIMIZATION")
+logging.info("=" * 80)
+
+# -------------------------------------------------------
+# Walk-Forward
+# -------------------------------------------------------
+
+# Fix — initialise before the if/else block
+wf_trades = pd.DataFrame()
+wf_metrics = None
+trade_stats = None
+
+
 
 wf_equity, wf_results, wf_trades = walk_forward(
     df,
