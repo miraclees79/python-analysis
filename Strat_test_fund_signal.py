@@ -1401,16 +1401,18 @@ def walk_forward(
             combined  = 0.5 * raw_score + 0.5 * stability
             if combined > best_score:
                 best_score  = combined
+
+                fund_idx = key[1]   # read from key, not loop variable
+
                 best_params = {
-                    "filter_mode":   key[0],
+                    "filter_mode":  key[0],
                     "fund_idx":     fund_idx,
                     "fund_params":  fund_params_grid[fund_idx] if fund_idx is not None else None,
-                    "X":             key[2],
-                    "Y":             key[3],
-                    "fast":          key[4],
-                    "slow":          key[5],
-                    "stop_loss":     key[7],
-                    "use_momentum":  (key[0] == "mom")
+                    "X":            key[2],
+                    "Y":            key[3],
+                    "fast":         key[4],
+                    "slow":         key[5],
+                    "stop_loss":    key[7],
                 }
                 if selected_mode != "full":
                     best_params["target_vol"] = key[6]
@@ -1463,6 +1465,7 @@ def walk_forward(
             initial_state=carry_state,
             warmup_df=warmup,
             fund_signal=oos_fund_signal,
+            use_momentum=(best_params["filter_mode"] == "mom"),
             **{k: v for k, v in best_params.items()
                if k not in ("filter_mode", "fund_params", "fund_idx")}  # add fund_idx
             )
