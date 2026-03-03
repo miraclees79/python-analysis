@@ -1612,11 +1612,7 @@ def walk_forward(
         best_params = None
 
         for key, raw_score in param_scores.items():
-            same_mode_scores = {
-                k: v for k, v in param_scores.items()
-                if k[0] == key[0]   # same filter_mode
-                }
-            stability = neighbour_mean(key, same_mode_scores, X_grid, Y_grid)
+            stability = neighbour_mean(key, param_scores, X_grid, Y_grid)
             combined  = 0.5 * raw_score + 0.5 * stability
             if combined > best_score:
                 best_score  = combined
@@ -2086,27 +2082,6 @@ FUND_CODES = {
     "1043": "Alior_Akcji"
     }
 
-# Check for duplicate codes before downloading
-seen_codes = {}
-for code, name in FUND_CODES.items():
-    if code in seen_codes:
-        logging.warning(
-            "Duplicate fund code %s — '%s' overwrites '%s'. Check FUND_CODES.",
-            code, name, seen_codes[code]
-        )
-    seen_codes[code] = name
-
-# Check for duplicate names
-seen_names = {}
-for code, name in FUND_CODES.items():
-    if name in seen_names:
-        logging.warning(
-            "Duplicate fund name '%s' — code %s overwrites code %s. Check FUND_CODES.",
-            name, code, seen_names[name]
-        )
-    seen_names[name] = code
-
-
 FUND_FILES = download_fund_navs(FUND_CODES, tmp_dir)
 
 FUNDS = build_funds_df(
@@ -2122,46 +2097,8 @@ if FUNDS is None or FUNDS.empty:
     FUNDS      = None
     FUND_PARAMS_GRID = None
 else:
-    OLD_FUND_PARAMS_GRID = [            # OLD  PARAMS GRID
-        {
-            "lookback_days":      20,
-            "entry_roll_thresh":  0.02,
-            "entry_since_thresh": 0.04,
-            "exit_roll_thresh":  -0.02,
-            "exit_since_thresh": -0.04
-        },
-        {
-            "lookback_days":      30,
-            "entry_roll_thresh":  0.03,
-            "entry_since_thresh": 0.05,
-            "exit_roll_thresh":  -0.03,
-            "exit_since_thresh": -0.05
-        },
-        {
-            "lookback_days":      30,
-            "entry_roll_thresh":  0.05,
-            "entry_since_thresh": 0.08,
-            "exit_roll_thresh":  -0.04,
-            "exit_since_thresh": -0.07
-        },
-        {
-            "lookback_days":      20,
-            "entry_roll_thresh":  0.10,
-            "entry_since_thresh": 0.15,
-            "exit_roll_thresh":  -0.10,
-            "exit_since_thresh": -0.15
-        }
-    ]
-
-
-
-
-
-# NEW PARAMS GRID not used
-
- 
     FUND_PARAMS_GRID = [
-      {
+        {
             "lookback_days":      30,  #tight both ways
             "entry_roll_thresh":  0.03,
             "entry_since_thresh": 0.05,
@@ -2183,30 +2120,6 @@ else:
             "exit_since_thresh": -0.15
         }
     ]
-
-
-
-# Fund correlation check
-
-funds_df=FUNDS
-
-corr_matrix = funds_df.corr()
-high_corr_pairs = []
-for i in range(len(corr_matrix.columns)):
-    for j in range(i+1, len(corr_matrix.columns)):
-        r = corr_matrix.iloc[i, j]
-        if r > 0.98:
-            high_corr_pairs.append((
-                corr_matrix.columns[i],
-                corr_matrix.columns[j],
-                round(r, 4)
-            ))
-
-if high_corr_pairs:
-    logging.info("High correlation fund pairs (r>0.98):")
-    for f1, f2, r in sorted(high_corr_pairs, key=lambda x: -x[2]):
-        logging.info("  %s / %s  r=%.4f", f1, f2, r)
-
 
 
 
