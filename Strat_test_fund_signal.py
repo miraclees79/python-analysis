@@ -4,7 +4,7 @@ import requests
 import time
 import random
 import os
-#import io
+import sys
 import datetime as dt
 from joblib import Parallel, delayed
 import matplotlib.pyplot as plt
@@ -1445,7 +1445,7 @@ def walk_forward(
     sl_grid     = [0.05, 0.08, 0.10, 0.15]
     
     _cpu_count = os.cpu_count() or 1
-    N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 2 else _cpu_count
+    N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 4 and sys.platform == "win32" else _cpu_count
 
     logging.info(
         "Parallel grid search: %d logical cores detected, using %d jobs.",
