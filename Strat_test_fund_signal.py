@@ -1853,7 +1853,10 @@ FUND_CODES = {
     "1692": "SantanderPR_AkcjiPL",
     "2719": "GS_POI",
     "3151": "Esaliens_Akcji",
-    "3165": "Rockbridge_NeoAkcji"
+    "3166": "Rockbridge_NeoMid",
+    "3306": "Velo_AkcjiPL",
+    "3441": "Quercus_Agr",
+    "1043": "Alior_Akcji"
     }
 
 FUND_FILES = download_fund_navs(FUND_CODES, tmp_dir)
@@ -1873,28 +1876,21 @@ if FUNDS is None or FUNDS.empty:
 else:
     FUND_PARAMS_GRID = [
         {
-            "lookback_days":      20,
-            "entry_roll_thresh":  0.02,
-            "entry_since_thresh": 0.04,
-            "exit_roll_thresh":  -0.02,
-            "exit_since_thresh": -0.04
-        },
-        {
-            "lookback_days":      30,
+            "lookback_days":      30,  #tight both ways
             "entry_roll_thresh":  0.03,
             "entry_since_thresh": 0.05,
             "exit_roll_thresh":  -0.03,
             "exit_since_thresh": -0.05
         },
         {
-            "lookback_days":      30,
-            "entry_roll_thresh":  0.05,
-            "entry_since_thresh": 0.08,
-            "exit_roll_thresh":  -0.04,
-            "exit_since_thresh": -0.07
+            "lookback_days":      30, #asymmetric opt
+            "entry_roll_thresh":  0.03,
+            "entry_since_thresh": 0.05,
+            "exit_roll_thresh":  -0.10,
+            "exit_since_thresh": -0.15
         },
         {
-            "lookback_days":      20,
+            "lookback_days":      30, #original idea
             "entry_roll_thresh":  0.10,
             "entry_since_thresh": 0.15,
             "exit_roll_thresh":  -0.10,
