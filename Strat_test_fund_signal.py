@@ -2255,9 +2255,9 @@ wf_equity, wf_results, wf_trades = walk_forward(
     cash_df=CASH,
     selected_mode=chosen_mode,
     vol_window=VOL_WINDOW,
-    funds_df=FUNDS,              # NEW — None if not using fund filter
-    fund_params_grid=FUND_PARAMS_GRID,   # NEW
-    filter_modes_override=FORCE_FILTER_MODE     # diagnostic
+    funds_df=None, #DIAG RUN             # NEW — None if not using fund filter  FUNDS
+    fund_params_grid=FUND_PARAMS_GRID   # NEW
+                                        # diagnostic filter_modes_override=FORCE_FILTER_MODE
 )
 
 
