@@ -1,5 +1,5 @@
-import strategy_test_library
-import mc_robustness
+from strategy_test_library import *
+
 import os
 import tempfile
 import logging
