@@ -1,9 +1,11 @@
 from strategy_test_library import *
 
+import pandas as pd
 import os
 import tempfile
 import logging
-
+import datetime as dt
+import matplotlib.pyplot as plt
 
 ### Initials
 
@@ -53,13 +55,6 @@ logging.info(f"Temporary directory: {tmp_dir}")
 #csv_base_url = os.getenv('CSV_BASE_URL')
 
 
-# List of User-Agent headers for different browsers
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/118.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_5_2) AppleWebKit/537.36 (KHTML, like Gecko) Safari/605.1.15"
-]
 
 # Folder ID for Google Drive upload 
 

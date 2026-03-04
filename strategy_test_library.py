@@ -7,11 +7,9 @@ import os
 import sys
 import datetime as dt
 from joblib import Parallel, delayed
-import matplotlib.pyplot as plt
 
 
 
-import tempfile
 import logging
 
 
@@ -35,7 +33,16 @@ def download_csv(url, filename):
     url      : str  — full URL to fetch
     filename : str  — local path where the file will be saved
     """
+    
+    # List of User-Agent headers for different browsers
+    USER_AGENTS = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/118.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_5_2) AppleWebKit/537.36 (KHTML, like Gecko) Safari/605.1.15"
+    ]
 
+    
     try:
         headers = {"User-Agent": random.choice(USER_AGENTS)}
         logging.info(f"Downloading {url} with User-Agent: {headers['User-Agent']}")
