@@ -489,7 +489,7 @@ def run_monte_carlo_robustness(
     single_ms = (time.time() - t0) * 1000
     est_total_s = single_ms * n_samples / max(n_jobs, 1) / 1000
     logging.info(
-        "Single sample: %.0fms → estimated total: %.0fs (~%.1f min) on %d jobs",
+        "Single sample: %.0fms -> estimated total: %.0fs (~%.1f min) on %d jobs",
         single_ms, est_total_s, est_total_s / 60, n_jobs
     )
 
@@ -654,6 +654,43 @@ def analyze_robustness(results_df, baseline_metrics, thresholds=None):
     else:
         fails.append(f"P(CAGR < 0) < 10%  [actual {p_loss:.1%}]")
 
+    # Check: baseline should not be a top-decile outlier in its own distribution
+    for metric in ["CAGR", "Sharpe"]:
+        if metric not in summary:
+            continue
+        p_worse = summary[metric]["p_worse_than_baseline"]
+        if p_worse > 0.85:
+            fails.append(
+                f"P({metric} worse than baseline) = {p_worse:.1%}  "
+                f"[baseline is top-decile outlier — suggests overfitting]"
+            )
+        else:
+            passes.append(
+                f"P({metric} worse than baseline) = {p_worse:.1%}  [baseline not an outlier]"
+            )
+
+    # Check: median CAGR should be meaningfully positive
+    median_cagr = summary["CAGR"]["median"]
+    if median_cagr < 0.02:
+        fails.append(
+            f"Median CAGR = {median_cagr:.1%}  [typical universe performs poorly, threshold 2%]"
+        )
+    else:
+        passes.append(f"Median CAGR = {median_cagr:.1%}  [> 2% threshold]")
+
+    # Check: result should not be highly parameter-sensitive
+    cagr_range  = summary["CAGR"]["p95"] - summary["CAGR"]["p05"]
+    cagr_median = summary["CAGR"]["median"]
+    if cagr_median > 0 and cagr_range / cagr_median > 3.0:
+        fails.append(
+            f"CAGR p95-p05 range = {cagr_range:.1%}, median = {cagr_median:.1%}  "
+            f"[ratio {cagr_range/cagr_median:.1f}x > 3.0 — highly parameter-sensitive]"
+        )
+    elif cagr_median > 0:
+        passes.append(
+            f"CAGR p95-p05 range/median = {cagr_range/cagr_median:.1f}x  [< 3.0 threshold]"
+        )
+
     verdict = "ROBUST" if not fails else "FRAGILE"
 
     logging.info("")
@@ -668,7 +705,6 @@ def analyze_robustness(results_df, baseline_metrics, thresholds=None):
 
     summary["verdict"] = verdict
     return summary
-
 
 # ---------------------------------------------------------------------------
 # Utility — extract window definitions from walk_forward wf_results DataFrame

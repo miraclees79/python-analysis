@@ -208,6 +208,17 @@ else:
      ]
 
 
+#===========GRIDS============
+    # Define search grids once — passed to both the loop and neighbour_mean
+    # so they are guaranteed to stay in sync
+    # X_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
+    X_grid = [0.08, 0.10]
+    Y_grid = [0.02, 0.03, 0.05, 0.07, 0.10]
+    fast_grid   = [50, 75, 100]
+    slow_grid = [150, 200, 250 ]
+    tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
+    #sl_grid     = [0.05, 0.08, 0.10, 0.15]
+    sl_grid     = [0.05, 0.08]
 #============================
 # Fund correlation check
 
@@ -236,7 +247,7 @@ if high_corr_pairs:
 chosen_mode = "full"
 # options: "vol_entry", "vol_dynamic", "full"
 VOL_WINDOW = 20
-FORCE_FILTER_MODE = ["ma", "mom"]
+FORCE_FILTER_MODE = ["fund"]
 # options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
 
 #----------------------------------------------
@@ -311,7 +322,13 @@ wf_equity, wf_results, wf_trades = walk_forward(
     vol_window=VOL_WINDOW,
     funds_df=FUNDS, #DIAG RUN - None             if not using fund filter  FUNDS if using fund filter
     fund_params_grid=FUND_PARAMS_GRID,   # NEW
-    filter_modes_override=FORCE_FILTER_MODE                                        # diagnostic
+    filter_modes_override=FORCE_FILTER_MODE,   # diagnostic
+    X_grid = X_grid,
+    Y_grid = Y_grid,
+    fast_grid   = fast_grid,
+    slow_grid = slow_grid,
+    tv_grid = tv_grid,
+    sl_grid     = sl_grid
 )
 
 

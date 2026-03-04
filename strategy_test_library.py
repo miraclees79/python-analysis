@@ -1282,7 +1282,14 @@ def walk_forward(
     funds_df=None,          # NEW: panel of fund NAV series
     fund_params_grid=None,    # NEW, # NEW: dict of params for compute_fund_breadth_signal
     selected_mode="full",
-    filter_modes_override=None    # NEW
+    filter_modes_override=None,    # NEW
+    #DEFAULT VALUES FOR GRIDS
+    X_grid = [0.08, 0.10, 0.12, 0.15, 0.20],
+    Y_grid = [0.02, 0.03, 0.05, 0.07, 0.10],
+    fast_grid   = [50, 75, 100],
+    slow_grid = [150, 200, 250 ],
+    tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20],
+    sl_grid     = [0.05, 0.08, 0.10, 0.15]
     
 ):
 
@@ -1438,14 +1445,7 @@ def walk_forward(
     logging.info("walk_forward received data from %s to %s (%d rows)",
              df.index.min(), data_end, len(df))
     
-    # Define search grids once — passed to both the loop and neighbour_mean
-    # so they are guaranteed to stay in sync
-    X_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
-    Y_grid = [0.02, 0.03, 0.05, 0.07, 0.10]
-    fast_grid   = [50, 75, 100]
-    slow_grid = [150, 200, 250 ]
-    tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
-    sl_grid     = [0.05, 0.08, 0.10, 0.15]
+
     
     _cpu_count = os.cpu_count() or 1
     N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
