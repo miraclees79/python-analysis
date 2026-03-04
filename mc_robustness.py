@@ -451,7 +451,7 @@ def run_monte_carlo_robustness(
         "Config: n_samples=%d | perturb_pct=%.0f%% | n_jobs=%d | seed=%d",
         n_samples, perturb_pct * 100, n_jobs, seed
     )
-        _cpu_count = os.cpu_count() or 1
+    _cpu_count = os.cpu_count() or 1
     N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
 
     logging.info(
