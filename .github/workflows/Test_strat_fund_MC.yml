@@ -1,4 +1,4 @@
-name: Test strategii sygnal funduszowy
+name: Test strategii - robustness check Monte Carlo
 
 on:
   workflow_dispatch:  # Allows manual trigger
