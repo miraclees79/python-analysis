@@ -1856,7 +1856,8 @@ def print_backtest_report(metrics,
                           trade_stats, 
                           best_params=None, 
                           wf_results=None, 
-                          position_mode=None 
+                          position_mode=None,
+                          filter_modes_override=None  
                           ):
 
     """
@@ -1880,11 +1881,15 @@ def print_backtest_report(metrics,
     best_params   : dict|None   — single parameter set (non-WF use)
     wf_results    : DataFrame|None — per-window results from walk_forward
     position_mode : str         — mode label for report header
-    use_momentum  : bool - which trend filter was used
+    filter_modes_override    : str - which trend filter was forced if any
     """
 
     logging.info("="*80)
     logging.info(f"WALK-FORWARD OOS BACKTEST REPORT   mode = {position_mode}")
+    if filter_modes_override != None
+        logging.info(f"Filter mode was forced to:    {filter_modes_override}")
+        else
+        logging.info("Filter mode selection set to automatic")
     logging.info("="*80)
 
     # --- show per-window params if available, else single best_params ---
@@ -2027,10 +2032,7 @@ USER_AGENTS = [
 # Main function to process the data
 logging.info("RUN START: %s", dt.datetime.now())
 
-# Set parameters
-chosen_mode="full"  
-# options: "vol_entry", "vol_dynamic", "full"
-VOL_WINDOW  = 20   # keep in one place, pass explicitly if needed
+
 
 logging.info("=" * 80)
 logging.info("DOWNLOAD DATA")
@@ -2217,6 +2219,13 @@ if high_corr_pairs:
 
 
 
+# Set parameters
+chosen_mode="full"  
+# options: "vol_entry", "vol_dynamic", "full"
+VOL_WINDOW  = 20   # keep in one place, pass explicitly if needed
+FORCE_FILTER_MODE = ["ma"]
+# options ["ma"] ["mom"] ["fund"] None
+
 
 # ============================
 # REPORTING
@@ -2248,7 +2257,7 @@ wf_equity, wf_results, wf_trades = walk_forward(
     vol_window=VOL_WINDOW,
     funds_df=FUNDS,              # NEW — None if not using fund filter
     fund_params_grid=FUND_PARAMS_GRID,   # NEW
-    filter_modes_override=["ma"]     # diagnostic
+    filter_modes_override=FORCE_FILTER_MODE     # diagnostic
 )
 
 
@@ -2332,8 +2341,8 @@ if wf_metrics is not None:
         trades=wf_trades,
         trade_stats=trade_stats,
         wf_results=wf_results,
-        position_mode=chosen_mode
-        
+        position_mode=chosen_mode,
+        filter_modes_override=FORCE_FILTER_MODE 
     )
 else:
     logging.warning("Skipping report — no WF metrics available.")
