@@ -1886,9 +1886,9 @@ def print_backtest_report(metrics,
 
     logging.info("="*80)
     logging.info(f"WALK-FORWARD OOS BACKTEST REPORT   mode = {position_mode}")
-    if filter_modes_override != None
+    if filter_modes_override != None:
         logging.info(f"Filter mode was forced to:    {filter_modes_override}")
-        else
+        else:
         logging.info("Filter mode selection set to automatic")
     logging.info("="*80)
 
