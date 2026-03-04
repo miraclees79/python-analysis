@@ -1886,9 +1886,9 @@ def print_backtest_report(metrics,
 
     logging.info("="*80)
     logging.info(f"WALK-FORWARD OOS BACKTEST REPORT   mode = {position_mode}")
-    if filter_modes_override != None:
+    if filter_modes_override is not None:
         logging.info(f"Filter mode was forced to:    {filter_modes_override}")
-        else:
+    else:
         logging.info("Filter mode selection set to automatic")
     logging.info("="*80)
 
@@ -2224,7 +2224,7 @@ chosen_mode="full"
 # options: "vol_entry", "vol_dynamic", "full"
 VOL_WINDOW  = 20   # keep in one place, pass explicitly if needed
 FORCE_FILTER_MODE = ["mom"]
-# options ["ma"] ["mom"] ["fund"] None
+# options ["ma","mom"]  ["ma"] ["mom"] ["fund"] None
 
 
 # ============================
