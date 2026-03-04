@@ -244,7 +244,7 @@ def sample_universe(window_variants, rng):
 # ---------------------------------------------------------------------------
 
 def run_universe(universe, windows, df, cash_df, vol_window,
-                 selected_mode, funds_df=None):
+                 selected_mode, funds_df=None, price_col="Zamkniecie"):
     """
     Stitch the full OOS equity curve using perturbed params — no retraining.
 
@@ -328,6 +328,7 @@ def run_universe(universe, windows, df, cash_df, vol_window,
             initial_state = carry_state,
             warmup_df     = warmup_slice if len(warmup_slice) > 0 else None,
             fund_signal   = fund_signal,
+            price_col     = price_col
         )
 
         if result is None or result[0] is None:
@@ -359,7 +360,7 @@ def run_universe(universe, windows, df, cash_df, vol_window,
 # ---------------------------------------------------------------------------
 
 def _run_single_sample(seed, window_variants, windows, df, cash_df,
-                        vol_window, selected_mode, funds_df):
+                        vol_window, selected_mode, funds_df, price_col):
     """
     Run one Monte Carlo sample with a fixed seed. Designed to be called
     via joblib.Parallel — all arguments must be picklable.
@@ -377,7 +378,8 @@ def _run_single_sample(seed, window_variants, windows, df, cash_df,
 
     equity, trades = run_universe(
         universe, windows, df, cash_df,
-        vol_window, selected_mode, funds_df
+        vol_window, selected_mode, funds_df, 
+        price_col=price_col
     )
 
     if equity is None:
@@ -405,6 +407,7 @@ def run_monte_carlo_robustness(
     n_jobs      = 1,
     perturb_pct = 0.20,
     seed        = 42,
+    price_col="Zamkniecie"
 ):
     """
     Run the full Monte Carlo robustness test.
@@ -481,6 +484,7 @@ def run_monte_carlo_robustness(
         vol_window=vol_window,
         selected_mode=selected_mode,
         funds_df=funds_df,
+        price_col     = price_col
     )
     single_ms = (time.time() - t0) * 1000
     est_total_s = single_ms * n_samples / max(n_jobs, 1) / 1000
@@ -501,6 +505,7 @@ def run_monte_carlo_robustness(
                 vol_window    = vol_window,
                 selected_mode = selected_mode,
                 funds_df      = funds_df,
+                price_col     = price_col
             )
             for i in range(n_samples)
         )

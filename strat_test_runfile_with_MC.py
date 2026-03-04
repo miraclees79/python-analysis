@@ -447,6 +447,7 @@ mc_results = run_monte_carlo_robustness(
     n_jobs        = N_JOBS,
     perturb_pct   = 0.20,
     seed          = 42,
+    price_col     = "Zamkniecie"
 )
 
 # Report
