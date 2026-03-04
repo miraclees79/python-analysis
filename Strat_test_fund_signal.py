@@ -2224,7 +2224,7 @@ chosen_mode="full"
 # options: "vol_entry", "vol_dynamic", "full"
 VOL_WINDOW  = 20   # keep in one place, pass explicitly if needed
 FORCE_FILTER_MODE = None
-# options ["ma","mom"]  ["ma"] ["mom"] ["fund"] None
+# options ["ma","mom"]  ["ma"] ["mom"] ["fund"] None (fully auto)
 
 
 # ============================
@@ -2257,7 +2257,7 @@ wf_equity, wf_results, wf_trades = walk_forward(
     vol_window=VOL_WINDOW,
     funds_df=None, #DIAG RUN             # NEW — None if not using fund filter  FUNDS
     fund_params_grid=FUND_PARAMS_GRID   # NEW
-                                        # diagnostic filter_modes_override=FORCE_FILTER_MODE
+     filter_modes_override=FORCE_FILTER_MODE                                        # diagnostic
 )
 
 
