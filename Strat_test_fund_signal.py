@@ -1531,7 +1531,7 @@ def walk_forward(
                     for Y in Y_grid:
                         for fast in fast_iter:
                             for slow in slow_iter:
-                                if filter_mode == "ma" and slow - fast < 100:
+                                if filter_mode == "ma" and slow - fast < 75:
                                     continue
                                 for tv in tv_grid if selected_mode != "full" else [0.10]:
                                     for stop_loss in sl_grid:
