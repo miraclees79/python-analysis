@@ -1,5 +1,29 @@
-import strategy_test_library
-import mc_robustness
+from strategy_test_library import (download_csv,
+                                   load_csv,
+                                   download_fund_navs,
+                                   build_funds_df,
+                                   walk_forward,
+                                   compute_metrics,
+                                   analyze_trades,
+                                   compute_buy_and_hold,
+                                   print_backtest_report    
+                                   )
+from mc_robustness import (
+    run_monte_carlo_robustness,
+    analyze_robustness,
+    extract_windows_from_wf_results,
+    extract_best_params_from_wf_results,
+)
+
+
+
+import os
+import logging
+import pandas as pd
+import tempfile
+import datetime as dt
+import matplotlib.pyplot as plt
+
 
 ### Initials
 
@@ -389,12 +413,17 @@ else:
 #-----------------
 # monte Carlo Robustness Check
 
-from mc_robustness import (
-    run_monte_carlo_robustness,
-    analyze_robustness,
-    extract_windows_from_wf_results,
-    extract_best_params_from_wf_results,
-)
+_cpu_count = os.cpu_count() or 1
+N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
+
+logging.info(
+    "Parallel computing: %d logical cores detected, using %d jobs.",
+    _cpu_count, N_JOBS
+    )
+
+
+
+
 
 # Extract from existing wf_results DataFrame
 windows     = extract_windows_from_wf_results(wf_results, train_years=8)

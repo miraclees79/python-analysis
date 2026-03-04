@@ -1,4 +1,16 @@
-from strategy_test_library import *
+from strategy_test_library import (download_csv,
+                                   load_csv,
+                                   download_fund_navs,
+                                   build_funds_df,
+                                   walk_forward,
+                                   compute_metrics,
+                                   analyze_trades,
+                                   compute_buy_and_hold,
+                                   print_backtest_report    
+                                   )
+
+
+
 
 import pandas as pd
 import os
@@ -227,29 +239,33 @@ VOL_WINDOW = 20
 FORCE_FILTER_MODE = ["ma", "mom"]
 # options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
 
+#----------------------------------------------
 # Robustness check — shorter sample
-USE_SHORTER_SAMPLE = True
+#----------------------------------------------
+USE_SHORTER_SAMPLE = False
 short_sample_start = "2008-01-01"
 short_sample_end   = "2023-12-31"
 
-# Slice shorter sample regardless — only applied if USE_SHORTER_SAMPLE=True
-df_short   = df.loc[
-    (df.index >= short_sample_start) &
-    (df.index <= short_sample_end)
-]
-CASH_short = CASH.loc[
-    (CASH.index >= short_sample_start) &
-    (CASH.index <= short_sample_end)
-]
 
 if USE_SHORTER_SAMPLE:
+    
+    df_short   = df.loc[
+        (df.index >= short_sample_start) &
+        (df.index <= short_sample_end)
+    ]
+    CASH_short = CASH.loc[
+        (CASH.index >= short_sample_start) &
+        (CASH.index <= short_sample_end)
+    ]
+        
     df   = df_short      # was df.short — typo
     CASH = CASH_short    # was missing
     if FUNDS is not None:
         FUNDS = FUNDS.loc[
             (FUNDS.index >= short_sample_start) &
             (FUNDS.index <= short_sample_end)
-        ]
+    ]
+        
     logging.info("=" * 80)
     logging.info("Diagnostic sub-sample run - does the result hold in chosen sub-sample?")
     logging.info(
@@ -263,7 +279,7 @@ if USE_SHORTER_SAMPLE:
         df.index.max().date()
     )
     logging.info("=" * 80)
-
+#----------------------------------------------
 
 # ============================
 # REPORTING
