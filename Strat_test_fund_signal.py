@@ -2132,54 +2132,18 @@ if FUNDS is None or FUNDS.empty:
     FUNDS      = None
     FUND_PARAMS_GRID = None
 else:
-    OLD_FUND_PARAMS_GRID = [            # OLD  PARAMS GRID
-        {
-            "lookback_days":      20,
-            "entry_roll_thresh":  0.02,
-            "entry_since_thresh": 0.04,
-            "exit_roll_thresh":  -0.02,
-            "exit_since_thresh": -0.04
-        },
-        {
-            "lookback_days":      30,
-            "entry_roll_thresh":  0.03,
-            "entry_since_thresh": 0.05,
-            "exit_roll_thresh":  -0.03,
-            "exit_since_thresh": -0.05
-        },
-        {
-            "lookback_days":      30,
-            "entry_roll_thresh":  0.05,
-            "entry_since_thresh": 0.08,
-            "exit_roll_thresh":  -0.04,
-            "exit_since_thresh": -0.07
-        },
-        {
-            "lookback_days":      20,
-            "entry_roll_thresh":  0.10,
-            "entry_since_thresh": 0.15,
-            "exit_roll_thresh":  -0.10,
-            "exit_since_thresh": -0.15
-        }
-    ]
-
-
-
-
-
-    
 
  
-    FUND_PARAMS_GRID = [    # NEW PARAMS GRID  used
-      {
-            "lookback_days":      30,  #tight both ways
-            "entry_roll_thresh":  0.03,
-            "entry_since_thresh": 0.05,
-            "exit_roll_thresh":  -0.03,
-            "exit_since_thresh": -0.05
+    FUND_PARAMS_GRID = [    
+        {
+            "lookback_days":      30,   # medium asymmetric
+            "entry_roll_thresh":  0.05,
+            "entry_since_thresh": 0.08,
+            "exit_roll_thresh":  -0.06,
+            "exit_since_thresh": -0.10
         },
         {
-            "lookback_days":      30, #asymmetric opt
+            "lookback_days":      30, #strong asymmetric tight entry loose exit
             "entry_roll_thresh":  0.03,
             "entry_since_thresh": 0.05,
             "exit_roll_thresh":  -0.10,
@@ -2192,7 +2156,7 @@ else:
             "exit_roll_thresh":  -0.10,
             "exit_since_thresh": -0.15
         }
-    ]
+     ]
 
 
 #============================
