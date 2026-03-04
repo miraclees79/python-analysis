@@ -2183,12 +2183,49 @@ if high_corr_pairs:
 
 #============================
 
-# Set global parameters
-chosen_mode="full"  
+## Set global parameters
+chosen_mode = "full"
 # options: "vol_entry", "vol_dynamic", "full"
-VOL_WINDOW  = 20   # window for vola calculation in volatility - dependent position sizing - passed as argument
-FORCE_FILTER_MODE = None
-# options ["ma","mom"]  ["ma"] ["mom"] ["fund"] None (fully auto)
+VOL_WINDOW = 20
+FORCE_FILTER_MODE = ["ma", "mom"]
+# options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
+
+# Robustness check — shorter sample
+USE_SHORTER_SAMPLE = True
+short_sample_start = "2008-01-01"
+short_sample_end   = "2023-12-31"
+
+# Slice shorter sample regardless — only applied if USE_SHORTER_SAMPLE=True
+df_short   = df.loc[
+    (df.index >= short_sample_start) &
+    (df.index <= short_sample_end)
+]
+CASH_short = CASH.loc[
+    (CASH.index >= short_sample_start) &
+    (CASH.index <= short_sample_end)
+]
+
+if USE_SHORTER_SAMPLE:
+    df   = df_short      # was df.short — typo
+    CASH = CASH_short    # was missing
+    if FUNDS is not None:
+        FUNDS = FUNDS.loc[
+            (FUNDS.index >= short_sample_start) &
+            (FUNDS.index <= short_sample_end)
+        ]
+    logging.info("=" * 80)
+    logging.info("Diagnostic sub-sample run - does the result hold in chosen sub-sample?")
+    logging.info(
+        "Data start forced to %s, data end forced to %s",
+        short_sample_start, short_sample_end
+    )
+    logging.info(
+        "Sub-sample: %d rows from %s to %s",
+        len(df),
+        df.index.min().date(),
+        df.index.max().date()
+    )
+    logging.info("=" * 80)
 
 
 # ============================
