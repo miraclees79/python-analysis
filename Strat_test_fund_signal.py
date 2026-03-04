@@ -1279,7 +1279,8 @@ def walk_forward(
     vol_window  = 20,
     funds_df=None,          # NEW: panel of fund NAV series
     fund_params_grid=None,    # NEW, # NEW: dict of params for compute_fund_breadth_signal
-    selected_mode="full"
+    selected_mode="full",
+    filter_modes_override=None    # NEW
     
 ):
 
@@ -1508,7 +1509,14 @@ def walk_forward(
         filter_modes = ["ma", "mom"]
         if funds_df is not None:
             filter_modes.append("fund")
-
+        
+        
+        # Override for diagnostic runs
+        if filter_modes_override is not None:
+            filter_modes = filter_modes_override
+            logging.info(
+                "filter_modes overridden to: %s", filter_modes
+                )
         # Build list of all parameter combinations to evaluate
         param_combinations = []
 
@@ -2239,7 +2247,8 @@ wf_equity, wf_results, wf_trades = walk_forward(
     selected_mode=chosen_mode,
     vol_window=VOL_WINDOW,
     funds_df=FUNDS,              # NEW — None if not using fund filter
-    fund_params_grid=FUND_PARAMS_GRID   # NEW
+    fund_params_grid=FUND_PARAMS_GRID,   # NEW
+    filter_modes_override=["fund"]     # diagnostic
 )
 
 
