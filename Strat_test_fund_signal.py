@@ -2167,10 +2167,10 @@ else:
 
 
 
-# NEW PARAMS GRID  used
+    
 
  
-    FUND_PARAMS_GRID = [
+    FUND_PARAMS_GRID = [    # NEW PARAMS GRID  used
       {
             "lookback_days":      30,  #tight both ways
             "entry_roll_thresh":  0.03,
@@ -2195,7 +2195,7 @@ else:
     ]
 
 
-
+#============================
 # Fund correlation check
 
 funds_df=FUNDS
@@ -2217,12 +2217,12 @@ if high_corr_pairs:
     for f1, f2, r in sorted(high_corr_pairs, key=lambda x: -x[2]):
         logging.info("  %s / %s  r=%.4f", f1, f2, r)
 
+#============================
 
-
-# Set parameters
+# Set global parameters
 chosen_mode="full"  
 # options: "vol_entry", "vol_dynamic", "full"
-VOL_WINDOW  = 20   # keep in one place, pass explicitly if needed
+VOL_WINDOW  = 20   # window for vola calculation in volatility - dependent position sizing - passed as argument
 FORCE_FILTER_MODE = None
 # options ["ma","mom"]  ["ma"] ["mom"] ["fund"] None (fully auto)
 
