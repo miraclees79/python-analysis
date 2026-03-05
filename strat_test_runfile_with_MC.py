@@ -261,7 +261,7 @@ if high_corr_pairs:
 chosen_mode = "full"
 # options: "vol_entry", "vol_dynamic", "full"
 VOL_WINDOW = 20
-FORCE_FILTER_MODE = ["ma","mom"]
+FORCE_FILTER_MODE = None
 # options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
 
 #----------------------------------------------
