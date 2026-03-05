@@ -258,7 +258,7 @@ if high_corr_pairs:
 #============================
 
 ## Set global parameters
-chosen_mode = "full"
+chosen_mode = "vol_entry"
 # options: "vol_entry", "vol_dynamic", "full"
 VOL_WINDOW = 20
 FORCE_FILTER_MODE = ["ma","mom"]
