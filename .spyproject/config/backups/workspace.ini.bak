@@ -4,7 +4,7 @@ save_data_on_exit = True
 save_history = True
 save_non_project_files = False
 project_type = 'empty-project-type'
-recent_files = []
+recent_files = ['C:\\Users\\adamg\\.spyder-py3\\temp.py', 'mc_robustness.py', 'strat_test_runfile_with_MC.py']
 
 [main]
 version = 0.2.0

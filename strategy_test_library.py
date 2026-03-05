@@ -424,6 +424,7 @@ def compute_momentum(series, lookback=252, skip=21):
 
 
 
+
 # ============================
 # FUND BREADTH SIGNAL
 # ============================
@@ -531,7 +532,9 @@ def compute_fund_breadth_signal(
 # Performance Metrics
 # ============================
 
-def compute_metrics(equity, freq=252):
+def compute_metrics(equity, 
+                    risk_free_rate=0, 
+                    freq=252):
 
     """
     Compute standard performance metrics from an equity curve.
@@ -558,8 +561,24 @@ def compute_metrics(equity, freq=252):
     years = len(ret) / freq
     cagr = (equity.iloc[-1]/equity.iloc[0])**(1/years)-1
     vol = ret.std() * np.sqrt(freq)
-    sharpe = cagr / vol if vol > 0 else 0
 
+    excess_return = cagr - risk_free_rate
+    sharpe = excess_return / vol if vol > 0 else 0.0
+    
+    
+    # Sortino — penalises downside volatility only
+    # Downside returns = daily returns below the daily risk-free rate
+    daily_rf   = (1 + risk_free_rate) ** (1 / 252) - 1
+    daily_rets = equity.pct_change().dropna()
+    downside   = daily_rets[daily_rets < daily_rf] - daily_rf
+    if len(downside) > 0:
+        downside_vol = np.sqrt((downside ** 2).mean()) * np.sqrt(252)
+    else:
+        downside_vol = 0.0
+    sortino = excess_return / downside_vol if downside_vol > 0 else 0.0
+
+    
+    
     cummax = equity.cummax()
     drawdown = equity / cummax - 1
     max_dd = drawdown.min()
@@ -569,6 +588,7 @@ def compute_metrics(equity, freq=252):
         "CAGR": cagr,
         "Vol": vol,
         "Sharpe": sharpe,
+        "Sortino":     sortino,
         "MaxDD": max_dd,
         "CalMAR": calmar
     }
@@ -847,6 +867,16 @@ def run_strategy_with_trades(
         logging.warning("Cash series missing — falling back to flat safe_rate")
         df["cash_ret"] = safe_rate / 252
 
+    # Compute risk-free rate from OOS cash returns only (exclude warmup)
+    # Used for Sharpe calculation — MMF CAGR over the relevant period
+    oos_cash = df.loc[~df["_warmup"], "cash_ret"]
+    if len(oos_cash) > 0 and oos_cash.notna().any():
+        cumulative = (1 + oos_cash).prod()
+        n_years    = max(len(oos_cash) / 252, 0.01)
+        rf_rate    = cumulative ** (1 / n_years) - 1
+    else:
+        rf_rate = safe_rate
+
     # Merge fund breadth signal if provided
     if fund_signal is not None:
         df = df.merge(
@@ -858,8 +888,8 @@ def run_strategy_with_trades(
         df["fund_filter"] = df["fund_filter"].ffill().fillna(0)
     else:
         df["fund_filter"] = 1   # always on if not provided
-
-
+        
+        
     df["ret"] = df["price"].pct_change()
     vol = df["ret"].rolling(vol_window).std() * np.sqrt(252)
     df["vol"] = vol.shift(1)
@@ -1116,8 +1146,10 @@ def run_strategy_with_trades(
             )
     if first_val != 0:
             df["equity"] = df["equity"] / first_val
+    
             
-    metrics = compute_metrics(df["equity"])
+        
+    metrics = compute_metrics(df["equity"],risk_free_rate=rf_rate)
     metrics = {k: float(v) for k, v in metrics.items()}
     trades_df = pd.DataFrame(trades)
 
@@ -1607,7 +1639,7 @@ def walk_forward(
             for key, calmar in [result]
         }
 
-        if not param_scores:   # ← correctly outside all for loops, inside while
+        if not param_scores:   # <- correctly outside all for loops, inside while
             start += pd.DateOffset(years=test_years)
             carry_state = None
             continue
@@ -1909,12 +1941,13 @@ def print_backtest_report(metrics,
     # Metrics
     logging.info("METRICS:")
     logging.info(
-        "CAGR:  %.2f%% | Vol: %.2f%% | Sharpe: %.2f | MaxDD: %.2f%% | CalMAR: %.2f ",
+        "CAGR:  %.2f%% | Vol: %.2f%% | Sharpe: %.2f | MaxDD: %.2f%% | CalMAR: %.2f | Sortino: %.2f",
         metrics["CAGR"]*100,
         metrics["Vol"]*100,
         metrics["Sharpe"],
         metrics["MaxDD"]*100,
-        metrics["CalMAR"]
+        metrics["CalMAR"],
+        metrics["Sortino"]
     )
     logging.info("-"*80)
 

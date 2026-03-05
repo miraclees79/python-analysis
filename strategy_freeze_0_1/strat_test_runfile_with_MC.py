@@ -91,11 +91,27 @@ USER_AGENTS = [
 
 
 
+
+## Set global parameters
+chosen_mode = "full"
+# options: "vol_entry", "vol_dynamic", "full"
+VOL_WINDOW = 20
+FORCE_FILTER_MODE = ["ma","mom"]
+# options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
+RUN_MONTE_CARLO = True
+#----------------------------------------------
+# Robustness check — shorter sample
+#----------------------------------------------
+USE_SHORTER_SAMPLE = False
+short_sample_start = "2008-01-01"
+short_sample_end   = "2023-12-31"
+
+
+
+
+
 # Main function to process the data
 logging.info("RUN START: %s", dt.datetime.now())
-
-
-
 logging.info("=" * 80)
 logging.info("DOWNLOAD DATA")
 logging.info("=" * 80)
@@ -121,6 +137,7 @@ download_csv(
 )
 
 CASH = load_csv(csv_filename_cash)
+
 
 
 
@@ -179,47 +196,75 @@ for code, name in FUND_CODES.items():
     seen_names[name] = code
 
 
-FUND_FILES = download_fund_navs(FUND_CODES, tmp_dir)
 
-FUNDS = build_funds_df(
-    fund_files=FUND_FILES,
-    price_col="Zamkniecie",
-    min_history_years=10
-) if FUND_FILES else None
+if FORCE_FILTER_MODE is None or "fund" in FORCE_FILTER_MODE:
+    FUND_FILES = download_fund_navs(FUND_CODES, tmp_dir)
 
-if FUNDS is None or FUNDS.empty:
-    logging.warning(
-        "Fund panel unavailable — fund breadth filter will not be used."
-    )
-    FUNDS      = None
-    FUND_PARAMS_GRID = None
-else:
+    FUNDS = build_funds_df(
+        fund_files=FUND_FILES,
+        price_col="Zamkniecie",
+        min_history_years=10
+    ) if FUND_FILES else None
+
+    if FUNDS is None or FUNDS.empty:
+        logging.warning(
+            "Fund panel unavailable — fund breadth filter will not be used."
+        )
+        FUNDS      = None
+        FUND_PARAMS_GRID = None
+    else:
 
  
-    FUND_PARAMS_GRID = [    
-        {
+        FUND_PARAMS_GRID = [    
+            {
             "lookback_days":      30,   # medium asymmetric
             "entry_roll_thresh":  0.05,
             "entry_since_thresh": 0.08,
             "exit_roll_thresh":  -0.06,
             "exit_since_thresh": -0.10
-        },
-        {
+            },
+            {
             "lookback_days":      30, #strong asymmetric tight entry loose exit
             "entry_roll_thresh":  0.03,
             "entry_since_thresh": 0.05,
             "exit_roll_thresh":  -0.10,
             "exit_since_thresh": -0.15
-        },
-        {
+            },
+            {
             "lookback_days":      30, #original idea
             "entry_roll_thresh":  0.10,
             "entry_since_thresh": 0.15,
             "exit_roll_thresh":  -0.10,
             "exit_since_thresh": -0.15
-        }
-     ]
+            }
+        ]
+        #============================
+        # Fund correlation check
 
+        funds_df=FUNDS
+
+        corr_matrix = funds_df.corr()
+        high_corr_pairs = []
+        for i in range(len(corr_matrix.columns)):
+            for j in range(i+1, len(corr_matrix.columns)):
+                r = corr_matrix.iloc[i, j]
+                if r > 0.98:
+                    high_corr_pairs.append((
+                    corr_matrix.columns[i],
+                    corr_matrix.columns[j],
+                    round(r, 4)
+            ))
+
+        if high_corr_pairs:
+            logging.info("High correlation fund pairs (r>0.98):")
+            for f1, f2, r in sorted(high_corr_pairs, key=lambda x: -x[2]):
+                logging.info("  %s / %s  r=%.4f", f1, f2, r)
+else:
+    FUNDS      = None 
+    FUND_PARAMS_GRID = None
+    
+    
+#============================
 
 #===========GRIDS============
     # Define search grids once — passed to both the loop and neighbour_mean
@@ -233,43 +278,9 @@ else:
     
 #============================
 
-#============================
-# Fund correlation check
-
-funds_df=FUNDS
-
-corr_matrix = funds_df.corr()
-high_corr_pairs = []
-for i in range(len(corr_matrix.columns)):
-    for j in range(i+1, len(corr_matrix.columns)):
-        r = corr_matrix.iloc[i, j]
-        if r > 0.98:
-            high_corr_pairs.append((
-                corr_matrix.columns[i],
-                corr_matrix.columns[j],
-                round(r, 4)
-            ))
-
-if high_corr_pairs:
-    logging.info("High correlation fund pairs (r>0.98):")
-    for f1, f2, r in sorted(high_corr_pairs, key=lambda x: -x[2]):
-        logging.info("  %s / %s  r=%.4f", f1, f2, r)
-
-#============================
-
-## Set global parameters
-chosen_mode = "full"
-# options: "vol_entry", "vol_dynamic", "full"
-VOL_WINDOW = 20
-FORCE_FILTER_MODE = ["ma","mom"]
-# options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
-RUN_MONTE_CARLO = True
 #----------------------------------------------
 # Robustness check — shorter sample
 #----------------------------------------------
-USE_SHORTER_SAMPLE = False
-short_sample_start = "2008-01-01"
-short_sample_end   = "2023-12-31"
 
 
 if USE_SHORTER_SAMPLE:
@@ -405,13 +416,14 @@ bh_equity, bh_metrics = compute_buy_and_hold(
 logging.info("="*80)
 logging.info(
     "BUY & HOLD (OOS period %s to %s): "
-    "CAGR: %.2f%% | Vol: %.2f%% | Sharpe: %.2f | MaxDD: %.2f%% | CalMAR: %.2f",
+    "CAGR: %.2f%% | Vol: %.2f%% | Sharpe: %.2f | MaxDD: %.2f%% | CalMAR: %.2f | Sortino: %.2f",
     oos_start.date(), oos_end.date(),
     bh_metrics["CAGR"]*100,
     bh_metrics["Vol"]*100,
     bh_metrics["Sharpe"],
     bh_metrics["MaxDD"]*100,
-    bh_metrics["CalMAR"]
+    bh_metrics["CalMAR"],
+    bh_metrics["Sortino"],
     )
 logging.info("="*80)
 

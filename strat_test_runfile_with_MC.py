@@ -93,7 +93,7 @@ USER_AGENTS = [
 
 
 ## Set global parameters
-chosen_mode = "vol_entry"
+chosen_mode = "full"
 # options: "vol_entry", "vol_dynamic", "full"
 VOL_WINDOW = 20
 FORCE_FILTER_MODE = ["ma","mom"]
@@ -259,7 +259,11 @@ if FORCE_FILTER_MODE is None or "fund" in FORCE_FILTER_MODE:
             logging.info("High correlation fund pairs (r>0.98):")
             for f1, f2, r in sorted(high_corr_pairs, key=lambda x: -x[2]):
                 logging.info("  %s / %s  r=%.4f", f1, f2, r)
-
+else:
+    FUNDS      = None 
+    FUND_PARAMS_GRID = None
+    
+    
 #============================
 
 #===========GRIDS============
@@ -412,13 +416,14 @@ bh_equity, bh_metrics = compute_buy_and_hold(
 logging.info("="*80)
 logging.info(
     "BUY & HOLD (OOS period %s to %s): "
-    "CAGR: %.2f%% | Vol: %.2f%% | Sharpe: %.2f | MaxDD: %.2f%% | CalMAR: %.2f",
+    "CAGR: %.2f%% | Vol: %.2f%% | Sharpe: %.2f | MaxDD: %.2f%% | CalMAR: %.2f | Sortino: %.2f",
     oos_start.date(), oos_end.date(),
     bh_metrics["CAGR"]*100,
     bh_metrics["Vol"]*100,
     bh_metrics["Sharpe"],
     bh_metrics["MaxDD"]*100,
-    bh_metrics["CalMAR"]
+    bh_metrics["CalMAR"],
+    bh_metrics["Sortino"],
     )
 logging.info("="*80)
 
