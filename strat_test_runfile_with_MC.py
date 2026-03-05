@@ -99,6 +99,10 @@ VOL_WINDOW = 20
 FORCE_FILTER_MODE = ["ma","mom"]
 # options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
 RUN_MONTE_CARLO = True
+
+# OBJECTIVE FUNCTION
+OBJECTIVE = "calmar"   # or "calmar", "sharpe", "sortino", "calmar_sortino", "calmar_sharpe"
+
 #----------------------------------------------
 # Robustness check — shorter sample
 #----------------------------------------------
@@ -275,6 +279,7 @@ else:
     slow_grid = [150, 200, 250 ]
     tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
     sl_grid     = [0.05, 0.08, 0.10, 0.15]
+    mom_lookback_grid = [126, 252]    # ADD
     
 #============================
 
@@ -353,7 +358,9 @@ wf_equity, wf_results, wf_trades = walk_forward(
     fast_grid   = fast_grid,
     slow_grid = slow_grid,
     tv_grid = tv_grid,
-    sl_grid     = sl_grid
+    sl_grid     = sl_grid,
+    mom_lookback_grid = mom_lookback_grid,    # ADD
+    objective=OBJECTIVE
 )
 
 

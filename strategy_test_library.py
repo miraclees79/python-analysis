@@ -628,7 +628,7 @@ def neighbour_mean(key, scores, X_grid, Y_grid):
     """
 
 
-    filter_mode, fund_idx, X, Y, fast, slow, tv, sl = key
+    filter_mode, fund_idx, X, Y, fast, slow, tv, sl, mom_lookback = key
 
     xi = min(range(len(X_grid)), key=lambda i: abs(X_grid[i] - X))
     yi = min(range(len(Y_grid)), key=lambda i: abs(Y_grid[i] - Y))
@@ -640,7 +640,7 @@ def neighbour_mean(key, scores, X_grid, Y_grid):
             if 0 <= nxi < len(X_grid) and 0 <= nyi < len(Y_grid):
                 nkey = (filter_mode, fund_idx,
                         X_grid[nxi], Y_grid[nyi],
-                        fast, slow, tv, sl)
+                        fast, slow, tv, sl, mom_lookback)
                 if nkey in scores:
                     neighbours.append(scores[nkey])
 
@@ -720,6 +720,7 @@ def run_strategy_with_trades(
     max_leverage=1.0,
     position_mode="vol_entry",
     use_momentum=False,
+    mom_lookback=252,       # ADD: 252 for 12M momentum, 126 for 6M momentum
     cash_df=None,
     safe_rate=0.0,
     initial_state=None,       # NEW: accept carry-over state from prior window,
@@ -860,6 +861,8 @@ def run_strategy_with_trades(
         df = df.merge(cash, left_index=True, right_index=True, how="left")
         if df["cash_ret"].isna().any():
             df["cash_ret"] = df["cash_ret"].ffill()
+            
+            
     else:
         df["cash_ret"] = safe_rate / 252
 
@@ -898,7 +901,7 @@ def run_strategy_with_trades(
     df["trend"] = (df["ma_fast"] > df["ma_slow"]).astype(int)
 
     if use_momentum:
-        df["MOM"] = compute_momentum(df["price"]).shift(1)
+        df["MOM"] = compute_momentum(df["price"], lookback=mom_lookback).shift(1)
     else:
         df["MOM"] = 1
 
@@ -1163,7 +1166,9 @@ def run_strategy_with_trades(
 
 def evaluate_params(
     filter_mode, fund_idx, fund_params, X, Y, fast, slow, tv, stop_loss,
-    train, cash_train, vol_window, selected_mode, funds_df, train_start, train_end
+    train, cash_train, vol_window, selected_mode, funds_df, train_start, train_end,
+    objective="calmar",   # <-- new parameter, default preserves v0.1 behaviour,
+    mom_lookback=252       
 ):
     """
     Evaluate a single parameter combination on the training window.
@@ -1256,13 +1261,14 @@ def evaluate_params(
                                   training window inside this function
     train_start  : Timestamp    — start date of training window
     train_end    : Timestamp    — end date of training window
-
+    objective    :  str         - sets objective function
+ 
     ---------------------------------------------------------------
     RETURNS
     ---------------------------------------------------------------
-    tuple (key, calmar) if evaluation succeeds, None otherwise.
+    tuple (key, obj_value) if evaluation succeeds, None otherwise.
     key     : tuple — hashable parameter identifier for param_scores
-    calmar  : float — CalMAR ratio on the training window
+    calmar  : float — objective fctn val on the training window
     """
 
     use_mom = (filter_mode == "mom")
@@ -1288,19 +1294,46 @@ def evaluate_params(
         vol_window=vol_window,
         position_mode=selected_mode,
         use_momentum=use_mom,
+        mom_lookback=mom_lookback,    
         fund_signal=train_fund_signal
     )
 
     if metrics is None:
         return None
 
-    max_dd = metrics.get("MaxDD", 0)
-    if max_dd == 0:
-        return None
+    max_dd  = metrics.get("MaxDD", 0)
+    sharpe  = metrics.get("Sharpe", 0)
+    calmar  = metrics["CAGR"] / abs(max_dd) if max_dd != 0 else None
+    sortino = metrics.get("Sortino", 0)
 
-    calmar = metrics["CAGR"] / abs(max_dd)
-    key = (filter_mode, fund_idx, X, Y, fast, slow, tv, stop_loss)
-    return key, calmar
+    if objective == "calmar":
+        if calmar is None:
+            return None
+        obj_value = calmar
+
+    elif objective == "sharpe":
+        obj_value = sharpe
+
+    elif objective == "sortino":
+        obj_value = sortino
+
+    elif objective == "calmar_sharpe":
+        # Equal-weight blend — penalises both drawdown and vol-adjusted return
+        if calmar is None:
+            return None
+        obj_value = 0.5 * calmar + 0.5 * sharpe
+
+    elif objective == "calmar_sortino":
+        # Blend preferring downside-only vol penalty over symmetric Sharpe
+        if calmar is None:
+            return None
+        obj_value = 0.5 * calmar + 0.5 * sortino
+
+    else:
+        raise ValueError(f"Unknown objective: {objective!r}")
+
+    key = (filter_mode, fund_idx, X, Y, fast, slow, tv, stop_loss, mom_lookback)
+    return key, obj_value
 
 
 
@@ -1321,7 +1354,9 @@ def walk_forward(
     fast_grid   = [50, 75, 100],
     slow_grid = [150, 200, 250 ],
     tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20],
-    sl_grid     = [0.05, 0.08, 0.10, 0.15]
+    sl_grid     = [0.05, 0.08, 0.10, 0.15],
+    mom_lookback_grid = [126, 252],    
+    objective = "calmar"
     
 ):
 
@@ -1337,7 +1372,7 @@ def walk_forward(
     selection. Each iteration:
 
       1. TRAIN  : Run a grid search over all parameter combinations on
-                  the training window. Score each combination by CalMAR,
+                  the training window. Score each combination by objective function,
                   then apply a stability penalty that blends the raw
                   score with the mean score of neighbouring X/Y values.
                   This prefers parameter sets on broad performance
@@ -1477,6 +1512,7 @@ def walk_forward(
     logging.info("walk_forward received data from %s to %s (%d rows)",
              df.index.min(), data_end, len(df))
     
+    logging.info("Objective function: %s", objective)
 
     
     _cpu_count = os.cpu_count() or 1
@@ -1494,7 +1530,10 @@ def walk_forward(
     start       = df.index.min()
     carry_state = None          # state carried from previous OOS window
     
-
+    
+    # Override for diagnostic runs
+    if filter_modes_override is not None:
+        logging.info("filter_modes overridden to: %s", filter_modes_override)
 
     while True:
 
@@ -1548,15 +1587,15 @@ def walk_forward(
         # Override for diagnostic runs
         if filter_modes_override is not None:
             filter_modes = filter_modes_override
-            logging.info(
-                "filter_modes overridden to: %s", filter_modes
-                )
+            
+            
         # Build list of all parameter combinations to evaluate
         param_combinations = []
 
         for filter_mode in filter_modes:
             fast_iter = fast_grid if filter_mode == "ma" else [50]
             slow_iter = slow_grid if filter_mode == "ma" else [200]
+            mom_lb_iter   = mom_lookback_grid if filter_mode == "mom" else [252]  # ADD
             fund_iter = (list(enumerate(fund_params_grid))
                          if filter_mode == "fund" else [(None, None)])
 
@@ -1571,10 +1610,11 @@ def walk_forward(
                                     for stop_loss in sl_grid:
                                         if stop_loss >= X:
                                             continue
-                                        param_combinations.append((
-                                            filter_mode, fund_idx, fund_params,
-                                            X, Y, fast, slow, tv, stop_loss
-                                        ))
+                                        for mom_lookback in mom_lb_iter:    # ADD
+                                            param_combinations.append((
+                                                filter_mode, fund_idx, fund_params,
+                                                X, Y, fast, slow, tv, stop_loss,mom_lookback 
+                                                ))
 
         # Evaluate all combinations in parallel
         
@@ -1591,10 +1631,10 @@ def walk_forward(
                             filter_mode, fund_idx, fund_params,
                             X, Y, fast, slow, tv, stop_loss,
                             train, cash_train, vol_window, selected_mode,
-                            funds_df, train_start, train_end
+                            funds_df, train_start, train_end, objective=objective, mom_lookback=mom_lookback
                             )
                         for (filter_mode, fund_idx, fund_params,
-                             X, Y, fast, slow, tv, stop_loss)
+                             X, Y, fast, slow, tv, stop_loss, mom_lookback)
                         in param_combinations
                         ]
                 else:
@@ -1603,10 +1643,10 @@ def walk_forward(
                             filter_mode, fund_idx, fund_params,
                             X, Y, fast, slow, tv, stop_loss,
                             train, cash_train, vol_window, selected_mode,
-                            funds_df, train_start, train_end
+                            funds_df, train_start, train_end, objective=objective, mom_lookback=mom_lookback
                             )
                         for (filter_mode, fund_idx, fund_params,
-                             X, Y, fast, slow, tv, stop_loss)
+                             X, Y, fast, slow, tv, stop_loss, mom_lookback)
                         in param_combinations
                         )
 
@@ -1633,10 +1673,10 @@ def walk_forward(
             
         # Collect results — filter out None (failed evaluations)
         param_scores = {
-            key: calmar
+            key: score
             for result in results_list
             if result is not None
-            for key, calmar in [result]
+            for key, score in [result]
         }
 
         if not param_scores:   # <- correctly outside all for loops, inside while
@@ -1652,7 +1692,8 @@ def walk_forward(
         
         best_score  = -np.inf
         best_params = None
-
+        best_raw_score  = -np.inf   # raw objective — logged for transparency
+        
         for key, raw_score in param_scores.items():
             same_mode_scores = {
                 k: v for k, v in param_scores.items()
@@ -1662,7 +1703,7 @@ def walk_forward(
             combined  = 0.5 * raw_score + 0.5 * stability
             if combined > best_score:
                 best_score  = combined
-
+                best_raw_score = raw_score
                 fund_idx = key[1]   # read from key, not loop variable
 
                 best_params = {
@@ -1676,13 +1717,29 @@ def walk_forward(
                     "fast":         key[4],
                     "slow":         key[5],
                     "stop_loss":    key[7],
+                    "mom_lookback": key[8]
                 }
                 if selected_mode != "full":
                     best_params["target_vol"] = key[6]
-
+            
         if best_params is None:
             break
-
+        else:
+            logging.info(
+                "Window %s: best raw_%s=%.4f | penalised_%s=%.4f | filter=%s | "
+                "X=%.2f Y=%.2f fast=%d slow=%d sl=%.2f tv=%s mom_lookback=%s",
+                train_start.date(),
+                objective, best_raw_score,
+                objective, best_score,
+                best_params["filter_mode"],
+                best_params["X"], best_params["Y"],
+                best_params["fast"], best_params["slow"],
+                best_params["stop_loss"],
+                best_params.get("target_vol", "N/A"),
+                best_params["mom_lookback"]                
+                )   
+        
+        
         # -------------------------------------------------------
         # OOS run — pass carry_state from previous window
         # -------------------------------------------------------
@@ -1729,6 +1786,7 @@ def walk_forward(
             warmup_df=warmup,
             fund_signal=oos_fund_signal,
             use_momentum=(best_params["filter_mode"] == "mom"),
+            mom_lookback=best_params["mom_lookback"],    # ADD
             **{k: v for k, v in best_params.items()
                if k not in ("filter_mode", "fund_params", "fund_idx")}  # add fund_idx
             )
@@ -1768,8 +1826,9 @@ def walk_forward(
                if k not in ("filter_mode", "fund_params", "fund_idx",
                     "use_momentum", "target_vol")},
                     "target_vol":  best_params.get("target_vol", "N/A"),
+            "mom_lookback": best_params.get("mom_lookback", 252),    # ADD
             **test_metrics
-})
+            })
         
         # Advance start before checking if this was the last window
         start += pd.DateOffset(years=test_years)
@@ -1900,7 +1959,7 @@ def print_backtest_report(metrics,
     Sections:
       1. Per-window parameter table (from wf_results) or single
          best_params if walk-forward was not used.
-      2. Aggregate performance metrics (CAGR, Vol, Sharpe, MaxDD, CalMAR).
+      2. Aggregate performance metrics (CAGR, Vol, Sharpe, MaxDD, CalMAR, Sortino).
       3. Trade statistics (win rate, avg win/loss, profit factor, avg days).
       4. Full trade log with returns formatted as percentages.
       5. Open position summary if the last trade is a CARRY record,
