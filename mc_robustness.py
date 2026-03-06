@@ -829,6 +829,11 @@ def block_bootstrap_history(df, price_col, cash_col, block_size=250, seed=None):
     out = df.loc[aligned.index].copy()
     out[price_col] = synthetic_price.values
     out[cash_col]  = synthetic_cash.values
+ 
+    logging.debug(
+    "block_bootstrap_history: combined=%d, aligned=%d, out=%d",
+    len(df), len(aligned), len(out)
+)
     
     return out
 
@@ -845,12 +850,20 @@ def _bootstrap_single_sample(
             block_size=block_size, seed=i
         )
 
-        synthetic_df = df.copy()
+        n_synth = len(synthetic)
+        synthetic_df = df.iloc[:n_synth].copy()
         synthetic_df[price_col] = synthetic[price_col].values
-
-        synthetic_cash = cash_df.copy()
+        synthetic_cash = cash_df.reindex(synthetic_df.index).ffill()
         synthetic_cash[cash_price_col] = synthetic["cash_price"].values
-
+        
+        logging.debug(
+            "Bootstrap %d: synthetic_df=%d, synthetic_cash=%d, "
+            "synthetic_df.index[0]=%s, synthetic_df.index[-1]=%s",
+            i, len(synthetic_df), len(synthetic_cash),
+            synthetic_df.index[0], synthetic_df.index[-1]
+            )   
+        
+        
         equity, wf_res, _ = walk_forward(
             synthetic_df, cash_df=synthetic_cash, **wf_kwargs
         )
@@ -869,7 +882,8 @@ def _bootstrap_single_sample(
         }
 
     except Exception as e:
-        logging.warning("Bootstrap sample %d failed: %s", i, e)
+        import traceback
+        logging.warning("Bootstrap sample %d failed: %s\n%s", i, e, traceback.format_exc())
         return None
 
 
