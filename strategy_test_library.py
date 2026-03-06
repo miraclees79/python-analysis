@@ -1020,7 +1020,7 @@ def run_strategy_with_trades(
         exit_reason = " + ".join(exit_reasons) if exit_reasons else None
 
         if position > 0 and exit_reason:
-            COST = 0.0005  # 5 bps
+            COST = 0.0020  # 20 bps
             trade_ret = price / entry_price - 1 - COST
             days = (i - entry_date).days
             
@@ -1788,7 +1788,7 @@ def walk_forward(
             use_momentum=(best_params["filter_mode"] == "mom"),
             mom_lookback=best_params["mom_lookback"],    # ADD
             **{k: v for k, v in best_params.items()
-               if k not in ("filter_mode", "fund_params", "fund_idx")}  # add fund_idx
+               if k not in ("filter_mode", "fund_params", "fund_idx",  "mom_lookback")}  # add fund_idx
             )
 
         if test_metrics is None or bt_oos is None:
