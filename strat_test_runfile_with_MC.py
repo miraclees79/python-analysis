@@ -536,6 +536,8 @@ if RUN_BLOCK_BOOTSTRAP:
     )
 
     baseline = compute_metrics(wf_equity)
+    
+
     analyze_bootstrap(bb_results, baseline)
 
 else:
