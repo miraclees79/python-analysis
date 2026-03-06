@@ -835,8 +835,7 @@ def _bootstrap_single_sample(
     
     # Force sequential grid search inside bootstrap workers
     # to avoid nested joblib parallelism deadlock on Windows
-    wf_kwargs_sequential = dict(wf_kwargs)
-    wf_kwargs_sequential["n_jobs"] = 1
+
     
     try:
         synthetic = block_bootstrap_history(
@@ -859,7 +858,7 @@ def _bootstrap_single_sample(
         
         
         equity, wf_res, _ = walk_forward(
-            synthetic_df, cash_df=synthetic_cash, **wf_kwargs_sequential
+            synthetic_df, cash_df=synthetic_cash, **wf_kwargs
         )
 
         if equity is None or equity.empty:
@@ -900,14 +899,14 @@ def run_block_bootstrap_robustness(
     perform well on a different plausible market history?
     """
     _cpu_count = os.cpu_count() or 1
-    N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
-    n_jobs=N_JOBS
+    n_jobs= max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
+    
     logging.info("=" * 80)
     logging.info("BLOCK BOOTSTRAP ROBUSTNESS TEST")
     logging.info("=" * 80)
     logging.info(
         "Config: n_samples=%d | block_size=%d days | n_jobs=%d",
-        n_samples, block_size, N_JOBS
+        n_samples, block_size, n_jobs
     )
 
     # Merge price and cash into single df for joint reshuffling
@@ -925,17 +924,17 @@ def run_block_bootstrap_robustness(
         block_size, wf_kwargs
     )
     single_time = time.time() - t0
-    estimated  = single_time * n_samples / N_JOBS
+    estimated  = single_time * n_samples / n_jobs
     logging.info(
         "Single sample: %.0fms -> estimated total: %.0fs (~%.1f min) on %d jobs",
-        single_time * 1000, estimated, estimated / 60, N_JOBS
+        single_time * 1000, estimated, estimated / 60, n_jobs
     )
 
     # Three-tier parallel fallback — mirrors walk_forward parallelisation
     results_list = None
     for backend, n_jobs, label in [
-        ("loky",      N_JOBS, "multiprocessing"),
-        ("threading", N_JOBS, "threading"),
+        ("loky",      n_jobs, "multiprocessing"),
+        ("threading", n_jobs, "threading"),
         (None,        1,      "sequential"),
     ]:
         try:

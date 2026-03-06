@@ -1614,8 +1614,8 @@ def walk_forward(
         # Evaluate all combinations in parallel
         
         for backend, n_jobs, label in [
-                ("loky",      N_JOBS, "multiprocessing"),
-                ("threading", N_JOBS, "threading"),
+                ("loky",      n_jobs, "multiprocessing"),
+                ("threading", n_jobs, "threading"),
                 (None,        1,      "sequential"),
                 ]:
             try:
