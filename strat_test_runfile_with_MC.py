@@ -517,7 +517,7 @@ if RUN_BLOCK_BOOTSTRAP:
         cash_df          = CASH,
         price_col        = "Zamkniecie",
         cash_price_col   = "Zamkniecie",
-        n_samples        = 1,
+        n_samples        = 500,
         block_size       = 250,
         # --- wf_kwargs: mirrors the walk_forward call above ---
         train_years              = 8,

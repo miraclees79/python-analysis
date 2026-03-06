@@ -807,43 +807,29 @@ def block_bootstrap_history(df, price_col, cash_col, block_size=250, seed=None):
     # Align — both series may have different start dates
     aligned = pd.concat([idx_ret, cash_ret], axis=1).dropna()
     aligned.columns = ["idx_ret", "cash_ret"]
+
     
     n = len(aligned)
     block_starts = list(range(0, n - block_size + 1, block_size))
+    n_blocks_needed = int(np.ceil(n / block_size))
     sampled_idx  = rng.choice(len(block_starts),
-                               size=len(block_starts),
-                               replace=True)
+                           size=n_blocks_needed,
+                           replace=True)
 
     reshuffled = pd.concat(
         [aligned.iloc[block_starts[i] : block_starts[i] + block_size]
          for i in sampled_idx]
-    )
-    # Trim BEFORE index assignment
-    reshuffled = reshuffled.iloc[:n].copy()
-    
-    # Diagnostic — remove after fix confirmed
-    if len(reshuffled) != len(aligned.index):
-        raise ValueError(
-            f"Length mismatch before index assignment: "
-            f"reshuffled={len(reshuffled)}, aligned={len(aligned.index)}, n={n}"
         )
-    
-    reshuffled.index = aligned.index
-    
-    # Reconstruct price series from reshuffled returns, starting at 1.0
+
+    reshuffled = reshuffled.iloc[:n].reset_index(drop=True)
+
     synthetic_price = (1 + reshuffled["idx_ret"]).cumprod()
     synthetic_cash  = (1 + reshuffled["cash_ret"]).cumprod()
-    
-    # Build output df preserving all original columns
-    out = df.loc[aligned.index].copy()
+
+    out = df.loc[aligned.index].copy().reset_index(drop=True)
     out[price_col] = synthetic_price.values
     out[cash_col]  = synthetic_cash.values
- 
-    logging.debug(
-    "block_bootstrap_history: combined=%d, aligned=%d, out=%d",
-    len(df), len(aligned), len(out)
-    )
-    
+    out.index = aligned.index
     return out
 
 def _bootstrap_single_sample(
@@ -929,7 +915,9 @@ def run_block_bootstrap_robustness(
     combined = df[[price_col]].copy()
     combined["cash_price"] = cash_df[cash_price_col].reindex(
         df.index).ffill()
-
+    
+    
+    
     # Estimate runtime from single sample
     logging.info("Timing single sample...")
     t0 = time.time()
