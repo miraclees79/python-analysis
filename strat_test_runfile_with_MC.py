@@ -526,7 +526,7 @@ if RUN_BLOCK_BOOTSTRAP:
         cash_df          = CASH,
         price_col        = "Zamkniecie",
         cash_price_col   = "Zamkniecie",
-        n_samples        = 500,
+        n_samples        = 100,
         block_size       = 250,
         # --- wf_kwargs: mirrors the walk_forward call above ---
         train_years              = 8,
@@ -542,6 +542,8 @@ if RUN_BLOCK_BOOTSTRAP:
         slow_grid                = slow_grid,
         tv_grid                  = tv_grid,
         sl_grid                  = sl_grid,
+        mom_lookback_grid        = mom_lookback_grid   # fix — currently missing from call
+        
     )
 
     baseline = compute_metrics(wf_equity)
