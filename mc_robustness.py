@@ -975,12 +975,29 @@ def run_block_bootstrap_robustness(
         logging.error("All bootstrap backends failed.")
         return pd.DataFrame()
 
-    # Filter failed samples
-    results_df = pd.DataFrame(
-        [r for r in results_list if r is not None]
-    )
+    # --- Collect results with progress logging ---
+    valid     = []
+    failed    = 0
+    log_every = max(1, n_samples // 20)  # ~20 progress updates
+
+    for idx, r in enumerate(results_list):
+        if r is not None:
+            valid.append(r)
+        else:
+            failed += 1
+
+        completed = idx + 1
+        if completed % log_every == 0 or completed == n_samples:
+            pct = completed / n_samples * 100
+            bar = ("█" * (completed * 20 // n_samples)).ljust(20)
+            logging.info(
+                "Bootstrap progress: [%s] %d/%d (%.0f%%) — %d valid, %d failed",
+                bar, completed, n_samples, pct, len(valid), failed
+            )
+    results_df = pd.DataFrame(valid)
     n_valid   = len(results_df)
-    n_failed  = n_samples - n_valid
+    n_failed = failed
+    
     if n_failed > 0:
         logging.warning(
             "%d/%d bootstrap samples failed and were excluded.", 
