@@ -13,6 +13,8 @@ from mc_robustness import (
     analyze_robustness,
     extract_windows_from_wf_results,
     extract_best_params_from_wf_results,
+    run_block_bootstrap_robustness,
+    analyze_bootstrap
 )
 
 
@@ -99,7 +101,7 @@ VOL_WINDOW = 20
 FORCE_FILTER_MODE = ["ma","mom"]
 # options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
 RUN_MONTE_CARLO = True # MC parameter robustness
-RUN_BOOTSTRAP = True # Run bootstrap robustness test
+RUN_BLOCK_BOOTSTRAP = True # Run bootstrap robustness test
 
 # OBJECTIVE FUNCTION
 OBJECTIVE = "calmar"   # or "calmar", "sharpe", "sortino", "calmar_sortino", "calmar_sharpe"
@@ -455,6 +457,7 @@ else:
 
 #-----------------
 # monte Carlo Robustness Check
+#=============================
 if RUN_MONTE_CARLO:
     logging.info("=" * 80)
     logging.info("Monte Carlo robustness check calculation")
@@ -494,6 +497,50 @@ if RUN_MONTE_CARLO:
 else:
     logging.info("=" * 80)
     logging.info("Monte Carlo robustness check skipped by user choice")
+    logging.info("=" * 80)
+
+
+
+# -------------------------------------------------------
+# Block Bootstrap Robustness Check
+# -------------------------------------------------------
+if RUN_BLOCK_BOOTSTRAP:
+    logging.info("=" * 80)
+    logging.info("Block bootstrap robustness check")
+    logging.info("=" * 80)
+
+    _cpu_count = os.cpu_count() or 1
+    N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
+
+    bb_results = run_block_bootstrap_robustness(
+        df               = df,
+        cash_df          = CASH,
+        price_col        = "Zamkniecie",
+        cash_price_col   = "Zamkniecie",
+        n_samples        = 10,
+        block_size       = 250,
+        # --- wf_kwargs: mirrors the walk_forward call above ---
+        train_years              = 8,
+        test_years               = 2,
+        vol_window               = VOL_WINDOW,
+        funds_df                 = None,
+        fund_params_grid         = None,
+        selected_mode            = chosen_mode,
+        filter_modes_override    = FORCE_FILTER_MODE,
+        X_grid                   = X_grid,
+        Y_grid                   = Y_grid,
+        fast_grid                = fast_grid,
+        slow_grid                = slow_grid,
+        tv_grid                  = tv_grid,
+        sl_grid                  = sl_grid,
+    )
+
+    baseline = compute_metrics(wf_equity)
+    analyze_bootstrap(bb_results, baseline)
+
+else:
+    logging.info("=" * 80)
+    logging.info("Block bootstrap robustness check skipped by user choice")
     logging.info("=" * 80)
 
 

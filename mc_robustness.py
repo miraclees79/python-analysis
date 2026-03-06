@@ -1016,3 +1016,189 @@ def run_block_bootstrap_robustness(
     logging.info("=" * 80)
 
     return results_df
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap analysis and reporting
+# ---------------------------------------------------------------------------
+
+def analyze_bootstrap(results_df, baseline_metrics, thresholds=None):
+    """
+    Print a formatted report for the block bootstrap robustness test.
+
+    The bootstrap test asks a different question from the Monte Carlo test:
+    not "are these parameters on a robust plateau?" but "does the walk-forward
+    procedure reliably find a good strategy on alternative plausible histories?"
+
+    Because block reshuffling suppresses multi-year trends, the bootstrap
+    is structurally biased against trend-following. Thresholds are therefore
+    set lower than the MC thresholds — a borderline pass here is meaningful.
+
+    Parameters
+    ----------
+    results_df       : pd.DataFrame  — output from run_block_bootstrap_robustness.
+                                       One row per synthetic history, columns:
+                                       CAGR, Vol, Sharpe, MaxDD, CalMAR.
+    baseline_metrics : dict          — metrics from the actual WF run on real data.
+                                       Keys: CAGR, Vol, Sharpe, MaxDD, CalMAR.
+    thresholds       : dict|None     — custom pass/fail thresholds. If None,
+                                       uses defaults appropriate for a single-index
+                                       Polish equity trend-following strategy:
+                                         CAGR  p05 > -0.01  (tolerates mild losses
+                                                              on worst synthetic histories)
+                                         Sharpe p05 > -0.10  (risk-adjusted near-zero)
+                                         MaxDD  p05 > -0.40  (wider than MC — bootstrap
+                                                              can produce concentrated
+                                                              drawdown periods)
+                                         P(CAGR < 0) < 0.20  (strategy loss-making on
+                                                              fewer than 1 in 5 histories)
+
+    Returns
+    -------
+    dict  — summary statistics per metric, plus overall verdict
+    """
+    if thresholds is None:
+        thresholds = {
+            "CAGR":   {"p05_min": -0.01, "label": "p05 CAGR > -1%"},
+            "Sharpe": {"p05_min": -0.10, "label": "p05 Sharpe > -0.10"},
+            "MaxDD":  {"p05_min": -0.40, "label": "p05 MaxDD > -40%"},
+            "p_loss": {"max":      0.20,  "label": "P(CAGR < 0) < 20%"},
+        }
+
+    metrics_to_show = ["CAGR", "Vol", "Sharpe", "MaxDD", "CalMAR"]
+    summary = {}
+
+    logging.info("=" * 80)
+    logging.info("BLOCK BOOTSTRAP ROBUSTNESS REPORT  (n=%d samples)", len(results_df))
+    logging.info(
+        "Note: block reshuffling suppresses multi-year trends — "
+        "thresholds are set lower than MC to account for this structural bias."
+    )
+    logging.info("=" * 80)
+
+    header = f"{'Metric':<10} {'Baseline':>10} {'Mean':>10} {'p05':>10} "
+    header += f"{'p25':>10} {'Median':>10} {'p75':>10} {'p95':>10} {'P(CAGR<0)':>10}"
+    logging.info(header)
+    logging.info("-" * 90)
+
+    p_loss = (results_df["CAGR"] < 0).mean() if "CAGR" in results_df.columns else float("nan")
+
+    for col in metrics_to_show:
+        if col not in results_df.columns:
+            continue
+
+        base = baseline_metrics.get(col, float("nan"))
+        mean = results_df[col].mean()
+        p05  = results_df[col].quantile(0.05)
+        p25  = results_df[col].quantile(0.25)
+        med  = results_df[col].median()
+        p75  = results_df[col].quantile(0.75)
+        p95  = results_df[col].quantile(0.95)
+
+        summary[col] = {
+            "baseline": base,
+            "mean":     mean,
+            "p05":      p05,
+            "p25":      p25,
+            "median":   med,
+            "p75":      p75,
+            "p95":      p95,
+        }
+
+        # P(CAGR<0) shown only on the CAGR row, blank on others
+        p_loss_display = f"{p_loss:.1%}" if col == "CAGR" else ""
+
+        if col in ("CAGR", "Sharpe", "CalMAR"):
+            fmt = lambda v: f"{v:.2f}" if col != "CAGR" else f"{v:.1%}"
+        elif col == "MaxDD":
+            fmt = lambda v: f"{v:.1%}"
+        else:
+            fmt = lambda v: f"{v:.1%}"
+
+        row = (
+            f"{col:<10} {fmt(base):>10} {fmt(mean):>10} {fmt(p05):>10} "
+            f"{fmt(p25):>10} {fmt(med):>10} {fmt(p75):>10} {fmt(p95):>10} "
+            f"{p_loss_display:>10}"
+        )
+        logging.info(row)
+
+    summary["p_loss"] = p_loss
+    logging.info("-" * 90)
+
+    # ------------------------------------------------------------------
+    # Pass / fail checks
+    # ------------------------------------------------------------------
+    passes = []
+    fails  = []
+
+    # p05 threshold checks
+    for metric, cfg in thresholds.items():
+        if metric == "p_loss":
+            continue
+        if metric not in summary:
+            continue
+        p05   = summary[metric]["p05"]
+        limit = cfg["p05_min"]
+        if p05 < limit:
+            fails.append(
+                f"p05 {metric} = {p05:.2%}  < {limit:.2%}  [{cfg['label']}]"
+            )
+        else:
+            passes.append(
+                f"p05 {metric} = {p05:.2%}  >= {limit:.2%}  [{cfg['label']}]"
+            )
+
+    # P(loss) check
+    p_loss_limit = thresholds["p_loss"]["max"]
+    if p_loss > p_loss_limit:
+        fails.append(
+            f"P(CAGR < 0) = {p_loss:.1%}  > {p_loss_limit:.0%}  "
+            f"[{thresholds['p_loss']['label']}]"
+        )
+    else:
+        passes.append(
+            f"P(CAGR < 0) = {p_loss:.1%}  <= {p_loss_limit:.0%}  "
+            f"[{thresholds['p_loss']['label']}]"
+        )
+
+    # Median CAGR check — lower bar than MC given structural bias
+    median_cagr = summary["CAGR"]["median"]
+    if median_cagr < 0.01:
+        fails.append(
+            f"Median CAGR = {median_cagr:.1%}  "
+            f"[procedure fails to find positive strategy on typical synthetic history]"
+        )
+    else:
+        passes.append(
+            f"Median CAGR = {median_cagr:.1%}  [> 1% threshold]"
+        )
+
+    # Baseline vs median — is real history unusually good?
+    base_cagr   = baseline_metrics.get("CAGR", float("nan"))
+    
+    p95_cagr    = summary["CAGR"]["p95"]
+    if base_cagr > p95_cagr:
+        fails.append(
+            f"Baseline CAGR {base_cagr:.1%} exceeds p95 of bootstrap distribution "
+            f"({p95_cagr:.1%}) — real history may be unusually favourable for this strategy"
+        )
+    else:
+        passes.append(
+            f"Baseline CAGR {base_cagr:.1%} within bootstrap distribution "
+            f"(p95 = {p95_cagr:.1%}) — real history not an outlier"
+        )
+
+    verdict = "ROBUST" if not fails else "FRAGILE"
+
+    logging.info("")
+    logging.info("VERDICT: %s", verdict)
+    if passes:
+        for p in passes:
+            logging.info("  PASS  %s", p)
+    if fails:
+        for f in fails:
+            logging.info("  FAIL  %s", f)
+    logging.info("=" * 80)
+
+    summary["verdict"] = verdict
+    return summary
