@@ -347,6 +347,13 @@ wf_metrics = None
 trade_stats = None
 
 
+_cpu_count = os.cpu_count() or 1
+N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
+
+logging.info(
+        "Parallel grid search: %d logical cores detected, using %d jobs.",
+        _cpu_count, N_JOBS
+)
 
 wf_equity, wf_results, wf_trades = walk_forward(
     df,
@@ -363,7 +370,9 @@ wf_equity, wf_results, wf_trades = walk_forward(
     tv_grid = tv_grid,
     sl_grid     = sl_grid,
     mom_lookback_grid = mom_lookback_grid,    # ADD
-    objective=OBJECTIVE
+    objective=OBJECTIVE,
+    n_jobs=N_JOBS
+    
 )
 
 

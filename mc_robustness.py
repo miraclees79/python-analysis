@@ -468,13 +468,6 @@ def run_monte_carlo_robustness(
         "Config: n_samples=%d | perturb_pct=%.0f%% | n_jobs=%d | seed=%d",
         n_samples, perturb_pct * 100, n_jobs, seed
     )
-    _cpu_count = os.cpu_count() or 1
-    N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
-
-    logging.info(
-        "Parallel computing: %d logical cores detected, using %d jobs.",
-        _cpu_count, N_JOBS
-    )
     # --- Build perturbation grids --- 
     window_variants = build_all_perturbation_grids(best_params, pct=perturb_pct)
 
@@ -509,7 +502,7 @@ def run_monte_carlo_robustness(
 
     # --- Run Monte Carlo ---
     try:
-        raw_results = Parallel(n_jobs=N_JOBS, backend="loky")(
+        raw_results = Parallel(n_jobs=n_jobs, backend="loky")(
             delayed(_run_single_sample)(
                 seed          = seed + i,
                 window_variants = window_variants,
@@ -839,6 +832,12 @@ def _bootstrap_single_sample(
     Single bootstrap sample — designed for joblib.Parallel dispatch.
     Fully self-contained, no shared mutable state.
     """
+    
+    # Force sequential grid search inside bootstrap workers
+    # to avoid nested joblib parallelism deadlock on Windows
+    wf_kwargs_sequential = dict(wf_kwargs)
+    wf_kwargs_sequential["n_jobs"] = 1
+    
     try:
         synthetic = block_bootstrap_history(
             combined, price_col, "cash_price",
@@ -860,7 +859,7 @@ def _bootstrap_single_sample(
         
         
         equity, wf_res, _ = walk_forward(
-            synthetic_df, cash_df=synthetic_cash, **wf_kwargs
+            synthetic_df, cash_df=synthetic_cash, **wf_kwargs_sequential
         )
 
         if equity is None or equity.empty:
@@ -902,7 +901,7 @@ def run_block_bootstrap_robustness(
     """
     _cpu_count = os.cpu_count() or 1
     N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
-
+    n_jobs=N_JOBS
     logging.info("=" * 80)
     logging.info("BLOCK BOOTSTRAP ROBUSTNESS TEST")
     logging.info("=" * 80)

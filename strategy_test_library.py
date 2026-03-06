@@ -1356,7 +1356,8 @@ def walk_forward(
     tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20],
     sl_grid     = [0.05, 0.08, 0.10, 0.15],
     mom_lookback_grid = [126, 252],    
-    objective = "calmar"
+    objective = "calmar",
+    n_jobs=1
     
 ):
 
@@ -1515,13 +1516,7 @@ def walk_forward(
     logging.info("Objective function: %s", objective)
 
     
-    _cpu_count = os.cpu_count() or 1
-    N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
 
-    logging.info(
-        "Parallel grid search: %d logical cores detected, using %d jobs.",
-        _cpu_count, N_JOBS
-    )
     
     oos_equity_slices = []
     results           = []
