@@ -820,6 +820,14 @@ def block_bootstrap_history(df, price_col, cash_col, block_size=250, seed=None):
     )
     # Trim BEFORE index assignment
     reshuffled = reshuffled.iloc[:n].copy()
+    
+    # Diagnostic — remove after fix confirmed
+    if len(reshuffled) != len(aligned.index):
+        raise ValueError(
+            f"Length mismatch before index assignment: "
+            f"reshuffled={len(reshuffled)}, aligned={len(aligned.index)}, n={n}"
+        )
+    
     reshuffled.index = aligned.index
     
     # Reconstruct price series from reshuffled returns, starting at 1.0
