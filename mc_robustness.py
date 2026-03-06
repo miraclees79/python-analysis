@@ -932,11 +932,14 @@ def run_block_bootstrap_robustness(
 
     # Three-tier parallel fallback — mirrors walk_forward parallelisation
     results_list = None
+    
+    
+    N_OUTER_JOBS = n_jobs  # preserve before loop
     for backend, n_jobs, label in [
-        ("loky",      n_jobs, "multiprocessing"),
-        ("threading", n_jobs, "threading"),
-        (None,        1,      "sequential"),
-    ]:
+            ("loky",      N_OUTER_JOBS, "multiprocessing"),
+            ("threading", N_OUTER_JOBS, "threading"),
+            (None,        1,            "sequential"),
+            ]:
         try:
             if backend is None:
                 results_list = [
