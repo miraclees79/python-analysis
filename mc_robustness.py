@@ -809,16 +809,17 @@ def block_bootstrap_history(df, price_col, cash_col, block_size=250, seed=None):
     aligned.columns = ["idx_ret", "cash_ret"]
     
     n = len(aligned)
-    # Build non-overlapping blocks from aligned returns
     block_starts = list(range(0, n - block_size + 1, block_size))
-    sampled_idx  = rng.choice(len(block_starts), 
-                               size=len(block_starts), 
+    sampled_idx  = rng.choice(len(block_starts),
+                               size=len(block_starts),
                                replace=True)
-    
+
     reshuffled = pd.concat(
         [aligned.iloc[block_starts[i] : block_starts[i] + block_size]
          for i in sampled_idx]
-    ).iloc[:n]
+    )
+    # Trim BEFORE index assignment
+    reshuffled = reshuffled.iloc[:n].copy()
     reshuffled.index = aligned.index
     
     # Reconstruct price series from reshuffled returns, starting at 1.0
@@ -833,7 +834,7 @@ def block_bootstrap_history(df, price_col, cash_col, block_size=250, seed=None):
     logging.debug(
     "block_bootstrap_history: combined=%d, aligned=%d, out=%d",
     len(df), len(aligned), len(out)
-)
+    )
     
     return out
 
