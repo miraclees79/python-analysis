@@ -12,3 +12,4 @@ __pycache__/strategy_test_library.cpython-314.pyc
 .spyproject/config/backups/workspace.ini.bak
 .spyproject/config/backups/workspace.ini.bak
 *.bak
+/__pycache__
