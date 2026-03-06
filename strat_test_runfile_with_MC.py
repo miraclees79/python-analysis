@@ -98,7 +98,8 @@ chosen_mode = "full"
 VOL_WINDOW = 20
 FORCE_FILTER_MODE = ["ma","mom"]
 # options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
-RUN_MONTE_CARLO = True
+RUN_MONTE_CARLO = True # MC parameter robustness
+RUN_BOOTSTRAP = True # Run bootstrap robustness test
 
 # OBJECTIVE FUNCTION
 OBJECTIVE = "calmar"   # or "calmar", "sharpe", "sortino", "calmar_sortino", "calmar_sharpe"

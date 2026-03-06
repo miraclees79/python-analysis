@@ -83,6 +83,18 @@ Requires from main strategy module:
     run_strategy_with_trades
     compute_metrics
     compute_fund_breadth_signal   (only if fund filter used)
+    
+    
+    
+Now also includes bootstrapping of data
+
+Reshuffle blocks of returns (120 or 250 days) to create many synthetic price 
+histories with the same short-term autocorrelation structure but a different 
+sequence of regimes. Re-run the full walk-forward procedure 
+(including re-optimisation) on each synthetic history. 
+Asks: "does the walk-forward procedure reliably find good parameters 
+on histories that look like ours but aren't exactly ours?" 
+This is testing the procedure, not just the parameters.
 """
 
 import itertools
@@ -92,6 +104,7 @@ import time
 import os
 import sys
 import pandas as pd
+import numpy as np
 from joblib import Parallel, delayed
 
 # ---------------------------------------------------------------------------
@@ -102,6 +115,7 @@ from strategy_test_library import (
                                 run_strategy_with_trades,
                                 compute_metrics,
                                 compute_fund_breadth_signal,
+                                walk_forward
 )
 
 # ---------------------------------------------------------------------------
@@ -770,16 +784,235 @@ def extract_best_params_from_wf_results(wf_results):
     return best_params
 
 
-# ---------------------------------------------------------------------------
-# Example usage (run as script for quick smoke test)
-# ---------------------------------------------------------------------------
+#=====================================================================
+# DATA HISTORY BOOTSTRAP
+#=====================================================================
 
-if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s"
-    )
+
+def block_bootstrap_history(df, price_col, cash_col, block_size=250, seed=None):
+    """
+    Reshuffle (index_return, cash_return) pairs in blocks.
+    Preserves within-block equity/rate correlation.
+    Rate jumps at block boundaries are accepted as necessary artefact.
+    
+    Returns synthetic df with reconstructed price and cash columns,
+    same index as input.
+    """
+    rng = np.random.default_rng(seed)
+    
+    # Work in return space for both series
+    idx_ret  = df[price_col].pct_change().dropna()
+    cash_ret = df[cash_col].pct_change().dropna()
+    
+    # Align — both series may have different start dates
+    aligned = pd.concat([idx_ret, cash_ret], axis=1).dropna()
+    aligned.columns = ["idx_ret", "cash_ret"]
+    
+    n = len(aligned)
+    # Build non-overlapping blocks from aligned returns
+    block_starts = list(range(0, n - block_size + 1, block_size))
+    sampled_idx  = rng.choice(len(block_starts), 
+                               size=len(block_starts), 
+                               replace=True)
+    
+    reshuffled = pd.concat(
+        [aligned.iloc[block_starts[i] : block_starts[i] + block_size]
+         for i in sampled_idx]
+    ).iloc[:n]
+    reshuffled.index = aligned.index
+    
+    # Reconstruct price series from reshuffled returns, starting at 1.0
+    synthetic_price = (1 + reshuffled["idx_ret"]).cumprod()
+    synthetic_cash  = (1 + reshuffled["cash_ret"]).cumprod()
+    
+    # Build output df preserving all original columns
+    out = df.loc[aligned.index].copy()
+    out[price_col] = synthetic_price.values
+    out[cash_col]  = synthetic_cash.values
+    
+    return out
+
+def _bootstrap_single_sample(
+    i, combined, df, cash_df, price_col, cash_price_col, block_size, wf_kwargs
+):
+    """
+    Single bootstrap sample — designed for joblib.Parallel dispatch.
+    Fully self-contained, no shared mutable state.
+    """
+    try:
+        synthetic = block_bootstrap_history(
+            combined, price_col, "cash_price",
+            block_size=block_size, seed=i
+        )
+
+        synthetic_df = df.copy()
+        synthetic_df[price_col] = synthetic[price_col].values
+
+        synthetic_cash = cash_df.copy()
+        synthetic_cash[cash_price_col] = synthetic["cash_price"].values
+
+        equity, wf_res, _ = walk_forward(
+            synthetic_df, cash_df=synthetic_cash, **wf_kwargs
+        )
+
+        if equity is None or equity.empty:
+            return None
+
+        m = compute_metrics(equity)
+        return {
+            "sample":  i,
+            "CAGR":    m["CAGR"],
+            "Sharpe":  m["Sharpe"],
+            "MaxDD":   m["MaxDD"],
+            "CalMAR":  m["CalMAR"],
+            "Sortino": m.get("Sortino", np.nan)
+        }
+
+    except Exception as e:
+        logging.warning("Bootstrap sample %d failed: %s", i, e)
+        return None
+
+
+def run_block_bootstrap_robustness(
+    df, cash_df,
+    price_col="Zamkniecie",
+    cash_price_col="Zamkniecie",
+    n_samples=500,
+    block_size=250,
+    **wf_kwargs
+):
+    """
+    Run full walk-forward re-optimisation on n_samples block-bootstrapped
+    synthetic histories. Bootstrap samples are evaluated in parallel using
+    the same three-tier fallback as walk_forward (loky -> threading -> sequential).
+
+    Each sample independently reshuffles (index_return, cash_return) blocks,
+    runs the full walk-forward optimisation, and returns OOS metrics.
+    The distribution of results answers: would the walk-forward procedure
+    perform well on a different plausible market history?
+    """
+    _cpu_count = os.cpu_count() or 1
+    N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
+
+    logging.info("=" * 80)
+    logging.info("BLOCK BOOTSTRAP ROBUSTNESS TEST")
+    logging.info("=" * 80)
     logging.info(
-        "mc_robustness.py loaded. Import run_monte_carlo_robustness and "
-        "analyze_robustness into your main script to use."
+        "Config: n_samples=%d | block_size=%d days | n_jobs=%d",
+        n_samples, block_size, N_JOBS
     )
+
+    # Merge price and cash into single df for joint reshuffling
+    combined = df[[price_col]].copy()
+    combined["cash_price"] = cash_df[cash_price_col].reindex(
+        df.index).ffill()
+
+    # Estimate runtime from single sample
+    logging.info("Timing single sample...")
+    t0 = time.time()
+    _bootstrap_single_sample(
+        0, combined, df, cash_df, price_col, cash_price_col,
+        block_size, wf_kwargs
+    )
+    single_time = time.time() - t0
+    estimated  = single_time * n_samples / N_JOBS
+    logging.info(
+        "Single sample: %.0fms -> estimated total: %.0fs (~%.1f min) on %d jobs",
+        single_time * 1000, estimated, estimated / 60, N_JOBS
+    )
+
+    # Three-tier parallel fallback — mirrors walk_forward parallelisation
+    results_list = None
+    for backend, n_jobs, label in [
+        ("loky",      N_JOBS, "multiprocessing"),
+        ("threading", N_JOBS, "threading"),
+        (None,        1,      "sequential"),
+    ]:
+        try:
+            if backend is None:
+                results_list = [
+                    _bootstrap_single_sample(
+                        i, combined, df, cash_df,
+                        price_col, cash_price_col,
+                        block_size, wf_kwargs
+                    )
+                    for i in range(n_samples)
+                ]
+            else:
+                results_list = Parallel(n_jobs=n_jobs, backend=backend)(
+                    delayed(_bootstrap_single_sample)(
+                        i, combined, df, cash_df,
+                        price_col, cash_price_col,
+                        block_size, wf_kwargs
+                    )
+                    for i in range(n_samples)
+                )
+            logging.info(
+                "Block bootstrap completed using %s backend (%d jobs).",
+                label, n_jobs
+            )
+            break
+
+        except Exception as e:
+            logging.warning(
+                "Bootstrap backend '%s' failed: %s — trying next option.",
+                label, e
+            )
+            results_list = None
+
+    if results_list is None:
+        logging.error("All bootstrap backends failed.")
+        return pd.DataFrame()
+
+    # Filter failed samples
+    results_df = pd.DataFrame(
+        [r for r in results_list if r is not None]
+    )
+    n_valid   = len(results_df)
+    n_failed  = n_samples - n_valid
+    if n_failed > 0:
+        logging.warning(
+            "%d/%d bootstrap samples failed and were excluded.", 
+            n_failed, n_samples
+        )
+
+    if results_df.empty:
+        logging.error("No valid bootstrap samples — cannot report.")
+        return results_df
+
+    # Summary report
+    logging.info("=" * 80)
+    logging.info(
+        "BLOCK BOOTSTRAP ROBUSTNESS REPORT  (n=%d valid samples, block=%d days)",
+        n_valid, block_size
+    )
+    logging.info("=" * 80)
+    logging.info(
+        "%-10s %8s %8s %8s %8s %8s %8s %8s",
+        "Metric", "Mean", "p05", "p25", "Median", "p75", "p95", "P(>0%)"
+    )
+    logging.info("-" * 80)
+    for col in ["CAGR", "Sharpe", "MaxDD", "CalMAR", "Sortino"]:
+        s = results_df[col]
+        logging.info(
+            "%-10s %8.2f%% %8.2f%% %8.2f%% %8.2f%% %8.2f%% %8.2f%% %8.1f%%",
+            col,
+            s.mean()*100, s.quantile(0.05)*100, s.quantile(0.25)*100,
+            s.median()*100, s.quantile(0.75)*100, s.quantile(0.95)*100,
+            (s > 0).mean()*100
+        )
+    logging.info("-" * 80)
+
+    # Key verdict thresholds
+    p_cagr_pos  = (results_df["CAGR"] > 0.00).mean()
+    p_cagr_3pct = (results_df["CAGR"] > 0.03).mean()
+    p_maxdd_ok  = (results_df["MaxDD"] > -0.35).mean()
+    p_beats_bh  = (results_df["Sharpe"] > 0.25).mean()  # baseline B&H Sharpe
+
+    logging.info("P(CAGR > 0%%):    %5.1f%%", p_cagr_pos  * 100)
+    logging.info("P(CAGR > 3%%):    %5.1f%%", p_cagr_3pct * 100)
+    logging.info("P(MaxDD > -35%%): %5.1f%%", p_maxdd_ok  * 100)
+    logging.info("P(Sharpe > B&H):  %5.1f%%", p_beats_bh  * 100)
+    logging.info("=" * 80)
+
+    return results_df
