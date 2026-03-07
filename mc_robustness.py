@@ -929,11 +929,17 @@ def run_block_bootstrap_robustness(
         "Single sample: %.0fms -> estimated total: %.0fs (~%.1f min) on %d jobs",
         single_time * 1000, estimated, estimated / 60, n_jobs
     )
+    logging.info(
+        "Single sample: %.0fms -> realistic estimation (x2) including overhead: %.0fs (~%.1f min) on %d jobs",
+        single_time * 1000, 2*estimated, 2*estimated / 60, n_jobs
+    )
 
-    # Three-tier parallel fallback — mirrors walk_forward parallelisation
-    results_list = None
-    
-    
+   # Three-tier parallel fallback — mirrors walk_forward parallelisation
+    valid     = []
+    failed    = 0
+    log_every = max(1, n_samples // 20)  # ~20 progress updates
+    success   = False
+
     N_OUTER_JOBS = n_jobs  # preserve before loop
     for backend, n_jobs, label in [
             ("loky",      N_OUTER_JOBS, "multiprocessing"),
@@ -942,16 +948,17 @@ def run_block_bootstrap_robustness(
             ]:
         try:
             if backend is None:
-                results_list = [
+                source = (
                     _bootstrap_single_sample(
                         i, combined, df, cash_df,
                         price_col, cash_price_col,
                         block_size, wf_kwargs
                     )
                     for i in range(n_samples)
-                ]
+                )
             else:
-                results_list = Parallel(n_jobs=n_jobs, backend=backend)(
+                source = Parallel(n_jobs=n_jobs, backend=backend,
+                                  return_as="generator")(
                     delayed(_bootstrap_single_sample)(
                         i, combined, df, cash_df,
                         price_col, cash_price_col,
@@ -959,10 +966,26 @@ def run_block_bootstrap_robustness(
                     )
                     for i in range(n_samples)
                 )
+
+            for idx, r in enumerate(source):
+                if r is not None:
+                    valid.append(r)
+                else:
+                    failed += 1
+                completed = idx + 1
+                if completed % log_every == 0 or completed == n_samples:
+                    pct = completed / n_samples * 100
+                    bar = ("=" * (completed * 20 // n_samples)).ljust(20, "-")
+                    logging.info(
+                        "Bootstrap progress: [%s] %d/%d (%.0f%%) — %d valid, %d failed",
+                        bar, completed, n_samples, pct, len(valid), failed
+                    )
+
             logging.info(
                 "Block bootstrap completed using %s backend (%d jobs).",
                 label, n_jobs
             )
+            success = True
             break
 
         except Exception as e:
@@ -970,31 +993,13 @@ def run_block_bootstrap_robustness(
                 "Bootstrap backend '%s' failed: %s — trying next option.",
                 label, e
             )
-            results_list = None
+            valid   = []  # reset on failure — don't mix partial results
+            failed  = 0
 
-    if results_list is None:
+    if not success:
         logging.error("All bootstrap backends failed.")
         return pd.DataFrame()
 
-    # --- Collect results with progress logging ---
-    valid     = []
-    failed    = 0
-    log_every = max(1, n_samples // 20)  # ~20 progress updates
-
-    for idx, r in enumerate(results_list):
-        if r is not None:
-            valid.append(r)
-        else:
-            failed += 1
-
-        completed = idx + 1
-        if completed % log_every == 0 or completed == n_samples:
-            pct = completed / n_samples * 100
-            bar = ("=" * (completed * 20 // n_samples)).ljust(20, "-")
-            logging.info(
-                "Bootstrap progress: [%s] %d/%d (%.0f%%) — %d valid, %d failed",
-                bar, completed, n_samples, pct, len(valid), failed
-            )
     results_df = pd.DataFrame(valid)
     n_valid   = len(results_df)
     n_failed = failed
