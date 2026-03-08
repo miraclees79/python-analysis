@@ -835,12 +835,6 @@ def run_strategy_with_trades(
     df = df.copy()
     df["price"] = df[price_col]
 
-    # Check length BEFORE adding warmup
-    min_required = max(vol_window, slow, fast, 252) + 5
-    if fund_signal is not None:
-        min_required = max(vol_window, 252) + 5   # MA params irrelevant
-    if len(df) < min_required:
-        return None, None, pd.DataFrame(), None
 
     # If warmup data is provided, prepend it for indicator calculation
     # but tag it so we can strip it from the equity curve after

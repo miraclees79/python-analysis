@@ -360,6 +360,8 @@ logging.info(
 wf_equity, wf_results, wf_trades = walk_forward(
     df,
     cash_df=CASH,
+    train_years=8,
+    test_years=2,
     selected_mode=chosen_mode,
     vol_window=VOL_WINDOW,
     funds_df=FUNDS, #DIAG RUN - None             if not using fund filter  FUNDS if using fund filter
