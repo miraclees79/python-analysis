@@ -4,7 +4,6 @@ import requests
 import time
 import random
 import os
-import sys
 import datetime as dt
 from joblib import Parallel, delayed
 
@@ -2058,3 +2057,313 @@ def print_backtest_report(metrics,
         )
     logging.info("="*80)
 
+
+
+#----------------------------------
+# Regime analysis
+#---------------------------------
+
+
+def prepare_regime_inputs(df, wf_results, wf_equity, bh_equity):
+    """
+    Prepare all inputs required by run_regime_decomposition from the
+    standard walk-forward outputs.
+
+    Parameters
+    ----------
+    df          : pd.DataFrame  — full price DataFrame with columns
+                  "Zamkniecie" (close), "Najwyzszy" (high), "Najnizszy" (low)
+    wf_results  : pd.DataFrame  — walk-forward results, must contain
+                  "TestStart" and "TestEnd" columns
+    wf_equity   : pd.Series     — stitched OOS equity curve, normalised to 1.0,
+                  DatetimeIndex, produced by walk_forward()
+    bh_equity   : pd.Series     — buy-and-hold equity curve, normalised to 1.0,
+                  DatetimeIndex, produced by compute_buy_and_hold()
+
+    Returns
+    -------
+    dict with keys:
+        close               pd.Series  — OOS close prices
+        high                pd.Series  — OOS high prices
+        low                 pd.Series  — OOS low prices
+        daily_returns_strat pd.Series  — daily strategy returns over OOS
+        daily_returns_bh    pd.Series  — daily B&H returns over OOS
+        equity_strat        pd.Series  — wf_equity aligned to OOS window
+        equity_bh           pd.Series  — bh_equity aligned to OOS window
+        oos_start           pd.Timestamp
+        oos_end             pd.Timestamp
+    """
+    oos_start = pd.Timestamp(wf_results["TestStart"].min())
+    oos_end   = pd.Timestamp(wf_results["TestEnd"].max())
+
+    # ── Price series: cut df to OOS window ──────────────────────────────────
+    mask = (df.index >= oos_start) & (df.index <= oos_end)
+    close = df.loc[mask, "Zamkniecie"].copy()
+    high  = df.loc[mask, "Najwyzszy"].copy()
+    low   = df.loc[mask, "Najnizszy"].copy()
+
+    # ── Align equity curves to the same OOS index ────────────────────────────
+    # wf_equity may start/end a day off from the price df due to stitching;
+    # reindex to close's index so all three series share exactly the same dates.
+    equity_strat = wf_equity.reindex(close.index).ffill()
+    equity_bh    = bh_equity.reindex(close.index).ffill()
+
+    # ── Convert normalised equity levels → daily returns ────────────────────
+    # pct_change() on a normalised equity curve gives the correct daily P&L
+    # including MMF days for the strategy and index days for B&H.
+    # Drop the first NaN so the returns series aligns with regime labels.
+    daily_returns_strat = equity_strat.pct_change().dropna()
+    daily_returns_bh    = equity_bh.pct_change().dropna()
+
+    # ── Trim price series to match (loses the first day, same as returns) ────
+    close = close.reindex(daily_returns_strat.index)
+    high  = high.reindex(daily_returns_strat.index)
+    low   = low.reindex(daily_returns_strat.index)
+
+    return dict(
+        close               = close,
+        high                = high,
+        low                 = low,
+        daily_returns_strat = daily_returns_strat,
+        daily_returns_bh    = daily_returns_bh,
+        equity_strat        = equity_strat,
+        equity_bh           = equity_bh,
+        oos_start           = oos_start,
+        oos_end             = oos_end,
+    )
+
+
+
+
+# ── Regime labellers ─────────────────────────────────────────────────────────
+
+def compute_adx(high, low, close, period=20):
+    """Average Directional Index."""
+    delta_high = high.diff()
+    delta_low  = -low.diff()
+    plus_dm  = np.where((delta_high > delta_low) & (delta_high > 0), delta_high, 0.0)
+    minus_dm = np.where((delta_low > delta_high) & (delta_low  > 0), delta_low,  0.0)
+    tr = pd.concat([
+        high - low,
+        (high - close.shift()).abs(),
+        (low  - close.shift()).abs()
+    ], axis=1).max(axis=1)
+    atr     = tr.ewm(span=period, adjust=False).mean()
+    plus_di  = 100 * pd.Series(plus_dm,  index=close.index).ewm(span=period, adjust=False).mean() / atr
+    minus_di = 100 * pd.Series(minus_dm, index=close.index).ewm(span=period, adjust=False).mean() / atr
+    dx  = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di)).fillna(0)
+    adx = dx.ewm(span=period, adjust=False).mean()
+    return adx, plus_di, minus_di
+
+def label_regime_adx(close, high, low, period=20, trend_thresh=25, chop_thresh=20):
+    adx, plus_di, minus_di = compute_adx(high, low, close, period)
+    regime = pd.Series("sideways", index=close.index)
+    regime[adx > trend_thresh] = np.where(
+        plus_di[adx > trend_thresh] > minus_di[adx > trend_thresh], "uptrend", "downtrend"
+    )
+    regime[adx < chop_thresh] = "sideways"
+    return regime.rename("regime_adx")
+
+def label_regime_momentum(close, window=63, thresh=0.03):
+    ret = close.pct_change(window)
+    regime = pd.Series("sideways", index=close.index)
+    regime[ret >  thresh] = "uptrend"
+    regime[ret < -thresh] = "downtrend"
+    return regime.rename("regime_mom")
+
+def label_regime_vol(close, window=21, hi_pct=0.67, lo_pct=0.33):
+    rv = close.pct_change().rolling(window).std() * np.sqrt(252)
+    rolling_med = rv.rolling(252, min_periods=60).median()
+    regime = pd.Series("normal_vol", index=close.index)
+    regime[rv > rolling_med * 1.3] = "high_vol"
+    regime[rv < rolling_med * 0.7] = "low_vol"
+    return regime.rename("regime_vol")
+
+
+# ── Performance breakdown ────────────────────────────────────────────────────
+
+def regime_stats(daily_returns_strat, daily_returns_bh, regime_series, label="regime"):
+    """
+    daily_returns_strat : pd.Series of daily strategy returns (including MMF days)
+    daily_returns_bh    : pd.Series of daily buy-and-hold returns
+    regime_series       : pd.Series of regime labels, same index
+    """
+    df = pd.DataFrame({
+        "strat": daily_returns_strat,
+        "bh"   : daily_returns_bh,
+        "regime": regime_series
+    }).dropna()
+
+    rows = []
+    for reg, grp in df.groupby("regime"):
+        n_days  = len(grp)
+        pct_time = n_days / len(df) * 100
+        ann = 252
+
+        def ann_return(r):
+            return (1 + r).prod() ** (ann / len(r)) - 1
+
+        def ann_vol(r):
+            return r.std() * np.sqrt(ann)
+
+        def max_dd(r):
+            cum = (1 + r).cumprod()
+            return (cum / cum.cummax() - 1).min()
+
+        rows.append({
+            label          : reg,
+            "days"         : n_days,
+            "pct_time"     : round(pct_time, 1),
+            "strat_cagr"   : round(ann_return(grp.strat) * 100, 2),
+            "bh_cagr"      : round(ann_return(grp.bh)    * 100, 2),
+            "strat_vol"    : round(ann_vol(grp.strat) * 100, 2),
+            "bh_vol"       : round(ann_vol(grp.bh)    * 100, 2),
+            "strat_maxdd"  : round(max_dd(grp.strat)   * 100, 2),
+            "bh_maxdd"     : round(max_dd(grp.bh)      * 100, 2),
+            "strat_sharpe" : round(ann_return(grp.strat) / ann_vol(grp.strat), 3)
+                             if ann_vol(grp.strat) > 0 else np.nan,
+        })
+
+    return pd.DataFrame(rows).set_index(label)
+
+
+# ── Regime transition matrix ─────────────────────────────────────────────────
+
+def regime_transition_matrix(regime_series):
+    """Fraction of days where regime i is followed by regime j."""
+    s = regime_series.dropna()
+    regimes = sorted(s.unique())
+    mat = pd.DataFrame(0.0, index=regimes, columns=regimes)
+    for a, b in zip(s.iloc[:-1], s.iloc[1:]):
+        mat.loc[a, b] += 1
+    mat = mat.div(mat.sum(axis=1), axis=0)
+    return mat.round(3)
+
+
+# ── Visualisation ────────────────────────────────────────────────────────────
+
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+
+REGIME_COLOURS = {
+    "uptrend"   : "#c6efce",  # green
+    "downtrend" : "#ffc7ce",  # red
+    "sideways"  : "#ffeb9c",  # amber
+    "high_vol"  : "#ffc7ce",
+    "normal_vol": "#c6efce",
+    "low_vol"   : "#deebf7",
+}
+
+def plot_regime_overlay(close, regime_series, equity_strat, equity_bh,
+                        title="Regime decomposition"):
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8),
+                                    sharex=True, gridspec_kw={"height_ratios": [1, 2]})
+
+    # top panel: regime bands
+    prev_regime = None
+    prev_date   = regime_series.index[0]
+    for date, reg in regime_series.items():
+        if reg != prev_regime and prev_regime is not None:
+            ax1.axvspan(prev_date, date,
+                        color=REGIME_COLOURS.get(prev_regime, "#eeeeee"), alpha=0.6)
+            ax2.axvspan(prev_date, date,
+                        color=REGIME_COLOURS.get(prev_regime, "#eeeeee"), alpha=0.3)
+        prev_regime = reg
+        prev_date   = date
+    ax1.axvspan(prev_date, regime_series.index[-1],
+                color=REGIME_COLOURS.get(prev_regime, "#eeeeee"), alpha=0.6)
+    ax2.axvspan(prev_date, regime_series.index[-1],
+                color=REGIME_COLOURS.get(prev_regime, "#eeeeee"), alpha=0.3)
+
+    ax1.plot(close / close.iloc[0], color="steelblue", linewidth=1, label="WIG20TR (normalised)")
+    ax1.set_ylabel("Index level")
+    ax1.legend(fontsize=9)
+    ax1.set_title(title)
+
+    ax2.plot(equity_strat / equity_strat.iloc[0], color="navy",   linewidth=1.5, label="Strategy")
+    ax2.plot(equity_bh    / equity_bh.iloc[0],    color="grey",   linewidth=1,   linestyle="--", label="Buy & Hold")
+    ax2.set_ylabel("Normalised equity")
+    ax2.legend(fontsize=9)
+
+    patches = [mpatches.Patch(color=c, alpha=0.6, label=l)
+               for l, c in REGIME_COLOURS.items()]
+    ax2.legend(handles=patches + ax2.get_lines(), fontsize=8, loc="upper left")
+
+    plt.tight_layout()
+    return fig
+
+
+def plot_regime_bar_comparison(stats_df, title="Performance by regime"):
+    colours = ["#2E75B6", "#9DC3E6", "#C00000", "#FF9999"]
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    x = np.arange(len(stats_df))
+    w = 0.35
+
+    # Returns
+    ax = axes[0]
+    ax.bar(x - w/2, stats_df["strat_cagr"], w, label="Strategy",   color=colours[0])
+    ax.bar(x + w/2, stats_df["bh_cagr"],    w, label="Buy & Hold", color=colours[1])
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.set_xticks(x)
+    ax.set_xticklabels(stats_df.index, rotation=15)
+    ax.set_ylabel("Annualised return (%)")
+    ax.set_title("CAGR by regime")
+    ax.legend()
+
+    # Drawdowns
+    ax = axes[1]
+    ax.bar(x - w/2, stats_df["strat_maxdd"], w, label="Strategy",   color=colours[2])
+    ax.bar(x + w/2, stats_df["bh_maxdd"],    w, label="Buy & Hold", color=colours[3])
+    ax.set_xticks(x)
+    ax.set_xticklabels(stats_df.index, rotation=15)
+    ax.set_ylabel("Max drawdown (%)")
+    ax.set_title("Max drawdown by regime")
+    ax.legend()
+
+    fig.suptitle(title, fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    return fig
+
+
+# ── Top-level runner ─────────────────────────────────────────────────────────
+
+def run_regime_decomposition(close, high, low,
+                              daily_returns_strat, daily_returns_bh,
+                              equity_strat, equity_bh):
+    """
+    close, high, low            : pd.Series, full price history
+    daily_returns_strat/bh      : pd.Series, OOS period only
+    equity_strat/bh             : pd.Series, cumulative equity, OOS period only
+    """
+    results = {}
+
+    for name, regime_fn in [
+        ("ADX trend",  lambda: label_regime_adx(close, high, low)),
+        ("Momentum",   lambda: label_regime_momentum(close)),
+        ("Volatility", lambda: label_regime_vol(close)),
+    ]:
+        regime = regime_fn().reindex(daily_returns_strat.index)
+        stats  = regime_stats(daily_returns_strat, daily_returns_bh, regime, label="regime")
+        trans  = regime_transition_matrix(regime)
+
+        fig_overlay = plot_regime_overlay(
+            close.reindex(daily_returns_strat.index), regime,
+            equity_strat, equity_bh, title=f"Regime overlay — {name}"
+        )
+        fig_bars = plot_regime_bar_comparison(stats, title=f"Performance by regime — {name}")
+
+        results[name] = {
+            "stats"      : stats,
+            "transitions": trans,
+            "fig_overlay": fig_overlay,
+            "fig_bars"   : fig_bars,
+        }
+        print(f"\n{'─'*60}")
+        print(f"  {name} regime decomposition")
+        print(f"{'─'*60}")
+        print(stats.to_string())
+        print(f"\nTransition matrix:\n{trans.to_string()}")
+
+    return results

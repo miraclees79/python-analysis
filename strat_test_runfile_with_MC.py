@@ -6,6 +6,8 @@ from strategy_test_library import (download_csv,
                                    compute_metrics,
                                    analyze_trades,
                                    compute_buy_and_hold,
+                                   prepare_regime_inputs,
+                                   run_regime_decomposition,
                                    print_backtest_report    
                                    )
 from mc_robustness import (
@@ -100,8 +102,8 @@ chosen_mode = "full"
 VOL_WINDOW = 20
 FORCE_FILTER_MODE = ["ma","mom"]
 # options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
-RUN_MONTE_CARLO = True # MC parameter robustness
-RUN_BLOCK_BOOTSTRAP = True # Run bootstrap robustness test
+RUN_MONTE_CARLO = False # MC parameter robustness
+RUN_BLOCK_BOOTSTRAP = False # Run bootstrap robustness test
 
 # OBJECTIVE FUNCTION
 OBJECTIVE = "calmar"   # or "calmar", "sharpe", "sortino", "calmar_sortino", "calmar_sharpe"
@@ -462,6 +464,38 @@ if wf_metrics is not None:
     )
 else:
     logging.warning("Skipping report — no WF metrics available.")
+
+
+
+#---------------------------------------
+# Regime analysis
+#-------------------------------------
+
+
+
+
+
+
+
+
+
+# Assuming you have these from your existing strategy runner:
+#   close_oos, high_oos, low_oos   — price series over the OOS window
+#   strat_daily                    — daily returns series (strategy)
+#   bh_daily                       — daily returns series (buy & hold)
+#   equity_strat, equity_bh        — cumulative equity series
+
+inputs = prepare_regime_inputs(df, wf_results, wf_equity, bh_equity)
+
+results = run_regime_decomposition(**{k: inputs[k] for k in
+    ["close", "high", "low",
+     "daily_returns_strat", "daily_returns_bh",
+     "equity_strat", "equity_bh"]})
+
+
+
+
+
 
 
 #-----------------
