@@ -239,7 +239,7 @@ def _feasible_weight_grid(step: float = 0.10) -> list:
                 combos.append({
                     "equity": e,
                     "bond":   b,
-                    "mmf":    round(1.0 - e - b, 10),
+                    "mmf":    max(0.0, round(1.0 - e - b, 10)),
                 })
     return combos
 
@@ -566,42 +566,54 @@ def portfolio_equity_from_signals(
 # ============================================================
 
 def allocation_walk_forward(
-    equity_returns:  pd.Series,
-    bond_returns:    pd.Series,
-    mmf_returns:     pd.Series,
-    sig_equity_oos:  pd.Series,
-    sig_bond_oos:    pd.Series,
-    wf_results_eq:   pd.DataFrame,
-    wf_results_bd:   pd.DataFrame,
-    step:            float = 0.10,
-    objective:       str   = "calmar",
-    cooldown_days:   int   = 10,
-    annual_cap:      int   = 12,
+    equity_returns:     pd.Series,
+    bond_returns:       pd.Series,
+    mmf_returns:        pd.Series,
+    sig_equity_full:    pd.Series,
+    sig_bond_full:      pd.Series,
+    sig_equity_oos:     pd.Series,
+    sig_bond_oos:       pd.Series,
+    wf_results_eq:      pd.DataFrame,
+    wf_results_bd:      pd.DataFrame,
+    step:               float = 0.10,
+    objective:          str   = "calmar",
+    cooldown_days:      int   = 10,
+    annual_cap:         int   = 12,
 ) -> tuple:
     """
     Walk-forward optimisation of the both-signals-on allocation weights.
 
-    Uses the same window schedule as the per-asset signal walk-forwards
-    (derived from wf_results_eq).  For each training window:
-      1. Extract in-sample signal series for equity and bond.
+    Window schedule is driven by wf_results_bd (the bond asset, which has
+    the shorter/later history and therefore defines the common OOS start).
+    For each window in that schedule:
+      1. Slice the full in-sample return and signal series up to train_end.
+         These slices include the full history available — NOT just the OOS
+         portion — so the optimiser has the maximum relevant data.
       2. Grid-search the best equity/bond split via optimise_both_on_weights.
-      3. Apply best weights to the OOS window with reallocation gate.
+      3. Apply best weights to the OOS test window with reallocation gate.
       4. Chain-link OOS equity slices.
+
+    The reallocation gate state (last_change_date, annual_counter) is carried
+    continuously across windows — it does not reset at each window boundary.
 
     Parameters
     ----------
-    equity_returns  : pd.Series      — full daily returns of equity asset
-    bond_returns    : pd.Series      — full daily returns of bond asset
-    mmf_returns     : pd.Series      — full daily returns of MMF
-    sig_equity_oos  : pd.Series      — full OOS binary signal for equity
-    sig_bond_oos    : pd.Series      — full OOS binary signal for bond
-    wf_results_eq   : pd.DataFrame   — walk_forward results for equity asset;
-                                       used to extract window schedule
-    wf_results_bd   : pd.DataFrame   — walk_forward results for bond asset
-    step            : float          — weight grid step
-    objective       : str            — optimisation objective
-    cooldown_days   : int            — reallocation gate cooldown
-    annual_cap      : int            — reallocation gate annual cap
+    equity_returns   : pd.Series      — full daily returns of equity asset
+    bond_returns     : pd.Series      — full daily returns of bond asset
+    mmf_returns      : pd.Series      — full daily returns of MMF
+    sig_equity_full  : pd.Series      — full binary signal for equity
+                                        (covers entire equity OOS history)
+    sig_bond_full    : pd.Series      — full binary signal for bond
+                                        (covers entire bond OOS history)
+    sig_equity_oos   : pd.Series      — equity signal trimmed to common OOS period
+    sig_bond_oos     : pd.Series      — bond signal trimmed to common OOS period
+    wf_results_eq    : pd.DataFrame   — walk_forward results for equity asset
+    wf_results_bd    : pd.DataFrame   — walk_forward results for bond asset;
+                                        used as the window schedule driver
+    step             : float          — weight grid step
+    objective        : str            — optimisation objective
+    cooldown_days    : int            — reallocation gate cooldown
+    annual_cap       : int            — reallocation gate annual cap
 
     Returns
     -------
@@ -611,13 +623,22 @@ def allocation_walk_forward(
       all_reallocation_log  : list[dict]
       alloc_results_df      : pd.DataFrame — per-window best weights
     """
+    def _slice(s, start, end):
+        return s.loc[(s.index >= start) & (s.index < end)]
+
     oos_equity_slices = []
     all_weights       = {}
-    all_realloc_log   = []
     alloc_results     = []
 
-    windows = wf_results_eq[["TrainStart", "TrainEnd",
-                               "TestStart", "TestEnd"]].drop_duplicates()
+    # Reallocation gate state persists across windows
+    current_weights  = {"equity": 0.0, "bond": 0.0, "mmf": 1.0}
+    last_change_date = None
+    annual_counter   = {}
+    all_realloc_log  = []
+
+    # Use bond WF schedule — it starts later and defines the common OOS period
+    windows = wf_results_bd[["TrainStart", "TrainEnd",
+                              "TestStart", "TestEnd"]].drop_duplicates()
 
     for _, row in windows.iterrows():
         train_start = pd.Timestamp(row["TrainStart"])
@@ -625,20 +646,23 @@ def allocation_walk_forward(
         test_start  = pd.Timestamp(row["TestStart"])
         test_end    = pd.Timestamp(row["TestEnd"])
 
-        # --- Training: extract in-sample return and signal slices ---
-        def _slice(s, start, end):
-            return s.loc[(s.index >= start) & (s.index < end)]
+        # --- Training: full in-sample history up to train_end ---
+        # Use all available return and signal data — not just the OOS window.
+        # Both signals default to 0 (flat) outside their available history.
+        train_eq_r = _slice(equity_returns,  train_start, train_end)
+        train_bd_r = _slice(bond_returns,    train_start, train_end)
+        train_mf_r = _slice(mmf_returns,     train_start, train_end)
+        train_s_eq = _slice(sig_equity_full, train_start, train_end).reindex(
+                         train_eq_r.index).fillna(0).astype(int)
+        train_s_bd = _slice(sig_bond_full,   train_start, train_end).reindex(
+                         train_bd_r.index).fillna(0).astype(int)
 
-        train_eq_r   = _slice(equity_returns, train_start, train_end)
-        train_bd_r   = _slice(bond_returns,   train_start, train_end)
-        train_mf_r   = _slice(mmf_returns,    train_start, train_end)
-        train_s_eq   = _slice(sig_equity_oos, train_start, train_end)
-        train_s_bd   = _slice(sig_bond_oos,   train_start, train_end)
-
-        if len(train_eq_r) < 30:
+        if len(train_eq_r) < 30 or len(train_bd_r) < 30:
             logging.warning(
-                "Allocation WF: training window %s–%s too short (%d rows), skipping.",
-                train_start.date(), train_end.date(), len(train_eq_r)
+                "Allocation WF: training window %s–%s too short "
+                "(eq=%d rows, bd=%d rows), skipping.",
+                train_start.date(), train_end.date(),
+                len(train_eq_r), len(train_bd_r),
             )
             continue
 
@@ -653,44 +677,89 @@ def allocation_walk_forward(
         )
 
         alloc_results.append({
-            "TrainStart":    train_start,
-            "TrainEnd":      train_end,
-            "TestStart":     test_start,
-            "TestEnd":       test_end,
-            "w_equity":      best_combo["equity"],
-            "w_bond":        best_combo["bond"],
-            "w_mmf":         best_combo["mmf"],
+            "TrainStart": train_start,
+            "TrainEnd":   train_end,
+            "TestStart":  test_start,
+            "TestEnd":    test_end,
+            "w_equity":   best_combo["equity"],
+            "w_bond":     best_combo["bond"],
+            "w_mmf":      best_combo["mmf"],
         })
 
-        # --- OOS: simulate with gate ---
-        test_eq_r = _slice(equity_returns, test_start, test_end)
-        test_bd_r = _slice(bond_returns,   test_start, test_end)
-        test_mf_r = _slice(mmf_returns,    test_start, test_end)
-        test_s_eq = _slice(sig_equity_oos, test_start, test_end)
-        test_s_bd = _slice(sig_bond_oos,   test_start, test_end)
+        # --- OOS: simulate with gate (gate state carried across windows) ---
+        test_eq_r = _slice(equity_returns,  test_start, test_end)
+        test_bd_r = _slice(bond_returns,    test_start, test_end)
+        test_mf_r = _slice(mmf_returns,     test_start, test_end)
+        test_s_eq = _slice(sig_equity_oos,  test_start, test_end)
+        test_s_bd = _slice(sig_bond_oos,    test_start, test_end)
 
         if len(test_eq_r) < 5:
             continue
 
-        oos_equity, oos_weights, realloc_log = portfolio_equity_from_signals(
-            equity_returns  = test_eq_r,
-            bond_returns    = test_bd_r,
-            mmf_returns     = test_mf_r,
-            sig_equity      = test_s_eq,
-            sig_bond        = test_s_bd,
-            weights_both_on = best_combo,
-            cooldown_days   = cooldown_days,
-            annual_cap      = annual_cap,
-        )
+        # Align to common dates for this test window
+        common = (test_eq_r.index
+                  .intersection(test_bd_r.index)
+                  .intersection(test_mf_r.index))
+        common = common.sort_values()
 
-        # Chain-link
+        eq_r = test_eq_r.loc[common]
+        bd_r = test_bd_r.loc[common]
+        mf_r = test_mf_r.loc[common]
+        s_eq = test_s_eq.reindex(common).fillna(0).astype(int)
+        s_bd = test_s_bd.reindex(common).fillna(0).astype(int)
+
+        window_equity_vals = []
+
+        for date in common:
+            target = signals_to_target_weights(
+                sig_equity      = int(s_eq[date]),
+                sig_bond        = int(s_bd[date]),
+                weights_both_on = best_combo,
+            )
+
+            accepted, reallocated, annual_counter = reallocation_gate(
+                current_weights  = current_weights,
+                target_weights   = target,
+                last_change_date = last_change_date,
+                current_date     = date,
+                cooldown_days    = cooldown_days,
+                annual_cap       = annual_cap,
+                annual_counter   = annual_counter,
+            )
+
+            if reallocated:
+                all_realloc_log.append({
+                    "Date":          date,
+                    "equity_before": current_weights["equity"],
+                    "bond_before":   current_weights["bond"],
+                    "mmf_before":    current_weights["mmf"],
+                    "equity_after":  accepted["equity"],
+                    "bond_after":    accepted["bond"],
+                    "mmf_after":     accepted["mmf"],
+                })
+                current_weights  = accepted
+                last_change_date = date
+
+            all_weights[date] = dict(current_weights)
+
+            w = current_weights
+            r = (w["equity"] * eq_r[date]
+                 + w["bond"]  * bd_r[date]
+                 + w["mmf"]   * mf_r[date])
+            window_equity_vals.append((date, r))
+
+        if not window_equity_vals:
+            continue
+
+        dates, rets = zip(*window_equity_vals)
+        window_port_r  = pd.Series(list(rets), index=list(dates))
+        window_equity  = (1 + window_port_r).cumprod()
+        window_equity  = window_equity / window_equity.iloc[0]
+
         if oos_equity_slices:
-            prev_end  = oos_equity_slices[-1].iloc[-1]
-            oos_equity = oos_equity * prev_end
+            window_equity = window_equity * oos_equity_slices[-1].iloc[-1]
 
-        oos_equity_slices.append(oos_equity)
-        all_weights.update(oos_weights.to_dict())
-        all_realloc_log.extend(realloc_log)
+        oos_equity_slices.append(window_equity)
 
     if not oos_equity_slices:
         logging.warning("Allocation walk-forward produced no OOS slices.")

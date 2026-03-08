@@ -171,7 +171,7 @@ logging.info("WIG loaded: %d rows  (%s to %s)",
 
 # --- Bond: TBSP Polish government bond total return index ---
 csv_tbsp = os.path.join(tmp_dir, "tbsp.csv")
-download_csv("https://stooq.pl/q/d/l/?s=^tbsp&i=d", csv_tbsp)
+download_csv("https://stooq.pl/q/d/l/?s=tbsp&i=d", csv_tbsp)
 TBSP = load_csv(csv_tbsp)
 if TBSP is None:
     logging.error("Failed to load TBSP data. Exiting.")
@@ -371,17 +371,19 @@ ret_mmf_oos = _trim(ret_mmf,    oos_start, oos_end)
 
 portfolio_equity, weights_series, reallocation_log, alloc_results_df = (
     allocation_walk_forward(
-        equity_returns  = ret_eq_oos,
-        bond_returns    = ret_bd_oos,
-        mmf_returns     = ret_mmf_oos,
-        sig_equity_oos  = sig_eq_oos,
-        sig_bond_oos    = sig_bd_oos,
-        wf_results_eq   = wf_results_eq,
-        wf_results_bd   = wf_results_bd,
-        step            = 0.10,
-        objective       = ALLOC_OBJECTIVE,
-        cooldown_days   = COOLDOWN_DAYS,
-        annual_cap      = ANNUAL_CAP,
+        equity_returns   = ret_eq,          # full history — training uses this
+        bond_returns     = ret_bd,          # full history — training uses this
+        mmf_returns      = ret_mmf,         # full history — training uses this
+        sig_equity_full  = sig_equity,      # full OOS signal — used for training slices
+        sig_bond_full    = sig_bond,        # full OOS signal — used for training slices
+        sig_equity_oos   = sig_eq_oos,      # trimmed to common period — used for test
+        sig_bond_oos     = sig_bd_oos,      # trimmed to common period — used for test
+        wf_results_eq    = wf_results_eq,
+        wf_results_bd    = wf_results_bd,
+        step             = 0.10,
+        objective        = ALLOC_OBJECTIVE,
+        cooldown_days    = COOLDOWN_DAYS,
+        annual_cap       = ANNUAL_CAP,
     )
 )
 
