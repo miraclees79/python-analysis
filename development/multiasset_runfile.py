@@ -171,7 +171,7 @@ logging.info("WIG loaded: %d rows  (%s to %s)",
 
 # --- Bond: TBSP Polish government bond total return index ---
 csv_tbsp = os.path.join(tmp_dir, "tbsp.csv")
-download_csv("https://stooq.pl/q/d/l/?s=tbsp&i=d", csv_tbsp)
+download_csv("https://stooq.pl/q/d/l/?s=^tbsp&i=d", csv_tbsp)
 TBSP = load_csv(csv_tbsp)
 if TBSP is None:
     logging.error("Failed to load TBSP data. Exiting.")
@@ -470,6 +470,7 @@ ax.grid(True, alpha=0.3)
 
 plt.tight_layout()
 plot_path = "multiasset_equity.png"
+plt.show()
 plt.savefig(plot_path, dpi=150)
 plt.close()
 logging.info("Plot saved to %s", plot_path)
