@@ -390,13 +390,13 @@ def build_signal_series(wf_equity: pd.Series, wf_trades: pd.DataFrame) -> pd.Ser
     last = wf_trades.iloc[-1]
     if last["Exit Reason"] in boundary:
         # Position is open to end of data — mark to end
-        entry = pd.Timestamp(last["Entry Date"])
+        entry = pd.Timestamp(last["EntryDate"])
         mask  = signal.index >= entry
         signal.loc[mask] = 1
 
     for _, row in closed_trades.iterrows():
-        entry = pd.Timestamp(row["Entry Date"])
-        exit_ = pd.Timestamp(row["Exit Date"])
+        entry = pd.Timestamp(row["EntryDate"])
+        exit_ = pd.Timestamp(row["ExitDate"])
         mask  = (signal.index >= entry) & (signal.index <= exit_)
         signal.loc[mask] = 1
 
