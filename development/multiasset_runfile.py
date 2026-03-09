@@ -68,6 +68,15 @@ from multiasset_library import (
     print_allocation_robustness_report,
 )
 
+from mc_robustness import (
+    run_monte_carlo_robustness,
+    analyze_robustness,
+    extract_windows_from_wf_results,
+    extract_best_params_from_wf_results,
+    run_block_bootstrap_robustness,
+    analyze_bootstrap,
+)
+
 
 # ============================================================
 # LOGGING SETUP
@@ -553,7 +562,7 @@ if RUN_MONTE_CARLO_PARAM_SINGLE:
     best_params_bd = extract_best_params_from_wf_results(wf_results_bd)
 
     # Run
-    mc_results_eq = run_monte_carlo_robustness(
+    mc_results_bd= run_monte_carlo_robustness(
         best_params   = best_params_bd,
         windows       = windows_bd,
         df            = TBSP,
