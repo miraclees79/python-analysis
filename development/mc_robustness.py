@@ -142,6 +142,39 @@ MIN_VALUES = {
 }
 
 
+
+# ---------------------------------------------------------------------------
+# Asset-class threshold presets for analyze_robustness / analyze_bootstrap
+# ---------------------------------------------------------------------------
+
+EQUITY_THRESHOLDS_MC = {
+    "CAGR":   {"p05_min":  0.00, "label": "p05 CAGR > 0%"},
+    "Sharpe": {"p05_min":  0.00, "label": "p05 Sharpe > 0"},
+    "MaxDD":  {"p05_min": -0.35, "label": "p05 MaxDD > -35%"},
+}
+
+BOND_THRESHOLDS_MC = {
+    "CAGR":   {"p05_min":  0.00, "label": "p05 CAGR > 0%"},
+    "Sharpe": {"p05_min":  0.00, "label": "p05 Sharpe > 0"},
+    "MaxDD":  {"p05_min": -0.10, "label": "p05 MaxDD > -10%"},
+}
+
+EQUITY_THRESHOLDS_BOOTSTRAP = {
+    "CAGR":   {"p05_min": -0.01, "label": "p05 CAGR > -1%"},
+    "Sharpe": {"p05_min": -0.10, "label": "p05 Sharpe > -0.10"},
+    "MaxDD":  {"p05_min": -0.40, "label": "p05 MaxDD > -40%"},
+    "p_loss": {"max":      0.20, "label": "P(CAGR < 0) < 20%"},
+}
+
+BOND_THRESHOLDS_BOOTSTRAP = {
+    "CAGR":   {"p05_min": -0.01, "label": "p05 CAGR > -1%"},
+    "Sharpe": {"p05_min": -0.10, "label": "p05 Sharpe > -0.10"},
+    "MaxDD":  {"p05_min": -0.10, "label": "p05 MaxDD > -10%"},
+    "p_loss": {"max":      0.20, "label": "P(CAGR < 0) < 20%"},
+}
+
+
+
 # ---------------------------------------------------------------------------
 # Step 1 — Build perturbation grid for a single window
 # ---------------------------------------------------------------------------
@@ -1037,17 +1070,7 @@ def run_block_bootstrap_robustness(
         )
     logging.info("-" * 80)
 
-    # Key verdict thresholds
-    p_cagr_pos  = (results_df["CAGR"] > 0.00).mean()
-    p_cagr_3pct = (results_df["CAGR"] > 0.03).mean()
-    p_maxdd_ok  = (results_df["MaxDD"] > -0.35).mean()
-    p_beats_bh  = (results_df["Sharpe"] > 0.25).mean()  # baseline B&H Sharpe
 
-    logging.info("P(CAGR > 0%%):    %5.1f%%", p_cagr_pos  * 100)
-    logging.info("P(CAGR > 3%%):    %5.1f%%", p_cagr_3pct * 100)
-    logging.info("P(MaxDD > -35%%): %5.1f%%", p_maxdd_ok  * 100)
-    logging.info("P(Sharpe > B&H):  %5.1f%%", p_beats_bh  * 100)
-    logging.info("=" * 80)
 
     return results_df
 

@@ -75,6 +75,10 @@ from mc_robustness import (
     extract_best_params_from_wf_results,
     run_block_bootstrap_robustness,
     analyze_bootstrap,
+    BOND_THRESHOLDS_MC,
+    BOND_THRESHOLDS_BOOTSTRAP,
+    EQUITY_THRESHOLDS_MC,
+    EQUITY_THRESHOLDS_BOOTSTRAP,
 )
 
 
@@ -176,8 +180,8 @@ ITERATIONS_MC_PARAM_SINGLE = 10 # 1000 is the true test variant, 10 for smoke te
 RUN_BLOCK_BOOTSTRAP_SINGLE = True # Run bootstrap robustness test for single asset strategies
 ITERATIONS_BOOTSTRAP_SINGLE = 10 # 500 is the true test variant, 10 for smoke test
 
-RUN_MONTE_CARLO_ALLOCATION_WEIGHT = True # Run MC perturbations on allocation weights
-ITERATIONS_ALLOCATION_WEIGHT = 10 # 500 is the true test variant, 10 for smoke test
+RUN_ROBUSTNESS_ALLOCATION_WEIGHT = True # Run deterministic perturbations on allocation weights
+
 
 # ============================================================
 # PHASE 1 — DATA DOWNLOAD
@@ -553,7 +557,7 @@ if RUN_MONTE_CARLO_PARAM_SINGLE:
 
     # Report
     baseline_eq = compute_metrics(wf_equity_eq)
-    analyze_robustness(mc_results_eq, baseline_eq)
+    analyze_robustness(mc_results_eq, baseline_eq,thresholds=EQUITY_THRESHOLDS_MC)
 
 
     logging.info("=" * 80)
@@ -582,7 +586,7 @@ if RUN_MONTE_CARLO_PARAM_SINGLE:
 
     # Report
     baseline_bd = compute_metrics(wf_equity_bd)
-    analyze_robustness(mc_results_bd, baseline_bd)
+    analyze_robustness(mc_results_bd, baseline_bd,thresholds=BOND_THRESHOLDS_MC)
 
 else:
     logging.info("=" * 80)
@@ -630,7 +634,7 @@ if RUN_BLOCK_BOOTSTRAP_SINGLE:
     )
 
     baseline_eq = compute_metrics(wf_equity_eq)
-    analyze_bootstrap(bb_results_eq, baseline_eq)
+    analyze_bootstrap(bb_results_eq, baseline_eq, thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
 
     logging.info("=" * 80)
     logging.info("Bond component - TBSP")
@@ -663,7 +667,7 @@ if RUN_BLOCK_BOOTSTRAP_SINGLE:
     )
 
     baseline_bd = compute_metrics(wf_equity_bd)
-    analyze_bootstrap(bb_results_bd, baseline_bd)
+    analyze_bootstrap(bb_results_bd, baseline_bd,thresholds=BOND_THRESHOLDS_BOOTSTRAP)
 
 else:
     logging.info("=" * 80)
@@ -683,7 +687,7 @@ logging.info("PHASE 8: ALLOCATION WEIGHT ROBUSTNESS  (Level 2 — equity weight 
 logging.info("=" * 80)
 
 
-if RUN_MONTE_CARLO_ALLOCATION_WEIGHT:
+if RUN_ROBUSTNESS_ALLOCATION_WEIGHT:
 
     robustness_df = allocation_weight_robustness(
         alloc_results_df = alloc_results_df,
@@ -693,7 +697,6 @@ if RUN_MONTE_CARLO_ALLOCATION_WEIGHT:
         sig_equity_oos   = sig_eq_oos,
         sig_bond_oos     = sig_bd_oos,
         baseline_metrics = portfolio_metrics,
-        n_samples = ITERATIONS_ALLOCATION_WEIGHT,
         perturb_steps    = [-0.2, -0.1, 0.0, 0.1, 0.2],
         cooldown_days    = COOLDOWN_DAYS,
         annual_cap       = ANNUAL_CAP,
