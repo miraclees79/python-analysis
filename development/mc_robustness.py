@@ -869,6 +869,9 @@ def _bootstrap_single_sample(
     
     # Force sequential grid search inside bootstrap workers
     # to avoid nested joblib parallelism deadlock on Windows
+    # Force sequential grid search inside each bootstrap worker
+    wf_kwargs_inner = {**wf_kwargs, "n_jobs": 1}
+
 
     
     try:
@@ -893,7 +896,7 @@ def _bootstrap_single_sample(
         
         
         equity, wf_res, _ = walk_forward(
-            synthetic_df, cash_df=synthetic_cash, **wf_kwargs
+            synthetic_df, cash_df=synthetic_cash, **wf_kwargs_inner
         )
 
         if equity is None or equity.empty:
