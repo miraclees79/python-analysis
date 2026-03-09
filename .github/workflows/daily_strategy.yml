@@ -86,32 +86,64 @@ jobs:
         id: strategy
         env:
           PYTHONIOENCODING: utf-8
-          PYTHONPATH: strategy_freeze_0_2
+          # PYTHONPATH is set to the folder so that strategy_test_library,
+          # mc_robustness, and daily_output are all importable by name.
+          PYTHONPATH: ${{ github.workspace }}/strategy_freeze_0_2
         run: |
           cd strategy_freeze_0_2
+          # The runfile must call build_daily_outputs() at its end.
+          # That call writes outputs/signal_snapshot.json relative to the
+          # working directory, i.e. strategy_freeze_0_2/outputs/.
+          # Reminder — add to runfile if not already present:
+          #   from daily_output import build_daily_outputs
+          #   build_daily_outputs(
+          #       wf_equity=wf_equity, wf_trades=wf_trades,
+          #       wf_metrics=wf_metrics, wf_results=wf_results,
+          #       bh_equity=bh_equity, bh_metrics=bh_metrics,
+          #       df=df, output_dir="outputs", price_col="Zamkniecie",
+          #   )
           python strat_test_runfile_with_MC.py
 
       # ------------------------------------------------------------------
       # 5. Parse action from snapshot JSON and export to GITHUB_ENV
       #    This makes $ACTION and $SIGNAL available in all subsequent steps.
+      #
+      #    Single python call reads both values at once to avoid the
+      #    heredoc-in-subshell quoting issues that caused FileNotFoundError
+      #    when ACTION and SIGNAL were parsed in separate heredocs.
+      #    Snapshot path is absolute to be immune to working-directory drift.
       # ------------------------------------------------------------------
       - name: Parse signal action
         id: parse
         run: |
-          ACTION=$(python - <<'EOF'
+          SNAPSHOT="${{ github.workspace }}/strategy_freeze_0_2/outputs/signal_snapshot.json"
+
+          if [ ! -f "$SNAPSHOT" ]; then
+            echo "ERROR: signal_snapshot.json not found at $SNAPSHOT"
+            echo "The runfile did not call build_daily_outputs() or exited early."
+            exit 1
+          fi
+
+          python - "$SNAPSHOT" <<'EOF'
           import json, sys
-          with open("strategy_freeze_0_2/outputs/signal_snapshot.json") as f:
-              snap = json.load(f)
-          print(snap.get("_action", snap.get("action", "HOLD")))
+          snap = json.load(open(sys.argv[1]))
+          action = snap.get("action", "HOLD")
+          signal = snap.get("signal", "OUT")
+          print(f"ACTION={action}")
+          print(f"SIGNAL={signal}")
           EOF
-          )
-          SIGNAL=$(python - <<'EOF'
-          import json
-          with open("strategy_freeze_0_2/outputs/signal_snapshot.json") as f:
-              snap = json.load(f)
-          print(snap.get("signal", "OUT"))
+
+          # Capture both values in one call and write to env / output
+          eval "$(python - "$SNAPSHOT" <<'EOF'
+          import json, sys
+          snap = json.load(open(sys.argv[1]))
+          action = snap.get("action", "HOLD")
+          signal = snap.get("signal", "OUT")
+          print(f"ACTION={action}")
+          print(f"SIGNAL={signal}")
           EOF
-          )
+          )"
+
           echo "ACTION=$ACTION" >> "$GITHUB_ENV"
           echo "SIGNAL=$SIGNAL" >> "$GITHUB_ENV"
           echo "action=$ACTION" >> "$GITHUB_OUTPUT"

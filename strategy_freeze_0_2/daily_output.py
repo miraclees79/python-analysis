@@ -652,7 +652,8 @@ def build_daily_outputs(
     # --- Determine action (compare to yesterday's log entry) ---
     prev_log = _load_existing_log(log_path)
     action   = _determine_action(prev_log, snap["signal"])
-    snap["_action"] = action   # embed for chart title
+    snap["_action"] = action   # underscore copy for chart title (stripped from JSON)
+    snap["action"]  = action   # clean copy written to snapshot JSON for GH Actions
 
     # --- Status text ---
     status_text = _build_status_text(snap, action)
@@ -666,6 +667,8 @@ def build_daily_outputs(
     logging.info("daily_output: signal log updated at %s", log_path)
 
     # --- Snapshot JSON ---
+    # Strip internal keys (leading underscore) but keep "action" which is
+    # needed by the GitHub Actions parse step.
     snap_serialisable = {
         k: v for k, v in snap.items()
         if not k.startswith("_")
