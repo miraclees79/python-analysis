@@ -943,11 +943,9 @@ def run_block_bootstrap_robustness(
     )
 
     # Merge price and cash into single df for joint reshuffling
-    combined = df[[price_col]].copy()
-    combined["cash_price"] = cash_df[cash_price_col].reindex(
-        df.index).ffill()
-    
-    
+    common_idx = df.index.intersection(cash_df.index)
+    combined = df.loc[common_idx, [price_col]].copy()
+    combined["cash_price"] = cash_df.loc[common_idx, cash_price_col]
     
     # Estimate runtime from single sample
     logging.info("Timing single sample...")
