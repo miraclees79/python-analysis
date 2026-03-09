@@ -874,3 +874,327 @@ def print_multiasset_report(
         logging.info("\n%s", realloc_df.to_string(index=False))
 
     logging.info(sep)
+
+
+# ============================================================
+# LEVEL 2 MC — ALLOCATION WEIGHT PERTURBATION ROBUSTNESS
+# ============================================================
+
+def allocation_weight_robustness(
+    alloc_results_df:   pd.DataFrame,
+    equity_returns:     pd.Series,
+    bond_returns:       pd.Series,
+    mmf_returns:        pd.Series,
+    sig_equity_oos:     pd.Series,
+    sig_bond_oos:       pd.Series,
+    baseline_metrics:   dict,
+    perturb_steps:      list  = [-0.2, -0.1, 0.0, 0.1, 0.2],
+    min_equity:         float = 0.10,
+    max_equity:         float = 1.00,
+    cooldown_days:      int   = 10,
+    annual_cap:         int   = 12,
+) -> pd.DataFrame:
+    """
+    Level 2 robustness check: perturb the optimised both-signals-on equity
+    weight by ±10pp and ±20pp steps and re-simulate the full OOS portfolio
+    for each perturbation.
+
+    For each window in alloc_results_df the optimised w_equity is shifted by
+    each value in perturb_steps (e.g. ±0.10, ±0.20).  Bond weight is held
+    fixed at the optimised value (typically 0.10).  MMF absorbs the remainder.
+    All windows shift by the same step simultaneously — this tests the
+    sensitivity of the combined portfolio to the equity allocation level,
+    not individual window choices.
+
+    The reallocation gate state is carried continuously across windows,
+    matching the live simulation exactly.
+
+    ---------------------------------------------------------------
+    INTERPRETATION GUIDE
+    ---------------------------------------------------------------
+    Ideal outcome: CalMAR, Sharpe, and MaxDD are stable across the
+    ±10–20pp range.  This indicates the both-on equity weight is on a
+    broad plateau — the exact optimised value matters less than the
+    general direction (equity-heavy vs bond-heavy vs balanced).
+
+    Concerning outcome: metrics drop sharply at ±10pp.  This indicates
+    the optimised weight sits on a narrow spike — the portfolio is
+    sensitive to the precise allocation and the Phase 4 result should
+    be treated with caution.
+
+    Separately review whether the equity_weight direction is stable:
+    if most windows chose 90% equity, the portfolio is essentially an
+    equity strategy with a bond sleeve, and Phase 4 is adding little
+    diversification value.
+
+    Parameters
+    ----------
+    alloc_results_df : pd.DataFrame — per-window optimised weights from
+                                      allocation_walk_forward; must have
+                                      columns TestStart, TestEnd,
+                                      w_equity, w_bond, w_mmf.
+    equity_returns   : pd.Series   — full daily returns of equity asset
+    bond_returns     : pd.Series   — full daily returns of bond asset
+    mmf_returns      : pd.Series   — full daily returns of MMF
+    sig_equity_oos   : pd.Series   — equity signal trimmed to common OOS period
+    sig_bond_oos     : pd.Series   — bond signal trimmed to common OOS period
+    baseline_metrics : dict        — compute_metrics output for the baseline
+                                     portfolio (step=0.0 reference)
+    perturb_steps    : list[float] — equity weight shifts to apply; 0.0 is
+                                     included to reproduce the baseline as a
+                                     sanity check.  Default: ±0.10, ±0.20.
+    min_equity       : float       — floor on perturbed equity weight (default 0.10)
+    max_equity       : float       — ceiling on perturbed equity weight (default 1.00)
+    cooldown_days    : int         — reallocation gate cooldown (must match
+                                     the value used in the main run)
+    annual_cap       : int         — reallocation gate annual cap
+
+    Returns
+    -------
+    pd.DataFrame — one row per perturbation step with columns:
+        equity_shift    : the applied shift (e.g. -0.20, -0.10, 0.0, ...)
+        w_equity_mean   : mean equity weight across windows after perturbation
+        CAGR, Vol, Sharpe, MaxDD, CalMAR, Sortino
+        n_reallocations : total reallocations over the OOS period
+        CAGR_vs_base    : CAGR difference from baseline (pp)
+        MaxDD_vs_base   : MaxDD difference from baseline (pp)
+        CalMAR_vs_base  : CalMAR ratio vs baseline (perturbed / baseline)
+    """
+    def _slice(s, start, end):
+        return s.loc[(s.index >= start) & (s.index < end)]
+
+    results = []
+
+    for step in perturb_steps:
+
+        # Build perturbed weight set — one dict per window
+        perturbed_windows = []
+        for _, row in alloc_results_df.iterrows():
+            raw_eq = float(row["w_equity"]) + step
+            w_eq   = max(min_equity, min(max_equity, round(raw_eq, 10)))
+            w_bd   = float(row["w_bond"])               # bond weight held fixed
+            w_mmf  = max(0.0, round(1.0 - w_eq - w_bd, 10))
+            perturbed_windows.append({
+                "TestStart": pd.Timestamp(row["TestStart"]),
+                "TestEnd":   pd.Timestamp(row["TestEnd"]),
+                "w_equity":  w_eq,
+                "w_bond":    w_bd,
+                "w_mmf":     w_mmf,
+            })
+
+        # Simulate full OOS — gate state carried continuously across windows
+        current_weights   = {"equity": 0.0, "bond": 0.0, "mmf": 1.0}
+        last_change_date  = None
+        annual_counter    = {}
+        n_reallocations   = 0
+        oos_equity_slices = []
+
+        for pw in perturbed_windows:
+            test_start = pw["TestStart"]
+            test_end   = pw["TestEnd"]
+            combo      = {"equity": pw["w_equity"],
+                          "bond":   pw["w_bond"],
+                          "mmf":    pw["w_mmf"]}
+
+            test_eq_r = _slice(equity_returns, test_start, test_end)
+            test_bd_r = _slice(bond_returns,   test_start, test_end)
+            test_mf_r = _slice(mmf_returns,    test_start, test_end)
+            test_s_eq = _slice(sig_equity_oos, test_start, test_end)
+            test_s_bd = _slice(sig_bond_oos,   test_start, test_end)
+
+            if len(test_eq_r) < 5:
+                continue
+
+            common = (test_eq_r.index
+                      .intersection(test_bd_r.index)
+                      .intersection(test_mf_r.index))
+            common = common.sort_values()
+
+            eq_r = test_eq_r.loc[common]
+            bd_r = test_bd_r.loc[common]
+            mf_r = test_mf_r.loc[common]
+            s_eq = test_s_eq.reindex(common).fillna(0).astype(int)
+            s_bd = test_s_bd.reindex(common).fillna(0).astype(int)
+
+            window_rets = []
+
+            for date in common:
+                target = signals_to_target_weights(
+                    sig_equity      = int(s_eq[date]),
+                    sig_bond        = int(s_bd[date]),
+                    weights_both_on = combo,
+                )
+
+                accepted, reallocated, annual_counter = reallocation_gate(
+                    current_weights  = current_weights,
+                    target_weights   = target,
+                    last_change_date = last_change_date,
+                    current_date     = date,
+                    cooldown_days    = cooldown_days,
+                    annual_cap       = annual_cap,
+                    annual_counter   = annual_counter,
+                )
+
+                if reallocated:
+                    current_weights  = accepted
+                    last_change_date = date
+                    n_reallocations += 1
+
+                w = current_weights
+                window_rets.append((
+                    date,
+                    w["equity"] * eq_r[date]
+                    + w["bond"]  * bd_r[date]
+                    + w["mmf"]   * mf_r[date]
+                ))
+
+            if not window_rets:
+                continue
+
+            dates, rets  = zip(*window_rets)
+            port_r       = pd.Series(list(rets), index=list(dates))
+            eq_curve     = (1 + port_r).cumprod()
+            eq_curve     = eq_curve / eq_curve.iloc[0]
+
+            if oos_equity_slices:
+                eq_curve = eq_curve * oos_equity_slices[-1].iloc[-1]
+            oos_equity_slices.append(eq_curve)
+
+        if not oos_equity_slices:
+            logging.warning(
+                "Perturbation step=%.2f produced no OOS slices — skipped.", step
+            )
+            continue
+
+        portfolio_equity = pd.concat(oos_equity_slices).sort_index()
+        m = compute_metrics(portfolio_equity)
+
+        w_eq_mean = np.mean([pw["w_equity"] for pw in perturbed_windows])
+
+        results.append({
+            "equity_shift":    step,
+            "w_equity_mean":   round(w_eq_mean, 3),
+            "CAGR":            m["CAGR"],
+            "Vol":             m["Vol"],
+            "Sharpe":          m["Sharpe"],
+            "MaxDD":           m["MaxDD"],
+            "CalMAR":          m["CalMAR"],
+            "Sortino":         m["Sortino"],
+            "n_reallocations": n_reallocations,
+        })
+
+    if not results:
+        logging.warning("allocation_weight_robustness: no results produced.")
+        return pd.DataFrame()
+
+    df = pd.DataFrame(results)
+
+    # Comparison columns relative to the step=0.0 baseline
+    base_row = df.loc[df["equity_shift"].abs() < 1e-9]
+    if not base_row.empty:
+        base_cagr   = base_row["CAGR"].iloc[0]
+        base_maxdd  = base_row["MaxDD"].iloc[0]
+        base_calmar = base_row["CalMAR"].iloc[0]
+        df["CAGR_vs_base"]   = (df["CAGR"]  - base_cagr)  * 100
+        df["MaxDD_vs_base"]  = (df["MaxDD"] - base_maxdd) * 100
+        df["CalMAR_vs_base"] = (df["CalMAR"] / base_calmar
+                                if base_calmar != 0 else np.nan)
+    else:
+        logging.warning(
+            "Baseline step (0.0) not found in perturb_steps — "
+            "vs_base columns will be NaN. Add 0.0 to perturb_steps."
+        )
+        df["CAGR_vs_base"]   = np.nan
+        df["MaxDD_vs_base"]  = np.nan
+        df["CalMAR_vs_base"] = np.nan
+
+    return df
+
+
+def print_allocation_robustness_report(results_df: pd.DataFrame) -> None:
+    """
+    Log a structured report for the allocation weight perturbation analysis.
+
+    Sections:
+      1. Sensitivity table — all perturb_steps with metrics and vs-baseline
+         comparison columns.
+      2. Verdict — PLATEAU / MODERATE / SPIKE based on CalMAR ratio at ±10pp.
+
+    The verdict threshold uses CalMAR ratio at the ±10pp steps (the tightest
+    perturbation that is still meaningful):
+      >= 0.80 : PLATEAU   — robust, weight is on a broad performance plateau
+      0.60–0.80: MODERATE  — somewhat sensitive, treat with moderate confidence
+      < 0.60  : SPIKE     — fragile, Phase 4 weight should be treated with caution
+
+    Parameters
+    ----------
+    results_df : pd.DataFrame — output of allocation_weight_robustness
+    """
+    sep = "=" * 80
+    logging.info(sep)
+    logging.info("ALLOCATION WEIGHT ROBUSTNESS  (Level 2 — equity weight perturbation)")
+    logging.info(sep)
+
+    if results_df.empty:
+        logging.warning("No results to report.")
+        return
+
+    # Format display table
+    display = results_df.copy()
+    display["CAGR"]           = (display["CAGR"]  * 100).round(2).astype(str) + "%"
+    display["Vol"]            = (display["Vol"]   * 100).round(2).astype(str) + "%"
+    display["MaxDD"]          = (display["MaxDD"] * 100).round(2).astype(str) + "%"
+    display["Sharpe"]         = display["Sharpe"].round(3)
+    display["CalMAR"]         = display["CalMAR"].round(3)
+    display["Sortino"]        = display["Sortino"].round(3)
+    display["CAGR_vs_base"]   = display["CAGR_vs_base"].round(2).astype(str) + "pp"
+    display["MaxDD_vs_base"]  = display["MaxDD_vs_base"].round(2).astype(str) + "pp"
+    display["CalMAR_vs_base"] = display["CalMAR_vs_base"].round(3)
+    display["equity_shift"]   = display["equity_shift"].apply(lambda x: f"{x:+.0%}")
+    display["w_equity_mean"]  = display["w_equity_mean"].apply(lambda x: f"{x:.0%}")
+
+    cols = ["equity_shift", "w_equity_mean",
+            "CAGR", "Vol", "Sharpe", "MaxDD", "CalMAR", "Sortino",
+            "n_reallocations", "CAGR_vs_base", "MaxDD_vs_base", "CalMAR_vs_base"]
+    logging.info("\n%s", display[cols].to_string(index=False))
+    logging.info("-" * 80)
+
+    # --- Verdict based on minimum CalMAR ratio at ±10pp ---
+    inner = results_df.loc[results_df["equity_shift"].abs().between(0.09, 0.11)]
+
+    if inner.empty:
+        logging.info(
+            "Verdict: ±10pp steps not present in results — "
+            "add ±0.10 to perturb_steps for a verdict."
+        )
+    else:
+        min_ratio = inner["CalMAR_vs_base"].min()
+        if pd.isna(min_ratio):
+            logging.info("Verdict: baseline CalMAR is zero — ratio undefined.")
+        elif min_ratio >= 0.80:
+            logging.info(
+                "Verdict: PLATEAU  (min CalMAR ratio at ±10pp = %.3f >= 0.80). "
+                "Phase 4 allocation weight sits on a broad performance plateau. "
+                "Result is robust to ±10pp equity shifts.",
+                min_ratio
+            )
+        elif min_ratio >= 0.60:
+            logging.info(
+                "Verdict: MODERATE SENSITIVITY  (min CalMAR ratio at ±10pp = %.3f, "
+                "range 0.60–0.80). Portfolio is somewhat sensitive to the exact "
+                "equity weight. Treat Phase 4 result with moderate confidence.",
+                min_ratio
+            )
+        else:
+            logging.info(
+                "Verdict: SPIKE  (min CalMAR ratio at ±10pp = %.3f < 0.60). "
+                "Portfolio is highly sensitive to the exact equity allocation. "
+                "Phase 4 optimised weight should be treated with caution.",
+                min_ratio
+            )
+
+    logging.info(
+        "Note: bond weight held fixed at per-window optimised value throughout. "
+        "Only equity weight was perturbed; MMF absorbed the remainder."
+    )
+    logging.info(sep)

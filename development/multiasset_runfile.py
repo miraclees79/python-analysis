@@ -43,7 +43,7 @@ import datetime as dt
 import pandas as pd
 import numpy as np
 import matplotlib
-#matplotlib.use("Agg")          # headless — no display required
+matplotlib.use("Agg")          # headless — no display required
 import matplotlib.pyplot as plt
 
 from strategy_test_library import (
@@ -60,6 +60,8 @@ from multiasset_library import (
     build_signal_series,
     allocation_walk_forward,
     print_multiasset_report,
+    allocation_weight_robustness,
+    print_allocation_robustness_report,
 )
 
 
@@ -171,7 +173,7 @@ logging.info("WIG loaded: %d rows  (%s to %s)",
 
 # --- Bond: TBSP Polish government bond total return index ---
 csv_tbsp = os.path.join(tmp_dir, "tbsp.csv")
-download_csv("https://stooq.pl/q/d/l/?s=^tbsp&i=d", csv_tbsp)
+download_csv("https://stooq.pl/q/d/l/?s=tbsp&i=d", csv_tbsp)
 TBSP = load_csv(csv_tbsp)
 if TBSP is None:
     logging.error("Failed to load TBSP data. Exiting.")
@@ -470,10 +472,31 @@ ax.grid(True, alpha=0.3)
 
 plt.tight_layout()
 plot_path = "multiasset_equity.png"
-plt.show()
 plt.savefig(plot_path, dpi=150)
 plt.close()
 logging.info("Plot saved to %s", plot_path)
+
+# ============================================================
+# PHASE 6 — LEVEL 2 ROBUSTNESS: ALLOCATION WEIGHT PERTURBATION
+# ============================================================
+logging.info("=" * 80)
+logging.info("PHASE 6: ALLOCATION WEIGHT ROBUSTNESS  (Level 2 — equity weight perturbation)")
+logging.info("=" * 80)
+
+robustness_df = allocation_weight_robustness(
+    alloc_results_df = alloc_results_df,
+    equity_returns   = ret_eq,
+    bond_returns     = ret_bd,
+    mmf_returns      = ret_mmf,
+    sig_equity_oos   = sig_eq_oos,
+    sig_bond_oos     = sig_bd_oos,
+    baseline_metrics = portfolio_metrics,
+    perturb_steps    = [-0.2, -0.1, 0.0, 0.1, 0.2],
+    cooldown_days    = COOLDOWN_DAYS,
+    annual_cap       = ANNUAL_CAP,
+)
+
+print_allocation_robustness_report(robustness_df)
 
 logging.info("=" * 80)
 logging.info("MULTI-ASSET RUNFILE COMPLETE: %s", dt.datetime.now())
