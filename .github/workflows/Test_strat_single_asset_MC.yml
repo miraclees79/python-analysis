@@ -1,4 +1,4 @@
-name: Test strategii - robustness check Monte Carlo
+name: Test strategii single asset - optional robustness check Monte Carlo
 
 on:
   workflow_dispatch:  # Allows manual trigger
@@ -40,7 +40,9 @@ jobs:
       #    FOLDER_NAME: ${{ secrets.FOLDER_NAME }} 
           
         run: |
-          python strat_test_runfile_with_MC.py
+          python strategy_freeze_0_2/strat_test_runfile_with_MC.py
+      
+
       
       - name: Upload log file as artifact
         uses: actions/upload-artifact@v4
