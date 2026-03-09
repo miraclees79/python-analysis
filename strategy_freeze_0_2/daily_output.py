@@ -120,6 +120,12 @@ def _get_active_window_params(wf_results: pd.DataFrame) -> dict:
     tv = last.get("target_vol")
     if tv is not None and pd.notna(tv) and str(tv).strip() not in ("", "N/A", "nan"):
         params["target_vol"] = float(tv)
+    # mom_lookback — stored in wf_results when filter_mode is "mom"
+    ml = last.get("mom_lookback")
+    if ml is not None and pd.notna(ml) and str(ml).strip() not in ("", "N/A", "nan"):
+        params["mom_lookback"] = int(float(ml))
+    else:
+        params["mom_lookback"] = 252   # library default
     return params
 
 
@@ -163,6 +169,32 @@ def _compute_ma_filter_state(
         "slow_ma":   round(slow_ma, 2),
         "filter_on": filter_on,
         "gap_pct":   round(gap_pct * 100, 2),   # in percent
+    }
+
+
+def _compute_mom_filter_state(
+    df: pd.DataFrame,
+    lookback: int = 252,
+    skip: int = 21,
+    price_col: str = "Zamkniecie",
+) -> dict:
+    """
+    Recompute momentum filter state from the full price series.
+    Momentum = price.shift(skip) / price.shift(lookback) - 1
+    Filter is ON when MOM > 0.
+    Uses the same formula as compute_momentum() in strategy_test_library.
+    """
+    prices = df[price_col].dropna()
+    if len(prices) < lookback:
+        return {"mom_value": None, "filter_on": None}
+
+    # Replicate strategy_test_library.compute_momentum with shift(1) lag
+    mom_series = prices.shift(skip) / prices.shift(lookback) - 1
+    mom_value  = float(mom_series.iloc[-1]) if not pd.isna(mom_series.iloc[-1]) else None
+    filter_on  = (mom_value > 0) if mom_value is not None else None
+    return {
+        "mom_value":  round(mom_value * 100, 2) if mom_value is not None else None,  # in %
+        "filter_on":  filter_on,
     }
 
 
@@ -282,6 +314,26 @@ def _build_snapshot(
         ma_state = {"fast_ma": None, "slow_ma": None, "filter_on": None, "gap_pct": None}
     snap["ma_state"] = ma_state
 
+    # --- Momentum filter state ---
+    if params:
+        mom_state = _compute_mom_filter_state(
+            df,
+            lookback  = params.get("mom_lookback", 252),
+            skip      = 21,
+            price_col = price_col,
+        )
+    else:
+        mom_state = {"mom_value": None, "filter_on": None}
+    snap["mom_state"] = mom_state
+
+    # --- Active filter: which filter is actually governing entry/exit today ---
+    # "ma" uses ma_state, "mom" uses mom_state; both modes report both for info.
+    filter_mode = params.get("filter_mode", "ma") if params else "ma"
+    if filter_mode == "mom":
+        snap["active_filter_on"] = mom_state["filter_on"]
+    else:
+        snap["active_filter_on"] = ma_state["filter_on"]
+
     # --- OOS performance metrics ---
     snap["strategy_metrics"] = {
         k: round(float(v), 4) for k, v in (wf_metrics or {}).items()
@@ -325,8 +377,17 @@ def _build_status_text(snap: dict, action: str) -> str:
         sep2,
     ]
 
+    fmode      = snap["params"].get("filter_mode", "ma")
+    ma         = snap.get("ma_state", {})
+    mom        = snap.get("mom_state", {})
+    active_on  = snap.get("active_filter_on")
+    act_icon   = "✓" if active_on else "✗"
+    ma_icon    = "✓" if ma.get("filter_on") else "✗"
+    mom_icon   = "✓" if mom.get("filter_on") else "✗"
+    active_lbl = "(ACTIVE)" if fmode == "ma"  else ""
+    mom_lbl    = "(ACTIVE)" if fmode == "mom" else ""
+
     if snap["signal"] == "IN":
-        filter_icon = "✓" if snap["ma_state"].get("filter_on") else "✗"
         lines += [
             f"  Entry date:    {snap['entry_date']}",
             f"  Entry price:   {snap['entry_price']}",
@@ -341,22 +402,21 @@ def _build_status_text(snap: dict, action: str) -> str:
             f"  Binding stop:  {snap['binding_stop']}  "
             f"(gap from today: {snap.get('stop_gap_pct', '?'):+.1f}%)",
             sep2,
-            "  MA FILTER",
-            f"  Fast MA ({snap['params'].get('fast', '?'):>3d}):  {snap['ma_state'].get('fast_ma')}",
-            f"  Slow MA ({snap['params'].get('slow', '?'):>3d}):  {snap['ma_state'].get('slow_ma')}",
-            f"  Filter on:     {filter_icon}  "
-            f"(gap: {snap['ma_state'].get('gap_pct', 0):+.2f}%)",
+            f"  FILTERS  [active filter: {fmode.upper()}]  {act_icon}",
+            f"  MA  cross {active_lbl}  fast({snap['params'].get('fast', '?')})={ma.get('fast_ma')}  "
+            f"slow({snap['params'].get('slow', '?')})={ma.get('slow_ma')}  "
+            f"gap={ma.get('gap_pct', 0):+.2f}%  {ma_icon}",
+            f"  MOM {mom_lbl}  12m-1m={mom.get('mom_value', 0):+.2f}%  {mom_icon}",
         ]
     else:
-        filter_icon = "✓" if snap["ma_state"].get("filter_on") else "✗"
         lines += [
             "  Position:      FLAT (cash / MMF)",
             sep2,
-            "  MA FILTER (entry precondition)",
-            f"  Fast MA ({snap['params'].get('fast', '?'):>3d}):  {snap['ma_state'].get('fast_ma')}",
-            f"  Slow MA ({snap['params'].get('slow', '?'):>3d}):  {snap['ma_state'].get('slow_ma')}",
-            f"  Filter on:     {filter_icon}  "
-            f"(gap: {snap['ma_state'].get('gap_pct', 0):+.2f}%)",
+            f"  FILTERS  [active filter: {fmode.upper()}]  entry requires: {act_icon}",
+            f"  MA  cross {active_lbl}  fast({snap['params'].get('fast', '?')})={ma.get('fast_ma')}  "
+            f"slow({snap['params'].get('slow', '?')})={ma.get('slow_ma')}  "
+            f"gap={ma.get('gap_pct', 0):+.2f}%  {ma_icon}",
+            f"  MOM {mom_lbl}  12m-1m={mom.get('mom_value', 0):+.2f}%  {mom_icon}",
             f"  Entry breakout threshold: +{snap['params'].get('Y', '?'):.0%} from trough",
         ]
 
@@ -417,6 +477,10 @@ def _build_log_row(snap: dict, action: str) -> dict:
         "ma_slow":         ma.get("slow_ma"),
         "ma_filter_on":    ma.get("filter_on"),
         "ma_gap_pct":      ma.get("gap_pct"),
+        "mom_value_pct":   snap.get("mom_state", {}).get("mom_value"),
+        "mom_filter_on":   snap.get("mom_state", {}).get("filter_on"),
+        "active_filter":   snap.get("params", {}).get("filter_mode", "ma"),
+        "active_filter_on": snap.get("active_filter_on"),
         "cagr":            round(sm.get("CAGR", 0) * 100, 4),
         "maxdd":           round(sm.get("MaxDD", 0) * 100, 4),
         "calmar":          round(sm.get("CalMAR", 0), 4),
