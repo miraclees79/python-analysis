@@ -877,9 +877,10 @@ def _bootstrap_single_sample(
         )
 
         n_synth = len(synthetic)
-        synthetic_df = df.iloc[:n_synth].copy()
+        synthetic_df = combined.iloc[:n_synth, [combined.columns.get_loc(price_col)]].copy()
         synthetic_df[price_col] = synthetic[price_col].values
-        synthetic_cash = cash_df.reindex(synthetic_df.index).ffill()
+        synthetic_cash = combined.iloc[:n_synth][["cash_price"]].copy()
+        synthetic_cash = synthetic_cash.rename(columns={"cash_price": cash_price_col})
         synthetic_cash[cash_price_col] = synthetic["cash_price"].values
         
         logging.debug(
