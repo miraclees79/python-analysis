@@ -7,8 +7,12 @@ Sequential optimisation in four phases:
   Phase 1 — Download WIG (equity proxy), TBSP (bond proxy), MMF data.
   Phase 2 — Walk-forward optimisation of the WIG signal.
   Phase 3 — Walk-forward optimisation of the TBSP signal (MA-only, no breakout).
-  Phase 4 — Walk-forward optimisation of the both-signals-on allocation weights.
-  Phase 5 — Combined portfolio simulation with reallocation gate + reporting.
+  Phase 4 — Walk-forward optimisation of the both-signals-on allocation weights
+            followed by combined portfolio simulation with reallocation gate 
+  Phase 5 -  reporting
+  Phase 6 - plots
+  Phase 7 - single asset strategy robustness tests
+  Phase 8 - multi asset allocation robustness test
 
 Each phase reuses machinery from strategy_test_library unchanged.
 Phase 4–5 use the new multiasset_library.
@@ -116,6 +120,11 @@ VOL_WINDOW = 20
 _cpu_count = os.cpu_count() or 1
 N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
 
+logging.info(
+    "Parallel computing : %d logical cores detected, using %d jobs.",
+    _cpu_count, N_JOBS
+)
+
 # --- Reallocation gate ---
 COOLDOWN_DAYS = 10
 ANNUAL_CAP    = 12
@@ -149,6 +158,13 @@ TV_BD       = [0.08, 0.10, 0.12]
 SL_BD       = [0.01, 0.02, 0.03]               # tight absolute stops for bonds
 
 # Validate: slow - fast >= 75 is enforced inside walk_forward automatically
+
+
+# Monte Carlo robustness checks 
+RUN_MONTE_CARLO_PARAM_SINGLE = False # MC parameter robustness for single asset strategies
+RUN_BLOCK_BOOTSTRAP_SINGLE = False # Run bootstrap robustness test for single asset strategies
+
+
 
 
 # ============================================================
@@ -425,8 +441,12 @@ print_multiasset_report(
 
 
 # ============================================================
-# PHASE 5 — PLOTS
+# PHASE 6 — PLOTS
 # ============================================================
+
+logging.info("=" * 80)
+logging.info("PHASE 6: PLOTTING")
+logging.info("=" * 80)
 
 fig, axes = plt.subplots(3, 1, figsize=(14, 16))
 
@@ -476,11 +496,179 @@ plt.savefig(plot_path, dpi=150)
 plt.close()
 logging.info("Plot saved to %s", plot_path)
 
+
+
+
 # ============================================================
-# PHASE 6 — LEVEL 2 ROBUSTNESS: ALLOCATION WEIGHT PERTURBATION
+# PHASE 7 — LEVEL 1 ROBUSTNESS: Monte Carlo perturbation of paramenters in single asset strategies
 # ============================================================
 logging.info("=" * 80)
-logging.info("PHASE 6: ALLOCATION WEIGHT ROBUSTNESS  (Level 2 — equity weight perturbation)")
+logging.info("PHASE 7: SINGLE ASSET STRATEGIES ROBUSTNESS L1 (parameters perturbation AND/OR bootstrap history)")
+logging.info("=" * 80)
+
+
+if RUN_MONTE_CARLO_PARAM_SINGLE:
+    logging.info("=" * 80)
+    logging.info("Monte Carlo robustness check calculation for single asset strategies")
+    logging.info("=" * 80)
+    
+ 
+
+    
+    logging.info("=" * 80)
+    logging.info("Equity component - WIG")
+    logging.info("=" * 80)
+
+    # Extract from existing wf_results DataFrame
+    windows_eq     = extract_windows_from_wf_results(wf_results_eq, train_years=8)
+    best_params_eq = extract_best_params_from_wf_results(wf_results_eq)
+
+    # Run
+    mc_results_eq = run_monte_carlo_robustness(
+        best_params   = best_params_eq,
+        windows       = windows_eq,
+        df            = WIG,
+        cash_df       = MMF,
+        vol_window    = VOL_WINDOW,
+        selected_mode = POSITION_MODE,
+        funds_df      = None,        # or FUNDS if fund filter enabled
+        n_samples     = 1000,
+        n_jobs        = N_JOBS,
+        perturb_pct   = 0.20,
+        seed          = 42,
+        price_col     = "Zamkniecie"
+    )
+
+    # Report
+    baseline_eq = compute_metrics(wf_equity_eq)
+    analyze_robustness(mc_results_eq, baseline_eq)
+
+
+    logging.info("=" * 80)
+    logging.info("Bond component - TBSP")
+    logging.info("=" * 80)
+
+    # Extract from existing wf_results DataFrame
+    windows_bd     = extract_windows_from_wf_results(wf_results_bd, train_years=8)
+    best_params_bd = extract_best_params_from_wf_results(wf_results_bd)
+
+    # Run
+    mc_results_eq = run_monte_carlo_robustness(
+        best_params   = best_params_bd,
+        windows       = windows_bd,
+        df            = TBSP,
+        cash_df       = MMF,
+        vol_window    = VOL_WINDOW,
+        selected_mode = POSITION_MODE,
+        funds_df      = None,        # or FUNDS if fund filter enabled
+        n_samples     = 1000,
+        n_jobs        = N_JOBS,
+        perturb_pct   = 0.20,
+        seed          = 42,
+        price_col     = "Zamkniecie"
+    )
+
+    # Report
+    baseline_bd = compute_metrics(wf_equity_bd)
+    analyze_robustness(mc_results_bd, baseline_bd)
+
+else:
+    logging.info("=" * 80)
+    logging.info("Monte Carlo robustness check calculation for single asset strategies skipped by user choice")
+    logging.info("=" * 80)
+
+
+
+
+# -------------------------------------------------------
+# PHASE 7 LEVEL 1 Part 2 - Block Bootstrap Robustness Check for single asset strategies
+# -------------------------------------------------------
+if RUN_BLOCK_BOOTSTRAP_SINGLE:
+    logging.info("=" * 80)
+    logging.info("Block bootstrap robustness check for single asset strategies")
+    logging.info("=" * 80)
+
+    logging.info("=" * 80)
+    logging.info("Equity component - WIG")
+    logging.info("=" * 80)
+
+
+    bb_results_eq = run_block_bootstrap_robustness(
+        df               = WIG,
+        cash_df          = MMF,
+        price_col        = "Zamkniecie",
+        cash_price_col   = "Zamkniecie",
+        n_samples        = 500,
+        block_size       = 250,
+        # --- wf_kwargs: mirrors the walk_forward call above ---
+        train_years              = TRAIN_YEARS_EQ,
+        test_years               = TEST_YEARS_EQ,
+        vol_window               = VOL_WINDOW,
+        funds_df                 = None,
+        fund_params_grid         = None,
+        selected_mode            = POSITION_MODE,
+        filter_modes_override    = FORCE_FILTER_MODE_EQ,
+        X_grid                = X_GRID_EQ,
+        Y_grid                = Y_GRID_EQ,
+        fast_grid             = FAST_EQ,
+        slow_grid             = SLOW_EQ,
+        tv_grid               = TV_EQ,
+        sl_grid               = SL_EQ,
+        mom_lookback_grid     = MOM_LB_EQ,d   # fix — currently missing from call
+        
+    )
+
+    baseline_eq = compute_metrics(wf_equity_eq)
+    analyze_bootstrap(bb_results_eq, baseline_eq)
+
+    logging.info("=" * 80)
+    logging.info("Bond component - TBSP")
+    logging.info("=" * 80)
+
+
+    bb_results_bd = run_block_bootstrap_robustness(
+        df               = TBSP,
+        cash_df          = MMF,
+        price_col        = "Zamkniecie",
+        cash_price_col   = "Zamkniecie",
+        n_samples        = 500,
+        block_size       = 250,
+        # --- wf_kwargs: mirrors the walk_forward call above ---
+        train_years              = TRAIN_YEARS_BD,
+        test_years               = TEST_YEARS_BD,
+        vol_window               = VOL_WINDOW,
+        funds_df                 = None,
+        fund_params_grid         = None,
+        selected_mode            = POSITION_MODE,
+        filter_modes_override    = FORCE_FILTER_MODE_BD,
+        X_grid                = X_GRID_BD,
+        Y_grid                = Y_GRID_BD,
+        fast_grid             = FAST_BD,
+        slow_grid             = SLOW_BD,
+        tv_grid               = TV_BD,
+        sl_grid               = SL_BD,
+        mom_lookback_grid     = [252],                  # not used (filter_mode=ma)
+        
+    )
+
+    baseline_bd = compute_metrics(wf_equity_bd)
+    analyze_bootstrap(bb_results_bd, baseline_bd)
+
+else:
+    logging.info("=" * 80)
+    logging.info("Block bootstrap robustness check skipped by user choice")
+    logging.info("=" * 80)
+
+
+
+
+
+
+# ============================================================
+# PHASE 8 — LEVEL 2 ROBUSTNESS: ALLOCATION WEIGHT PERTURBATION
+# ============================================================
+logging.info("=" * 80)
+logging.info("PHASE 8: ALLOCATION WEIGHT ROBUSTNESS  (Level 2 — equity weight perturbation)")
 logging.info("=" * 80)
 
 robustness_df = allocation_weight_robustness(
