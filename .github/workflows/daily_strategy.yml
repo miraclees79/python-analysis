@@ -1,0 +1,274 @@
+# .github/workflows/daily_strategy.yml
+#
+# Daily runner for WIG20TR single-asset strategy (v0.2)
+#
+# Schedule: 19:00 Warsaw time on weekdays.
+#   Warsaw is UTC+1 in winter, UTC+2 in summer.
+#   stooq publishes WIG20TR closing prices after ~17:30 Warsaw.
+#   19:00 Warsaw = 18:00 UTC (winter) / 17:00 UTC (summer).
+#   Two cron entries cover both offsets — only one fires per day,
+#   the other lands outside a trading day and is a no-op after the
+#   stooq staleness check in load_csv.
+#
+# Outputs:
+#   - outputs/signal_status.txt   — human-readable status block
+#   - outputs/signal_log.csv      — appended daily signal history
+#   - outputs/equity_chart.png    — 3-panel chart
+#   - outputs/signal_snapshot.json
+#
+# Delivery:
+#   - All four files uploaded to Google Drive (every run)
+#   - Email notification sent ONLY when action != HOLD (i.e. ENTER or EXIT)
+#
+# Required repository secrets:
+#   GOOGLE_CREDENTIALS        — service account key (raw JSON, pasted as-is)
+#   GDRIVE_FOLDER_ID          — target Google Drive folder ID
+#   NOTIFY_EMAIL_TO           — recipient address for signal alerts
+#   GMAIL_USER                — sender Gmail address
+#   GMAIL_APP_PASSWORD        — Gmail App Password (not the account password)
+#
+# Optional:
+#   NOTIFY_EMAIL_CC           — CC address (leave unset to skip)
+
+name: Daily Strategy Signal
+
+on:
+  schedule:
+    # 18:00 UTC — covers winter (UTC+1, i.e. 19:00 Warsaw)
+    - cron: "0 18 * * 1-5"
+    # 17:00 UTC — covers summer (UTC+2, i.e. 19:00 Warsaw)
+    - cron: "0 17 * * 1-5"
+  # Allow manual trigger from the Actions tab (useful for testing)
+  workflow_dispatch:
+    inputs:
+      force_notify:
+        description: "Send email even if action is HOLD"
+        required: false
+        default: "false"
+
+jobs:
+  run-strategy:
+    name: Run strategy and deliver outputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ------------------------------------------------------------------
+      # 1. Checkout repository
+      # ------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------
+      # 2. Set up Python
+      # ------------------------------------------------------------------
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: strategy_freeze_0_2/requirements.txt
+
+      # ------------------------------------------------------------------
+      # 3. Install dependencies
+      # ------------------------------------------------------------------
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r strategy_freeze_0_2/requirements.txt
+
+      # ------------------------------------------------------------------
+      # 4. Run the strategy
+      #    The runfile writes outputs/ into the working directory.
+      #    PYTHONIOENCODING is set to utf-8 to match the runfile's own setting.
+      # ------------------------------------------------------------------
+      - name: Run strategy runfile
+        id: strategy
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONPATH: strategy_freeze_0_2
+        run: |
+          cd strategy_freeze_0_2
+          python strat_test_runfile_with_MC.py
+
+      # ------------------------------------------------------------------
+      # 5. Parse action from snapshot JSON and export to GITHUB_ENV
+      #    This makes $ACTION and $SIGNAL available in all subsequent steps.
+      # ------------------------------------------------------------------
+      - name: Parse signal action
+        id: parse
+        run: |
+          ACTION=$(python - <<'EOF'
+          import json, sys
+          with open("strategy_freeze_0_2/outputs/signal_snapshot.json") as f:
+              snap = json.load(f)
+          print(snap.get("_action", snap.get("action", "HOLD")))
+          EOF
+          )
+          SIGNAL=$(python - <<'EOF'
+          import json
+          with open("strategy_freeze_0_2/outputs/signal_snapshot.json") as f:
+              snap = json.load(f)
+          print(snap.get("signal", "OUT"))
+          EOF
+          )
+          echo "ACTION=$ACTION" >> "$GITHUB_ENV"
+          echo "SIGNAL=$SIGNAL" >> "$GITHUB_ENV"
+          echo "action=$ACTION" >> "$GITHUB_OUTPUT"
+          echo "signal=$SIGNAL" >> "$GITHUB_OUTPUT"
+          echo "Parsed: signal=$SIGNAL  action=$ACTION"
+
+      # ------------------------------------------------------------------
+      # 6. Upload all outputs to Google Drive
+      #    Writes the raw JSON secret to /tmp/credentials.json (same
+      #    pattern used in other workflows in this repo), validates it,
+      #    then uploads four files.  Existing files are updated in-place
+      #    so Drive file IDs remain stable across daily runs.
+      # ------------------------------------------------------------------
+      - name: Create Google Credentials File
+        run: |
+          echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
+
+      - name: Validate JSON Format
+        run: |
+          python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
+
+      - name: Upload outputs to Google Drive
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: |
+          python - <<'EOF'
+          import json, os
+          from pathlib import Path
+
+          creds_dict = json.load(open("/tmp/credentials.json"))
+          folder_id  = os.environ["GDRIVE_FOLDER_ID"]
+
+          from google.oauth2.service_account import Credentials
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+
+          SCOPES  = ["https://www.googleapis.com/auth/drive.file"]
+          creds   = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+          service = build("drive", "v3", credentials=creds)
+
+          FILES = [
+              ("signal_status.txt",    "text/plain"),
+              ("signal_log.csv",       "text/csv"),
+              ("equity_chart.png",     "image/png"),
+              ("signal_snapshot.json", "application/json"),
+          ]
+
+          for filename, mimetype in FILES:
+              path = Path("strategy_freeze_0_2/outputs") / filename
+              if not path.exists():
+                  print(f"SKIP (not found): {filename}", flush=True)
+                  continue
+
+              # Check whether the file already exists in the folder
+              q = (
+                  f"name='{filename}' and "
+                  f"'{folder_id}' in parents and "
+                  f"trashed=false"
+              )
+              results = (
+                  service.files()
+                  .list(q=q, fields="files(id,name)")
+                  .execute()
+              )
+              existing = results.get("files", [])
+
+              media = MediaFileUpload(str(path), mimetype=mimetype, resumable=True)
+
+              if existing:
+                  file_id = existing[0]["id"]
+                  service.files().update(
+                      fileId=file_id, media_body=media
+                  ).execute()
+                  print(f"UPDATED {filename} (id={file_id})", flush=True)
+              else:
+                  metadata = {"name": filename, "parents": [folder_id]}
+                  service.files().create(
+                      body=metadata, media_body=media, fields="id"
+                  ).execute()
+                  print(f"CREATED {filename}", flush=True)
+
+          print("Google Drive upload complete.", flush=True)
+          EOF
+
+      # ------------------------------------------------------------------
+      # 7. Send email notification — ONLY on ENTER or EXIT
+      #    (or always, if workflow_dispatch with force_notify=true)
+      #
+      #    Subject line encodes the action and signal so it reads clearly
+      #    in a mobile notification preview.
+      #
+      #    Body is the full signal_status.txt content.
+      #    Chart PNG is attached.
+      # ------------------------------------------------------------------
+      - name: Read status text for email body
+        if: >
+          env.ACTION != 'HOLD' ||
+          github.event.inputs.force_notify == 'true'
+        id: read_status
+        run: |
+          # Export status text as multiline env var
+          {
+            echo 'STATUS_TEXT<<ENDOFSTATUSTEXT'
+            cat strategy_freeze_0_2/outputs/signal_status.txt
+            echo
+            echo ENDOFSTATUSTEXT
+          } >> "$GITHUB_ENV"
+
+      - name: Send signal alert email
+        if: >
+          env.ACTION != 'HOLD' ||
+          github.event.inputs.force_notify == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port:    465
+          secure:         true
+          username:       ${{ secrets.GMAIL_USER }}
+          password:       ${{ secrets.GMAIL_APP_PASSWORD }}
+          subject:        "[${{ env.ACTION }}] WIG20TR Signal — ${{ env.SIGNAL }} | ${{ github.run_id }}"
+          to:             ${{ secrets.NOTIFY_EMAIL_TO }}
+          cc:             ${{ secrets.NOTIFY_EMAIL_CC }}
+          from:           "WIG20TR Strategy <${{ secrets.GMAIL_USER }}>"
+          body:           ${{ env.STATUS_TEXT }}
+          attachments:    strategy_freeze_0_2/outputs/equity_chart.png
+          ignore_cert:    false
+          convert_markdown: false
+          priority:       normal
+
+      # ------------------------------------------------------------------
+      # 8. Upload outputs as a GitHub Actions artefact (30-day retention)
+      #    Provides a download link directly from the Actions run page —
+      #    useful as a fallback when reviewing historical runs.
+      # ------------------------------------------------------------------
+      - name: Upload run artefact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: strategy-outputs-${{ github.run_id }}
+          path: |
+            strategy_freeze_0_2/outputs/signal_status.txt
+            strategy_freeze_0_2/outputs/signal_log.csv
+            strategy_freeze_0_2/outputs/equity_chart.png
+            strategy_freeze_0_2/outputs/signal_snapshot.json
+            strategy_freeze_0_2/StrategyRun.log
+          retention-days: 30
+
+      # ------------------------------------------------------------------
+      # 9. Fail loudly if the strategy produced no snapshot
+      #    (catches silent failures where the runfile exited early)
+      # ------------------------------------------------------------------
+      - name: Verify outputs exist
+        run: |
+          for f in signal_status.txt signal_log.csv equity_chart.png signal_snapshot.json; do
+            if [ ! -f "strategy_freeze_0_2/outputs/$f" ]; then
+              echo "ERROR: expected output missing: $f"
+              exit 1
+            fi
+          done
+          echo "All expected outputs present."
