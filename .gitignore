@@ -18,3 +18,4 @@ development/__pycache__/multiasset_library.cpython-314.pyc
 development/multiasset_equity.png
 .spyproject/config/workspace.ini
 /.spyproject
+/strategy_freeze_0_2/__pycache__

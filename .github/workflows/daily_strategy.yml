@@ -189,6 +189,7 @@ jobs:
               ("signal_log.csv",       "text/csv"),
               ("equity_chart.png",     "image/png"),
               ("signal_snapshot.json", "application/json"),
+              ("StrategyPlot.png", "image/png"),
           ]
 
           for filename, mimetype in FILES:

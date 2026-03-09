@@ -26,6 +26,8 @@ import logging
 import pandas as pd
 import tempfile
 import datetime as dt
+import matplotlib
+matplotlib.use("Agg")   # headless backend — must be set before pyplot import
 import matplotlib.pyplot as plt
 import sys
 
@@ -673,7 +675,9 @@ if wf_equity is not None and not wf_equity.empty:
     ax.grid(True, alpha=0.3)
     ax.legend()
     plt.tight_layout()
-    plt.show()
+    plt.savefig("outputs/StrategyPlot.png", dpi=150, bbox_inches="tight")
+    plt.close()
+    logging.info("Plot saved to outputs/StrategyPlot.png")
     logging.info("RUN END")
     
 
