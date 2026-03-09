@@ -675,6 +675,10 @@ if wf_equity is not None and not wf_equity.empty:
     ax.grid(True, alpha=0.3)
     ax.legend()
     plt.tight_layout()
+    
+    import os
+    os.makedirs("outputs", exist_ok=True)
+    
     plt.savefig("outputs/StrategyPlot.png", dpi=150, bbox_inches="tight")
     plt.close()
     logging.info("Plot saved to outputs/StrategyPlot.png")
