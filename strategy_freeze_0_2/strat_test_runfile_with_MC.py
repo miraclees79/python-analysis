@@ -675,3 +675,23 @@ if wf_equity is not None and not wf_equity.empty:
     plt.tight_layout()
     plt.show()
     logging.info("RUN END")
+    
+
+
+
+from daily_output import build_daily_outputs
+
+outputs = build_daily_outputs(
+    wf_equity   = wf_equity,
+    wf_trades   = wf_trades,
+    wf_metrics  = wf_metrics,
+    wf_results  = wf_results,
+    bh_equity   = bh_equity,
+    bh_metrics  = bh_metrics,
+    df          = df,
+    output_dir  = "outputs",
+    price_col   = "Zamkniecie",
+)
+# outputs["action"] → "ENTER" / "EXIT" / "HOLD"
+# Write to GH Actions env for conditional email step:
+# echo "ACTION=$action" >> $GITHUB_ENV
