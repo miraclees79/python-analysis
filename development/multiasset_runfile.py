@@ -544,7 +544,7 @@ if RUN_MONTE_CARLO_PARAM_SINGLE:
         vol_window    = VOL_WINDOW,
         selected_mode = POSITION_MODE,
         funds_df      = None,        # or FUNDS if fund filter enabled
-        n_samples     = 1000,
+        n_samples     = ITERATIONS_MC_PARAM_SINGLE,
         n_jobs        = N_JOBS,
         perturb_pct   = 0.20,
         seed          = 42,
@@ -573,7 +573,7 @@ if RUN_MONTE_CARLO_PARAM_SINGLE:
         vol_window    = VOL_WINDOW,
         selected_mode = POSITION_MODE,
         funds_df      = None,        # or FUNDS if fund filter enabled
-        n_samples     = 1000,
+        n_samples     = ITERATIONS_MC_PARAM_SINGLE,
         n_jobs        = N_JOBS,
         perturb_pct   = 0.20,
         seed          = 42,
@@ -610,7 +610,7 @@ if RUN_BLOCK_BOOTSTRAP_SINGLE:
         cash_df          = MMF,
         price_col        = "Zamkniecie",
         cash_price_col   = "Zamkniecie",
-        n_samples        = 500,
+        n_samples        = ITERATIONS_BOOTSTRAP_SINGLE,
         block_size       = 250,
         # --- wf_kwargs: mirrors the walk_forward call above ---
         train_years              = TRAIN_YEARS_EQ,
@@ -642,7 +642,7 @@ if RUN_BLOCK_BOOTSTRAP_SINGLE:
         cash_df          = MMF,
         price_col        = "Zamkniecie",
         cash_price_col   = "Zamkniecie",
-        n_samples        = 500,
+        n_samples        = ITERATIONS_BOOTSTRAP_SINGLE,
         block_size       = 250,
         # --- wf_kwargs: mirrors the walk_forward call above ---
         train_years              = TRAIN_YEARS_BD,
