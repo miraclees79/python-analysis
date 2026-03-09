@@ -969,11 +969,27 @@ def allocation_weight_robustness(
 
         # Build perturbed weight set — one dict per window
         perturbed_windows = []
+        n_floor_clamped = 0
+        n_ceil_clamped  = 0
         for _, row in alloc_results_df.iterrows():
-            raw_eq = float(row["w_equity"]) + step
-            w_eq   = max(min_equity, min(max_equity, round(raw_eq, 10)))
+            raw_eq  = float(row["w_equity"]) + step
+            w_eq    = round(raw_eq, 10)
+            clamped = ""
+            if w_eq < min_equity:
+                w_eq    = min_equity
+                n_floor_clamped += 1
+                clamped = f"  [floor-clamped: raw={raw_eq:.3f} → {min_equity:.3f}]"
+            elif w_eq > max_equity:
+                w_eq    = max_equity
+                n_ceil_clamped += 1
+                clamped = f"  [ceil-clamped:  raw={raw_eq:.3f} → {max_equity:.3f}]"
             w_bd   = float(row["w_bond"])               # bond weight held fixed
             w_mmf  = max(0.0, round(1.0 - w_eq - w_bd, 10))
+            if clamped:
+                logging.debug(
+                    "step=%+.2f  window %s%s",
+                    step, pd.Timestamp(row["TestStart"]).date(), clamped
+                )
             perturbed_windows.append({
                 "TestStart": pd.Timestamp(row["TestStart"]),
                 "TestEnd":   pd.Timestamp(row["TestEnd"]),
@@ -981,6 +997,23 @@ def allocation_weight_robustness(
                 "w_bond":    w_bd,
                 "w_mmf":     w_mmf,
             })
+
+        total_windows = len(perturbed_windows)
+        if n_floor_clamped or n_ceil_clamped:
+            logging.info(
+                "step=%+.2f: %d/%d windows clamped at floor (min_equity=%.2f), "
+                "%d/%d at ceiling (max_equity=%.2f). "
+                "Clamped windows did not receive the full shift — "
+                "w_equity_mean will diverge from (baseline_mean + step) for this row.",
+                step,
+                n_floor_clamped, total_windows, min_equity,
+                n_ceil_clamped,  total_windows, max_equity,
+            )
+        else:
+            logging.debug(
+                "step=%+.2f: all %d windows shifted without clamping.",
+                step, total_windows
+            )
 
         # Simulate full OOS — gate state carried continuously across windows
         current_weights   = {"equity": 0.0, "bond": 0.0, "mmf": 1.0}
@@ -1074,6 +1107,8 @@ def allocation_weight_robustness(
         results.append({
             "equity_shift":    step,
             "w_equity_mean":   round(w_eq_mean, 3),
+            "n_floor_clamped": n_floor_clamped,
+            "n_ceil_clamped":  n_ceil_clamped,
             "CAGR":            m["CAGR"],
             "Vol":             m["Vol"],
             "Sharpe":          m["Sharpe"],
@@ -1154,6 +1189,7 @@ def print_allocation_robustness_report(results_df: pd.DataFrame) -> None:
     display["w_equity_mean"]  = display["w_equity_mean"].apply(lambda x: f"{x:.0%}")
 
     cols = ["equity_shift", "w_equity_mean",
+            "n_floor_clamped", "n_ceil_clamped",
             "CAGR", "Vol", "Sharpe", "MaxDD", "CalMAR", "Sortino",
             "n_reallocations", "CAGR_vs_base", "MaxDD_vs_base", "CalMAR_vs_base"]
     logging.info("\n%s", display[cols].to_string(index=False))
