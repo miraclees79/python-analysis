@@ -170,11 +170,14 @@ SL_BD       = [0.01, 0.02, 0.03]               # tight absolute stops for bonds
 
 
 # Monte Carlo robustness checks 
-RUN_MONTE_CARLO_PARAM_SINGLE = False # MC parameter robustness for single asset strategies
-RUN_BLOCK_BOOTSTRAP_SINGLE = False # Run bootstrap robustness test for single asset strategies
+RUN_MONTE_CARLO_PARAM_SINGLE = True # MC parameter robustness for single asset strategies
+ITERATIONS_MC_PARAM_SINGLE = 10 # 1000 is the true test variant, 10 for smoke test
 
+RUN_BLOCK_BOOTSTRAP_SINGLE = True # Run bootstrap robustness test for single asset strategies
+ITERATIONS_BOOTSTRAP_SINGLE = 10 # 500 is the true test variant, 10 for smoke test
 
-
+RUN_MONTE_CARLO_ALLOCATION_WEIGHT = True # Run MC perturbations on allocation weights
+ITERATIONS_ALLOCATION_WEIGHT = 10 # 500 is the true test variant, 10 for smoke test
 
 # ============================================================
 # PHASE 1 — DATA DOWNLOAD
@@ -680,20 +683,30 @@ logging.info("=" * 80)
 logging.info("PHASE 8: ALLOCATION WEIGHT ROBUSTNESS  (Level 2 — equity weight perturbation)")
 logging.info("=" * 80)
 
-robustness_df = allocation_weight_robustness(
-    alloc_results_df = alloc_results_df,
-    equity_returns   = ret_eq,
-    bond_returns     = ret_bd,
-    mmf_returns      = ret_mmf,
-    sig_equity_oos   = sig_eq_oos,
-    sig_bond_oos     = sig_bd_oos,
-    baseline_metrics = portfolio_metrics,
-    perturb_steps    = [-0.2, -0.1, 0.0, 0.1, 0.2],
-    cooldown_days    = COOLDOWN_DAYS,
-    annual_cap       = ANNUAL_CAP,
-)
 
-print_allocation_robustness_report(robustness_df)
+if RUN_MONTE_CARLO_ALLOCATION_WEIGHT:
+
+    robustness_df = allocation_weight_robustness(
+        alloc_results_df = alloc_results_df,
+        equity_returns   = ret_eq,
+        bond_returns     = ret_bd,
+        mmf_returns      = ret_mmf,
+        sig_equity_oos   = sig_eq_oos,
+        sig_bond_oos     = sig_bd_oos,
+        baseline_metrics = portfolio_metrics,
+        n_samples = ITERATIONS_ALLOCATION_WEIGHT,
+        perturb_steps    = [-0.2, -0.1, 0.0, 0.1, 0.2],
+        cooldown_days    = COOLDOWN_DAYS,
+        annual_cap       = ANNUAL_CAP,
+    )
+
+    print_allocation_robustness_report(robustness_df)
+
+else:
+    logging.info("=" * 80)
+    logging.info("Allocation weight robustness check - equity weight perturbation skipped by user choice")
+    logging.info("=" * 80)
+
 
 logging.info("=" * 80)
 logging.info("MULTI-ASSET RUNFILE COMPLETE: %s", dt.datetime.now())
