@@ -627,7 +627,6 @@ if RUN_BLOCK_BOOTSTRAP_SINGLE:
         tv_grid               = TV_EQ,
         sl_grid               = SL_EQ,
         mom_lookback_grid     = MOM_LB_EQ,d   # fix — currently missing from call
-        
     )
 
     baseline_eq = compute_metrics(wf_equity_eq)
