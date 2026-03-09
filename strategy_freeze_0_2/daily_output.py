@@ -117,8 +117,9 @@ def _get_active_window_params(wf_results: pd.DataFrame) -> dict:
         "TestStart":   pd.Timestamp(last["TestStart"]),
         "TestEnd":     pd.Timestamp(last["TestEnd"]),
     }
-    if "target_vol" in last and pd.notna(last["target_vol"]):
-        params["target_vol"] = float(last["target_vol"])
+    tv = last.get("target_vol")
+    if tv is not None and pd.notna(tv) and str(tv).strip() not in ("", "N/A", "nan"):
+        params["target_vol"] = float(tv)
     return params
 
 
