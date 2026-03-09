@@ -830,7 +830,8 @@ def block_bootstrap_history(df, price_col, cash_col, block_size=250, seed=None):
     idx_ret  = df[price_col].pct_change().dropna()
     cash_ret = df[cash_col].pct_change().dropna()
     
-    # Align — both series may have different start dates
+    # combined (which is passed here as df) is pre-intersected — both series share the same date range
+
     aligned = pd.concat([idx_ret, cash_ret], axis=1).dropna()
     aligned.columns = ["idx_ret", "cash_ret"]
 
