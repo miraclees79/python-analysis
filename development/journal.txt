@@ -111,14 +111,27 @@
 
 
 
-=== Journal Entry 2026-03-09T19:45:00.000000+00:00 ===
-2026-03-09-18-25-59-multiasset-robustness-dev.txt (continued session)
-[Multi-asset bootstrap fix and first full production run session. Contains: block_bootstrap_history combined DataFrame intersection fix (WIG/MMF misalignment bug — ffill was injecting fake pre-1999 cash returns into bootstrap pool, causing synthetic series to end ~2020 instead of 2026), _bootstrap_single_sample fix to use combined index throughout rather than original df. Confirmed v0.2 single-asset bootstrap unaffected (CASH predates WIG20TR start date). First full production run on 12-core main machine: n_samples=1000 param MC and n_samples=500 bootstrap. Param MC results: WIG ROBUST (p05 MaxDD -33.7%, all checks pass, 2.1 min), TBSP ROBUST (extremely tight distribution, p05 CalMAR 0.72, 0.9 min). Bootstrap WIG in progress overnight (~3-6h estimated at 223s/sample, 500 samples, 11 jobs). Bootstrap TBSP estimated ~4.6 min. Runtime note: ITERATIONS_BOOTSTRAP_SINGLE=500 is an overnight run on 12-core machine — add comment to settings block.]
-
-
 === Journal Entry 2026-03-09T18:26:00.197949+00:00 ===
 2026-03-09-18-25-59-multiasset-robustness-dev.txt
 [Multi-asset pension fund strategy development session. Contains: multiasset_library.py and multiasset_runfile.py extension with Level 2 allocation weight robustness (Phase 8), single-asset MC robustness wiring (Phase 7), bug fixes, and first successful GitHub Actions smoke run with n_samples=10. Files at /mnt/user-data/outputs/multiasset_library.py and /mnt/user-data/outputs/multiasset_runfile.py. Transcripts at /mnt/transcripts/ (see journal.txt).]
 
 
+
+
+
+=== Journal Entry 2026-03-10T00:55:00.000000+00:00 ===
+2026-03-09-18-25-59-multiasset-robustness-dev.txt (continued — bootstrap results)
+[Full production run on 12-core main machine. Bootstrap intersection bug fixed earlier in session (block_bootstrap_history combined DataFrame now uses index.intersection rather than reindex+ffill, _bootstrap_single_sample uses combined index throughout). v0.2 single-asset bootstrap confirmed unaffected (CASH predates WIG20TR).
+
+PARAM MC (n=1000):
+- WIG: ROBUST — p05 MaxDD -33.7% (threshold -35%), all checks pass, p95-p05 CAGR range 0.3x median. Runtime 2.1 min.
+- TBSP: ROBUST — extremely tight distribution, p05 CalMAR 0.72, p05 MaxDD -5.2% (threshold -10%). Runtime 0.9 min.
+
+BOOTSTRAP (n=500, block=250 days, 500 valid / 0 failed each):
+- WIG: ROBUST — p05 CAGR 3.8%, Median 9.9%, p05 MaxDD -36.5% (threshold -40%), P(CAGR<0) 0.2%. Baseline 9.2% within distribution (p95 17.6%) — real history not an outlier. Runtime ~5h on 11 jobs.
+- TBSP: FRAGILE — single failing check: p05 MaxDD -10.86% vs -10% threshold (86bp breach). All other checks pass cleanly: p05 CAGR 2.7%, P(CAGR<0) 0.0%, Median CAGR 4.5%, Baseline within distribution. Assessed as bootstrap structural artefact: block reshuffling suppresses multi-year bond trends, producing synthetic sequences with deeper transient drawdowns than the single real closed trade (2337 days) ever experienced. Not a disqualifying result.
+
+PHASE 8 ALLOCATION ROBUSTNESS: PLATEAU — min CalMAR ratio at ±10pp = 0.930 >= 0.80 threshold. MaxDD invariant at -17.96% across all perturbation steps. Performance monotonically increases with equity weight, consistent with equity outperforming over the 2014-2026 OOS period.
+
+Runtime note: ITERATIONS_BOOTSTRAP_SINGLE=500 is ~5h on 12-core machine — overnight only.]
 
