@@ -226,13 +226,13 @@ def _feasible_weight_grid(step: float = 0.10) -> list:
     Build all feasible (equity_weight, bond_weight) combinations that:
       - are multiples of `step`
       - equity + bond <= 1.0  (remainder is mmf)
-      - equity >= step, bond >= step  (both assets get at least one unit)
-
+    - equity >= 0, bond >= 0  (either asset can be zero)
     Returns list of dicts {'equity': e, 'bond': b, 'mmf': 1-e-b}.
-    45 combinations for step=0.10.
+    66 combinations for step=0.10.
     """
     combos = []
-    levels = [round(i * step, 10) for i in range(1, int(1 / step) + 1)]
+    #  levels = [round(i * step, 10) for i in range(1, int(1 / step) + 1)] OLD version, more conservative, both assets get at least 10% when both signals are on
+    levels = [round(i * step, 10) for i in range(0, int(1 / step) + 1)]
     for e in levels:
         for b in levels:
             if round(e + b, 10) <= 1.0:
