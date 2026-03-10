@@ -38,6 +38,11 @@ PUBLIC API
         df          = df,             # full price DataFrame with 'Zamkniecie'
         output_dir  = "outputs",      # directory to write files into
         price_col   = "Zamkniecie",
+        # Supply these in production so signal_log.csv is fetched from Drive
+        # before action determination — required on GitHub Actions runners
+        # where outputs/ is always empty at the start of each run.
+        gdrive_folder_id   = os.getenv("GDRIVE_FOLDER_ID"),
+        gdrive_credentials = "/tmp/credentials.json",
     )
     # outputs["action"] is "ENTER" | "EXIT" | "HOLD" — use in GH Actions env
     # outputs["status_text"] is the full human-readable block
@@ -70,6 +75,18 @@ import tempfile
 import datetime as dt
 from pathlib import Path
 
+# Google Drive imports — optional; only required when gdrive_folder_id is supplied.
+# Wrapped in try/except so the module loads cleanly in environments without the
+# google-api packages installed (e.g. local dev without Drive credentials).
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build as _gdrive_build
+    from googleapiclient.http import MediaIoBaseDownload
+    import io as _io
+    _GDRIVE_AVAILABLE = True
+except ImportError:
+    _GDRIVE_AVAILABLE = False
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -96,6 +113,80 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_bytes(data)
     tmp.rename(path)
+
+
+def _fetch_log_from_drive(
+    log_path: Path,
+    folder_id: str,
+    credentials_path: str,
+) -> None:
+    """
+    Download signal_log.csv from Google Drive into log_path, overwriting any
+    local copy.  Called at the start of build_daily_outputs so the action
+    comparison (ENTER / EXIT / HOLD) always uses the authoritative Drive copy
+    rather than whatever is (or isn't) in the ephemeral GitHub Actions workspace.
+
+    If the file does not yet exist in Drive (first-ever run) the function logs
+    a warning and returns without error — _load_existing_log will then return
+    an empty DataFrame and the initial run will record ENTER if IN, HOLD if OUT.
+
+    Requires google-auth and google-api-python-client in the environment.
+    """
+    if not _GDRIVE_AVAILABLE:
+        logging.warning(
+            "_fetch_log_from_drive: google-api packages not available; "
+            "skipping Drive download.  Install google-auth and "
+            "google-api-python-client to enable."
+        )
+        return
+
+    try:
+        creds = service_account.Credentials.from_service_account_file(
+            credentials_path,
+            scopes=["https://www.googleapis.com/auth/drive"],
+        )
+        service = _gdrive_build("drive", "v3", credentials=creds)
+
+        # Search for signal_log.csv in the target folder
+        query = (
+            f"name='signal_log.csv' "
+            f"and '{folder_id}' in parents "
+            f"and trashed=false"
+        )
+        results = service.files().list(
+            q=query, spaces="drive", fields="files(id, name)"
+        ).execute()
+        files = results.get("files", [])
+
+        if not files:
+            logging.warning(
+                "_fetch_log_from_drive: signal_log.csv not found in Drive folder %s — "
+                "this is expected on the first ever run.",
+                folder_id,
+            )
+            return
+
+        file_id = files[0]["id"]
+        request  = service.files().get_media(fileId=file_id)
+        buf      = _io.BytesIO()
+        downloader = MediaIoBaseDownload(buf, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_bytes(buf.getvalue())
+        logging.info(
+            "_fetch_log_from_drive: downloaded signal_log.csv from Drive (%d bytes)",
+            len(buf.getvalue()),
+        )
+
+    except Exception as exc:
+        logging.error(
+            "_fetch_log_from_drive: failed to download signal_log.csv — %s. "
+            "Action determination will fall back to local file (may be stale or absent).",
+            exc,
+        )
 
 
 def _get_active_window_params(wf_results: pd.DataFrame) -> dict:
@@ -663,6 +754,8 @@ def build_daily_outputs(
     output_dir:  str  = "outputs",
     price_col:   str  = "Zamkniecie",
     run_date:    dt.date | None = None,
+    gdrive_folder_id:   str | None = None,
+    gdrive_credentials: str | None = None,
 ) -> dict:
     """
     Build and write all daily output artefacts.
@@ -679,6 +772,12 @@ def build_daily_outputs(
     output_dir  : directory to write output files into (created if absent)
     price_col   : price column name in df
     run_date    : override today's date (default: dt.date.today())
+    gdrive_folder_id   : Drive folder ID containing signal_log.csv.
+                         When supplied (together with gdrive_credentials),
+                         the existing log is downloaded from Drive before
+                         action determination, ensuring ENTER/EXIT/HOLD is
+                         correct on a fresh GitHub Actions runner.
+    gdrive_credentials : path to service account JSON file (e.g. /tmp/credentials.json)
 
     Returns
     -------
@@ -698,6 +797,18 @@ def build_daily_outputs(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     log_path      = out_dir / "signal_log.csv"
+
+    # --- Fetch yesterday's signal log from Drive (before any local read) ---
+    # Ensures ENTER/EXIT/HOLD is correct on a fresh GitHub Actions runner
+    # where outputs/ is always empty at the start of each run.
+    if gdrive_folder_id and gdrive_credentials:
+        _fetch_log_from_drive(log_path, gdrive_folder_id, gdrive_credentials)
+    else:
+        logging.info(
+            "daily_output: gdrive_folder_id/gdrive_credentials not supplied — "
+            "skipping Drive log fetch; action determined from local file only."
+        )
+
     status_path   = out_dir / "signal_status.txt"
     chart_path    = out_dir / "equity_chart.png"
     snapshot_path = out_dir / "signal_snapshot.json"

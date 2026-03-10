@@ -699,6 +699,8 @@ outputs = build_daily_outputs(
     df          = df,
     output_dir  = "outputs",
     price_col   = "Zamkniecie",
+    gdrive_folder_id   = os.getenv("GDRIVE_FOLDER_ID"),
+    gdrive_credentials = "/tmp/credentials.json"
 )
 # outputs["action"] → "ENTER" / "EXIT" / "HOLD"
 # Write to GH Actions env for conditional email step:

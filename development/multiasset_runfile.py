@@ -66,6 +66,7 @@ from multiasset_library import (
     print_multiasset_report,
     allocation_weight_robustness,
     print_allocation_robustness_report,
+    build_spread_prefilter,
 )
 
 from mc_robustness import (
@@ -184,6 +185,13 @@ ITERATIONS_BOOTSTRAP_SINGLE = 500 # 500 is the true test variant, 10 for smoke t
 RUN_ROBUSTNESS_ALLOCATION_WEIGHT = True # Run deterministic perturbations on allocation weights
 
 
+# --- Bond Spread pre-filter mode ---
+# True  = Option A: hard gate — pre-filter breach forces immediate exit
+#                   from any open bond position (AND gate on daily sig_bond)
+# False = Option B: entry gate only — pre-filter breach blocks new bond
+#                   entries but does not force exit from existing positions
+SPREAD_PREFILTER_HARD_EXIT = False
+
 # ============================================================
 # PHASE 1 — DATA DOWNLOAD
 # ============================================================
@@ -223,6 +231,23 @@ if MMF is None:
     sys.exit(1)
 logging.info("MMF  loaded: %d rows  (%s to %s)",
              len(MMF), MMF.index.min().date(), MMF.index.max().date())
+
+
+
+# --- PL-DE spread pre-filter data ---
+csv_pl10y = os.path.join(tmp_dir, "pl10y.csv")
+csv_de10y = os.path.join(tmp_dir, "de10y.csv")
+download_csv("https://stooq.pl/q/d/l/?s=10yply.b&i=d", csv_pl10y)
+download_csv("https://stooq.pl/q/d/l/?s=10ydey.b&i=d", csv_de10y)
+PL10Y = load_csv(csv_pl10y)
+DE10Y = load_csv(csv_de10y)
+if PL10Y is None or DE10Y is None:
+    logging.error("Failed to load yield data for spread pre-filter. Exiting.")
+    sys.exit(1)
+logging.info("PL10Y loaded: %d rows  (%s to %s)",
+             len(PL10Y), PL10Y.index.min().date(), PL10Y.index.max().date())
+logging.info("DE10Y loaded: %d rows  (%s to %s)",
+             len(DE10Y), DE10Y.index.min().date(), DE10Y.index.max().date())
 
 # --- Compute daily return series from price columns ---
 # stooq CSVs use 'Zamkniecie' as the close price column.
@@ -372,6 +397,67 @@ logging.info(
     sig_bond.mean() * 100, sig_bond.sum(), len(sig_bond)
 )
 
+# --- Apply PL-DE spread pre-filter to bond signal ---
+spread_prefilter = build_spread_prefilter(PL10Y, DE10Y)
+
+spread_prefilter_aligned = (
+    spread_prefilter
+    .reindex(sig_bond.index, method="ffill")
+    .fillna(1)
+    .astype(int)
+)
+
+sig_bond_raw = sig_bond.copy()
+
+if SPREAD_PREFILTER_HARD_EXIT:
+    # Option A: AND gate on every day — pre-filter breach forces exit
+    sig_bond = (sig_bond & spread_prefilter_aligned).astype(int)
+    logging.info("Spread pre-filter mode: HARD EXIT (Option A)")
+else:
+    # Option B: entry gate only — only block days where sig_bond is
+    # transitioning from 0→1 (new entry). Existing positions (sig_bond
+    # was already 1 on the previous day) are unaffected.
+    sig_bond_shifted = sig_bond.shift(1).fillna(0).astype(int)
+    new_entry        = (sig_bond == 1) & (sig_bond_shifted == 0)
+    filter_blocked   = (spread_prefilter_aligned == 0)
+
+    # A blocked new entry propagates forward until the MA signal
+    # naturally exits — achieved by zeroing the entry day and letting
+    # the downstream signal series handle the rest.
+    # Implementation: suppress entry day; subsequent days stay 1
+    # as long as MA signal remains 1 (existing position logic).
+    blocked_entries  = new_entry & filter_blocked
+    
+    # Build corrected signal: carry forward position state,
+    # but don't start a new position on a blocked entry day
+    sig_bond_b = sig_bond.copy()
+    in_position = False
+    for date in sig_bond.index:
+        if sig_bond_raw[date] == 0:
+            in_position = False
+            sig_bond_b[date] = 0
+        elif new_entry[date] and filter_blocked[date]:
+            # MA signal says enter but pre-filter blocks — stay out
+            in_position = False
+            sig_bond_b[date] = 0
+        elif in_position:
+            # Already in a position — pre-filter cannot force exit
+            sig_bond_b[date] = 1
+        else:
+            # MA signal says enter and pre-filter passes
+            in_position = True
+            sig_bond_b[date] = 1
+    
+    sig_bond = sig_bond_b.astype(int)
+    logging.info("Spread pre-filter mode: ENTRY GATE ONLY (Option B)")
+
+n_blocked = (sig_bond_raw - sig_bond).clip(lower=0).sum()
+logging.info(
+    "Spread pre-filter applied to bond signal: %d days blocked "
+    "(%.1f%% of raw bond-on days)",
+    n_blocked,
+    n_blocked / sig_bond_raw.sum() * 100 if sig_bond_raw.sum() > 0 else 0,
+)
 
 # ============================================================
 # PHASE 4 — ALLOCATION WALK-FORWARD  (both-signals-on weights)
@@ -454,6 +540,8 @@ print_multiasset_report(
     sig_bond           = sig_bd_oos,
     oos_start          = oos_start,
     oos_end            = oos_end,
+    sig_bond_raw     = sig_bond_raw,
+    spread_prefilter = spread_prefilter_aligned,
 )
 
 

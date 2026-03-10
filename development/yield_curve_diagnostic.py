@@ -58,7 +58,7 @@ logging.basicConfig(
 # ── settings ──────────────────────────────────────────────────────────────────
 # Spread change threshold: if 3M change in PL-DE spread exceeds this (bp),
 # stress filter triggers
-SPREAD_CHANGE_THRESHOLD_BP = 50.0   # basis points
+SPREAD_CHANGE_THRESHOLD_BP = 75.0   # basis points
 
 # Slope smoothing window (trading days) to reduce noise on slope signal
 SLOPE_SMOOTH_DAYS = 20

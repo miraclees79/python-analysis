@@ -78,30 +78,31 @@ jobs:
           pip install -r strategy_freeze_0_2/requirements.txt
 
       # ------------------------------------------------------------------
-      # 4. Run the strategy
-      #    The runfile writes outputs/ into the working directory.
-      #    PYTHONIOENCODING is set to utf-8 to match the runfile's own setting.
+      # 4. Write Google credentials
+      #    Done before the strategy run so daily_output.py can download
+      #    signal_log.csv from Drive for ENTER/EXIT/HOLD determination.
+      # ------------------------------------------------------------------
+      - name: Write Google credentials file
+        run: echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
+
+      # ------------------------------------------------------------------
+      # 5. Run the strategy
+      #    build_daily_outputs() fetches signal_log.csv from Drive before
+      #    writing today's row, ensuring correct action on a fresh runner.
       # ------------------------------------------------------------------
       - name: Run strategy runfile
         id: strategy
         env:
           PYTHONIOENCODING: utf-8
-          # PYTHONPATH is set to the folder so that strategy_test_library,
-          # mc_robustness, and daily_output are all importable by name.
           PYTHONPATH: ${{ github.workspace }}/strategy_freeze_0_2
+          # Passed to build_daily_outputs() so it can fetch signal_log.csv
+          # from Drive before determining today's action.
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           cd strategy_freeze_0_2
-          # The runfile must call build_daily_outputs() at its end.
-          # That call writes outputs/signal_snapshot.json relative to the
-          # working directory, i.e. strategy_freeze_0_2/outputs/.
-          # Reminder — add to runfile if not already present:
-          #   from daily_output import build_daily_outputs
-          #   build_daily_outputs(
-          #       wf_equity=wf_equity, wf_trades=wf_trades,
-          #       wf_metrics=wf_metrics, wf_results=wf_results,
-          #       bh_equity=bh_equity, bh_metrics=bh_metrics,
-          #       df=df, output_dir="outputs", price_col="Zamkniecie",
-          #   )
+          # Reminder — build_daily_outputs() call in runfile should include:
+          #   gdrive_folder_id   = os.getenv("GDRIVE_FOLDER_ID"),
+          #   gdrive_credentials = "/tmp/credentials.json",
           python strat_test_runfile_with_MC.py
 
       # ------------------------------------------------------------------
@@ -157,10 +158,6 @@ jobs:
       #    then uploads four files.  Existing files are updated in-place
       #    so Drive file IDs remain stable across daily runs.
       # ------------------------------------------------------------------
-      - name: Create Google Credentials File
-        run: |
-          echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
-
       - name: Validate JSON Format
         run: |
           python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
@@ -189,7 +186,6 @@ jobs:
               ("signal_log.csv",       "text/csv"),
               ("equity_chart.png",     "image/png"),
               ("signal_snapshot.json", "application/json"),
-              ("StrategyPlot.png", "image/png"),
           ]
 
           for filename, mimetype in FILES:

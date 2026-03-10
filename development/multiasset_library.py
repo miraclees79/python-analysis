@@ -810,6 +810,8 @@ def print_multiasset_report(
     sig_bond:           pd.Series,
     oos_start,
     oos_end,
+    sig_bond_raw:     pd.Series = None,   # new optional parameter
+    spread_prefilter: pd.Series = None,   # new optional parameter
 ) -> None:
     """
     Log a structured multi-asset backtest report.
@@ -875,17 +877,67 @@ def print_multiasset_report(
     both_on  = ((sig_equity == 1) & (sig_bond == 1)).sum() / n * 100
     both_off = ((sig_equity == 0) & (sig_bond == 0)).sum() / n * 100
 
+
     logging.info("SIGNAL FREQUENCY (OOS period):")
-    logging.info("  Equity signal ON : %.1f%% of days", pct_eq)
-    logging.info("  Bond signal ON   : %.1f%% of days", pct_bd)
-    logging.info("  Both ON          : %.1f%% of days", both_on)
-    logging.info("  Both OFF (MMF)   : %.1f%% of days", both_off)
+    logging.info("  Equity signal ON          : %.1f%% of days", pct_eq)
+    logging.info("  Bond signal ON (raw)      : %.1f%% of days",
+             sig_bond_raw.sum() / n * 100 if sig_bond_raw is not None else pct_bd)
+    logging.info("  Bond signal ON (filtered) : %.1f%% of days", pct_bd)
+
+    if sig_bond_raw is not None:
+        n_blocked = (sig_bond_raw - sig_bond).clip(lower=0)
+        n_blocked_oos = n_blocked.reindex(sig_bond.index).fillna(0).sum()
+        logging.info(
+            "  Spread pre-filter blocked : %d days  (%.1f%% of raw bond-on days)",
+            int(n_blocked_oos),
+            n_blocked_oos / sig_bond_raw.sum() * 100 if sig_bond_raw.sum() > 0 else 0,
+            )
+
+    if spread_prefilter is not None:
+        pf_aligned = spread_prefilter.reindex(sig_bond.index).fillna(1)
+        logging.info(
+        "  Spread pre-filter ON      : %.1f%% of OOS days",
+        pf_aligned.mean() * 100,
+            )
+
+    logging.info("  Both ON                   : %.1f%% of days", both_on)
+    logging.info("  Both OFF (MMF)            : %.1f%% of days", both_off)
     logging.info("-" * 80)
+
+    
+    if sig_bond_raw is not None:
+        blocked = (sig_bond_raw - sig_bond).clip(lower=0)
+        blocked_oos = blocked.reindex(sig_bond.index).fillna(0)
+        if blocked_oos.sum() > 0:
+            blocked_df = pd.DataFrame({
+                "blocked":     blocked_oos,
+                "bond_raw_on": sig_bond_raw.reindex(sig_bond.index).fillna(0),
+                })
+            blocked_df["Year"] = blocked_df.index.year
+            annual = blocked_df.groupby("Year").agg(
+                blocked_days = ("blocked",     "sum"),
+                bond_on_days = ("bond_raw_on", "sum"),
+                )
+            annual["pct_blocked"] = (
+                annual["blocked_days"] / annual["bond_on_days"].replace(0, np.nan) * 100
+                ).fillna(0)
+            logging.info("  Pre-filter blocking by year:")
+            for yr, row in annual[annual["blocked_days"] > 0].iterrows():
+                logging.info(
+                    "    %d : %3d days blocked  (%.0f%% of bond-on days that year)",
+                    yr, int(row["blocked_days"]), row["pct_blocked"],
+                    )
+
 
     # --- Reallocation summary ---
     n_realloc = len(reallocation_log)
     logging.info("REALLOCATION SUMMARY:")
     logging.info("  Total reallocations: %d", n_realloc)
+    if sig_bond_raw is not None:
+        logging.info(
+            "  Note: bond signal includes spread pre-filter — "
+            "transitions to/from bond reflect both MA signal and macro gate."
+            )
 
     if n_realloc > 0:
         realloc_df = pd.DataFrame(reallocation_log)
@@ -1261,3 +1313,60 @@ def print_allocation_robustness_report(results_df: pd.DataFrame) -> None:
         "Only equity weight was perturbed; MMF absorbed the remainder."
     )
     logging.info(sep)
+
+
+def build_spread_prefilter(
+    pl10y:              pd.DataFrame,
+    de10y:              pd.DataFrame,
+    spread_change_window: int   = 63,
+    spread_change_cap_bp: float = 50.0,
+) -> pd.Series:
+    """
+    Build a binary pre-filter series for the TBSP bond signal based on
+    the 3-month rolling change in the PL-DE 10Y government bond spread.
+
+    A value of 1 means the macro environment is acceptable for holding bonds.
+    A value of 0 means the spread has risen sharply — do not hold TBSP.
+
+    Logic: filter = 1  if  (spread_today - spread_63d_ago) < cap_bp
+           filter = 0  otherwise
+
+    The spread is computed as PL10Y - DE10Y in percentage points,
+    converted to basis points for the threshold comparison.
+
+    Parameters
+    ----------
+    pl10y                : pd.DataFrame — PL 10Y yield (stooq CSV, close col)
+    de10y                : pd.DataFrame — DE 10Y yield (stooq CSV, close col)
+    spread_change_window : int          — lookback in trading days (~3 months)
+    spread_change_cap_bp : float        — threshold in basis points (default 50)
+
+    Returns
+    -------
+    pd.Series (int 0/1, DatetimeIndex) — 1 = filter passes, 0 = blocked
+    """
+    pl_close = pl10y.iloc[:, 1]   # second column = Zamkniecie
+    de_close = de10y.iloc[:, 1]
+
+    # Align on union, forward-fill yield gaps (yields have no weekend fixings)
+    spread_pp = (pl_close - de_close).sort_index().ffill()
+    spread_bp = spread_pp * 100
+
+    # 3-month rolling change
+    spread_chg = spread_bp - spread_bp.shift(spread_change_window)
+
+    # Filter: 1 if change below cap, 0 if cap breached
+    prefilter = (spread_chg < spread_change_cap_bp).astype(int)
+    prefilter.name = "spread_prefilter"
+
+    logging.info(
+        "Spread pre-filter: %.1f%% of days ON  |  "
+        "threshold=%.0fbp  window=%dd  "
+        "(series: %s to %s)",
+        prefilter.mean() * 100,
+        spread_change_cap_bp,
+        spread_change_window,
+        prefilter.index.min().date(),
+        prefilter.index.max().date(),
+    )
+    return prefilter
