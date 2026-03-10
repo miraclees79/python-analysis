@@ -639,7 +639,7 @@ def allocation_walk_forward(
     # Use bond WF schedule — it starts later and defines the common OOS period
     windows = wf_results_bd[["TrainStart", "TrainEnd",
                               "TestStart", "TestEnd"]].drop_duplicates()
-
+    prev_best_combo = None   # tracks best_combo from previous window
     for _, row in windows.iterrows():
         train_start = pd.Timestamp(row["TrainStart"])
         train_end   = pd.Timestamp(row["TrainEnd"])
@@ -709,7 +709,8 @@ def allocation_walk_forward(
         s_bd = test_s_bd.reindex(common).fillna(0).astype(int)
 
         window_equity_vals = []
-
+        
+        
         for date in common:
             target = signals_to_target_weights(
                 sig_equity      = int(s_eq[date]),
@@ -728,6 +729,26 @@ def allocation_walk_forward(
             )
 
             if reallocated:
+                
+                param_updated = (
+                date == common[0]
+                and prev_best_combo is not None
+                and prev_best_combo != best_combo
+                )
+
+                if param_updated:
+                    # Would the target have been the same under the old weights?
+                    old_target = signals_to_target_weights(
+                    sig_equity      = int(s_eq[date]),
+                    sig_bond        = int(s_bd[date]),
+                    weights_both_on = prev_best_combo,
+                    )   
+                    signal_also_changed = (old_target != target)
+                    reason = "BOTH" if signal_also_changed else "PARAM_UPDATE"
+                else:
+                    reason = "SIGNAL_CHANGE"
+
+
                 all_realloc_log.append({
                     "Date":          date,
                     "equity_before": current_weights["equity"],
@@ -736,6 +757,7 @@ def allocation_walk_forward(
                     "equity_after":  accepted["equity"],
                     "bond_after":    accepted["bond"],
                     "mmf_after":     accepted["mmf"],
+                    "reason":        reason,
                 })
                 current_weights  = accepted
                 last_change_date = date
@@ -747,7 +769,9 @@ def allocation_walk_forward(
                  + w["bond"]  * bd_r[date]
                  + w["mmf"]   * mf_r[date])
             window_equity_vals.append((date, r))
-
+            
+            
+            
         if not window_equity_vals:
             continue
 
@@ -760,7 +784,7 @@ def allocation_walk_forward(
             window_equity = window_equity * oos_equity_slices[-1].iloc[-1]
 
         oos_equity_slices.append(window_equity)
-
+        prev_best_combo = best_combo   
     if not oos_equity_slices:
         logging.warning("Allocation walk-forward produced no OOS slices.")
         return pd.Series(dtype=float), pd.Series(dtype=object), [], pd.DataFrame()
@@ -871,7 +895,10 @@ def print_multiasset_report(
         for year, count in annual_counts.items():
             logging.info("    %d : %d", year, count)
         logging.info("  Reallocation log:")
-        logging.info("\n%s", realloc_df.to_string(index=False))
+        logging.info("\n%s", realloc_df[
+            ["Date", "equity_before", "bond_before", "mmf_before",
+            "equity_after", "bond_after", "mmf_after", "reason", "Year"]
+            ].to_string(index=False))
 
     logging.info(sep)
 
