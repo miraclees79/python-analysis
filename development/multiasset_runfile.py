@@ -174,10 +174,10 @@ SL_BD       = [0.01, 0.02, 0.03]               # tight absolute stops for bonds
 
 
 # Monte Carlo robustness checks 
-RUN_MONTE_CARLO_PARAM_SINGLE = True # MC parameter robustness for single asset strategies
+RUN_MONTE_CARLO_PARAM_SINGLE = False # MC parameter robustness for single asset strategies
 ITERATIONS_MC_PARAM_SINGLE = 1000 # 1000 is the true test variant, 10 for smoke test
 
-RUN_BLOCK_BOOTSTRAP_SINGLE = True # Run bootstrap robustness test for single asset strategies
+RUN_BLOCK_BOOTSTRAP_SINGLE = False # Run bootstrap robustness test for single asset strategies
 ITERATIONS_BOOTSTRAP_SINGLE = 500 # 500 is the true test variant, 10 for smoke test
 # ATTENTION - # ~3-6h on 12-core machine — run overnight
 
