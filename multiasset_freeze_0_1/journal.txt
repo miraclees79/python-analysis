@@ -135,3 +135,16 @@ PHASE 8 ALLOCATION ROBUSTNESS: PLATEAU — min CalMAR ratio at ±10pp = 0.930 >=
 
 Runtime note: ITERATIONS_BOOTSTRAP_SINGLE=500 is ~5h on 12-core machine — overnight only.]
 
+
+=== Journal Entry 2026-03-10T22:30:00.000000+00:00 ===
+2026-03-10-20-04-45-multiasset-robustness-bootstrap-docs.txt (continued in same session)
+[Multi-asset pension fund strategy session — freeze of multiasset v0.1. Contains:
+(1) Reallocation reason classification implemented (SIGNAL_CHANGE / PARAM_UPDATE / BOTH) with prev_best_combo bug fix — assignment moved to after window OOS loop.
+(2) _feasible_weight_grid expanded to include zero-weight cases (range(0,...) from range(1,...)) — 66 combinations vs 45. Bond weight now optimiser-determined rather than fixed. Result: bond=0 in all windows, CAGR 9.50% CalMAR 0.53.
+(3) PL-DE spread pre-filter designed and implemented: build_spread_prefilter() in multiasset_library.py downloads PL10Y (10YPLY.B) and DE10Y (10YDEY.B), computes 3M rolling change, blocks bond entries when change > 50bp. Tested at 30bp and 75bp — 50bp confirmed as best threshold (differential 9.8pp ON vs OFF).
+(4) Slope filter (PL10Y - WIBOR1Y) evaluated and rejected: negative standalone predictive power (-0.4pp differential), critically blocks 2023 disinflation rally where slope was inverted throughout despite +8.93% TBSP return.
+(5) Pre-filter implemented as Option B (entry gate only, not hard exit): SPREAD_PREFILTER_HARD_EXIT=False flag in runfile. Option A (hard exit) caused 38 reallocations vs 17 baseline due to 2015-2016 churn. Option B: 0 days blocked in current OOS history (MA signal entries happened to avoid spread stress periods), 17 reallocations, CAGR 9.47% CalMAR 0.53 — essentially identical to no-prefilter baseline. Pre-filter is forward-looking insurance.
+(6) print_multiasset_report extended with sig_bond_raw and spread_prefilter optional parameters: raw vs filtered bond signal frequency, days blocked, pre-filter ON%, blocking by year table.
+(7) MultiAsset_Strategy_Documentation_v2.docx created covering all above changes.
+(8) Version frozen as multiasset_v0.1 in /development directory on GitHub.
+Development continues in /development directory.]
