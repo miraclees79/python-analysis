@@ -1,0 +1,314 @@
+# .github/workflows/daily_multiasset.yml
+#
+# Daily runner for multi-asset pension fund strategy (WIG + TBSP + MMF)
+#
+# Schedule: 19:30 Warsaw time on weekdays.
+#   stooq publishes WIG and TBSP closing prices after ~17:30 Warsaw.
+#   19:30 Warsaw = 18:30 UTC (winter, UTC+1) / 17:30 UTC (summer, UTC+2).
+#   Runs 30 minutes after the single-asset workflow (18:00/17:00 UTC)
+#   to avoid concurrent Drive uploads from both workflows.
+#
+# Phases run daily: 1–5 (data download, per-asset walk-forward,
+#   allocation walk-forward, reporting, daily output).
+#   Robustness phases 7–8 are skipped for daily runs (runtime would
+#   exceed GitHub Actions 6h timeout on a 2-core runner).
+#   Full run (all 8 phases) is available via workflow_dispatch.
+#
+# Outputs (all prefixed multiasset_ to avoid Drive filename collision
+#   with single-asset strategy outputs in the same folder):
+#   - outputs/multiasset_signal_status.txt   — human-readable status block
+#   - outputs/multiasset_signal_log.csv      — appended daily signal history
+#   - outputs/multiasset_equity_chart.png    — 3-panel chart
+#   - outputs/multiasset_signal_snapshot.json
+#
+# Delivery:
+#   - All four files uploaded to same Google Drive folder as single-asset
+#   - Email notification sent on any action != HOLD
+#     (HOLD = no signal or allocation change)
+#
+# Required repository secrets (shared with single-asset workflow):
+#   GOOGLE_CREDENTIALS      — service account key (raw JSON, pasted as-is)
+#   GDRIVE_FOLDER_ID        — target Google Drive folder ID
+#   NOTIFY_EMAIL_TO         — recipient address for signal alerts
+#   GMAIL_USER              — sender Gmail address
+#   GMAIL_APP_PASSWORD      — Gmail App Password (not the account password)
+#
+# Optional:
+#   NOTIFY_EMAIL_CC         — CC address (leave unset to skip)
+
+name: Daily Multi-Asset Signal
+
+on:
+  schedule:
+    # 18:30 UTC — covers winter (UTC+1, 19:30 Warsaw)
+    - cron: "30 18 * * 1-5"
+    # 17:30 UTC — covers summer (UTC+2, 19:30 Warsaw)
+    - cron: "30 17 * * 1-5"
+  # Manual trigger — also allows forcing full run with robustness phases
+  workflow_dispatch:
+    inputs:
+      force_notify:
+        description: "Send email even if action is HOLD"
+        required: false
+        default: "false"
+
+jobs:
+  run-multiasset:
+    name: Run multi-asset strategy and deliver outputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 360      # 6h — walk-forward on 2-core runner is slow
+
+    steps:
+      # ------------------------------------------------------------------
+      # 1. Checkout repository
+      # ------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------
+      # 2. Set up Python
+      # ------------------------------------------------------------------
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: multiasset_freeze_0_1/requirements.txt
+
+      # ------------------------------------------------------------------
+      # 3. Install dependencies
+      # ------------------------------------------------------------------
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r multiasset_freeze_0_1/requirements.txt
+
+      # ------------------------------------------------------------------
+      # 4. Write Google credentials
+      #    Done before the strategy run so multiasset_daily_output.py
+      #    can download multiasset_signal_log.csv from Drive for
+      #    ENTER/EXIT/HOLD determination.
+      # ------------------------------------------------------------------
+      - name: Write Google credentials file
+        run: echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
+
+      # ------------------------------------------------------------------
+      # 5. Run the multi-asset daily runfile
+      #    Phases 1–5 + daily output module.
+      #    GDRIVE_FOLDER_ID is passed so build_daily_outputs() can
+      #    pre-fetch multiasset_signal_log.csv from Drive.
+      # ------------------------------------------------------------------
+      - name: Run multi-asset daily runfile
+        id: strategy
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONPATH: ${{ github.workspace }}/multiasset_freeze_0_1
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: |
+          cd multiasset_freeze_0_1
+          python multiasset_daily_runfile.py
+
+      # ------------------------------------------------------------------
+      # 6. Parse action from snapshot JSON and export to GITHUB_ENV
+      #    Reads both ACTION (composite: e.g. "EQ_ENTER+BD_EXIT") and
+      #    individual SIGNAL_EQUITY / SIGNAL_BOND for the email subject.
+      # ------------------------------------------------------------------
+      - name: Parse signal action
+        id: parse
+        run: |
+          SNAPSHOT="${{ github.workspace }}/multiasset_freeze_0_1/outputs/multiasset_signal_snapshot.json"
+
+          if [ ! -f "$SNAPSHOT" ]; then
+            echo "ERROR: multiasset_signal_snapshot.json not found at $SNAPSHOT"
+            echo "The runfile did not call build_daily_outputs() or exited early."
+            exit 1
+          fi
+
+          eval "$(python - "$SNAPSHOT" <<'EOF'
+          import json, sys
+          snap = json.load(open(sys.argv[1]))
+          action   = snap.get("action",         "HOLD")
+          sig_eq   = snap.get("signal_equity",  "OUT")
+          sig_bd   = snap.get("signal_bond",    "OUT")
+          w        = snap.get("weights", {})
+          w_eq     = w.get("equity")
+          w_bd     = w.get("bond")
+          w_mmf    = w.get("mmf")
+          def _pct(v):
+              return f"{v*100:.0f}%" if v is not None else "N/A"
+          print(f"ACTION={action}")
+          print(f"SIGNAL_EQUITY={sig_eq}")
+          print(f"SIGNAL_BOND={sig_bd}")
+          print(f"WEIGHTS={_pct(w_eq)} EQ / {_pct(w_bd)} BD / {_pct(w_mmf)} MMF")
+          EOF
+          )"
+
+          echo "ACTION=$ACTION"               >> "$GITHUB_ENV"
+          echo "SIGNAL_EQUITY=$SIGNAL_EQUITY" >> "$GITHUB_ENV"
+          echo "SIGNAL_BOND=$SIGNAL_BOND"     >> "$GITHUB_ENV"
+          echo "WEIGHTS=$WEIGHTS"             >> "$GITHUB_ENV"
+          echo "action=$ACTION"               >> "$GITHUB_OUTPUT"
+          echo "Parsed: eq=$SIGNAL_EQUITY  bd=$SIGNAL_BOND  action=$ACTION  weights=$WEIGHTS"
+
+      # ------------------------------------------------------------------
+      # 7. Upload all four outputs to Google Drive
+      #    Existing files are updated in-place so Drive file IDs stay
+      #    stable across daily runs.
+      #    Files are named with the multiasset_ prefix to coexist with
+      #    the single-asset strategy files in the same Drive folder.
+      # ------------------------------------------------------------------
+      - name: Validate credentials JSON
+        run: |
+          python -c "import json; json.load(open('/tmp/credentials.json'))" \
+            && echo "Credentials JSON is valid."
+
+      - name: Upload outputs to Google Drive
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: |
+          python - <<'EOF'
+          import json, os
+          from pathlib import Path
+
+          creds_dict = json.load(open("/tmp/credentials.json"))
+          folder_id  = os.environ["GDRIVE_FOLDER_ID"]
+
+          from google.oauth2.service_account import Credentials
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+
+          SCOPES  = ["https://www.googleapis.com/auth/drive.file"]
+          creds   = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+          service = build("drive", "v3", credentials=creds)
+
+          FILES = [
+              ("multiasset_signal_status.txt",    "text/plain"),
+              ("multiasset_signal_log.csv",        "text/csv"),
+              ("multiasset_equity_chart.png",      "image/png"),
+              ("multiasset_signal_snapshot.json",  "application/json"),
+          ]
+
+          for filename, mimetype in FILES:
+              path = Path("multiasset_freeze_0_1/outputs") / filename
+              if not path.exists():
+                  print(f"SKIP (not found): {filename}", flush=True)
+                  continue
+
+              q = (
+                  f"name='{filename}' and "
+                  f"'{folder_id}' in parents and "
+                  f"trashed=false"
+              )
+              results = (
+                  service.files()
+                  .list(q=q, fields="files(id,name)")
+                  .execute()
+              )
+              existing = results.get("files", [])
+              media    = MediaFileUpload(str(path), mimetype=mimetype, resumable=True)
+
+              if existing:
+                  file_id = existing[0]["id"]
+                  service.files().update(
+                      fileId=file_id, media_body=media
+                  ).execute()
+                  print(f"UPDATED {filename} (id={file_id})", flush=True)
+              else:
+                  metadata = {"name": filename, "parents": [folder_id]}
+                  service.files().create(
+                      body=metadata, media_body=media, fields="id"
+                  ).execute()
+                  print(f"CREATED {filename}", flush=True)
+
+          print("Google Drive upload complete.", flush=True)
+          EOF
+
+      # ------------------------------------------------------------------
+      # 8. Read status text for email body
+      # ------------------------------------------------------------------
+      - name: Read status text for email body
+        if: >
+          env.ACTION != 'HOLD' ||
+          github.event.inputs.force_notify == 'true'
+        id: read_status
+        run: |
+          {
+            echo 'STATUS_TEXT<<ENDOFSTATUSTEXT'
+            cat multiasset_freeze_0_1/outputs/multiasset_signal_status.txt
+            echo
+            echo ENDOFSTATUSTEXT
+          } >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------------
+      # 9. Send email notification on any action != HOLD
+      #    Subject encodes action + per-asset signals + weights for a
+      #    clear mobile notification preview.
+      # ------------------------------------------------------------------
+      - name: Send signal alert email
+        if: >
+          env.ACTION != 'HOLD' ||
+          github.event.inputs.force_notify == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port:    465
+          secure:         true
+          username:       ${{ secrets.GMAIL_USER }}
+          password:       ${{ secrets.GMAIL_APP_PASSWORD }}
+          subject:        "[${{ env.ACTION }}] MultiAsset — EQ ${{ env.SIGNAL_EQUITY }} | BD ${{ env.SIGNAL_BOND }} | ${{ env.WEIGHTS }} | ${{ github.run_id }}"
+          to:             ${{ secrets.NOTIFY_EMAIL_TO }}
+          cc:             ${{ secrets.NOTIFY_EMAIL_CC }}
+          from:           "Multi-Asset Strategy <${{ secrets.GMAIL_USER }}>"
+          body:           ${{ env.STATUS_TEXT }}
+          attachments:    multiasset_freeze_0_1/outputs/multiasset_equity_chart.png
+          ignore_cert:    false
+          convert_markdown: false
+          priority:       normal
+
+      # ------------------------------------------------------------------
+      # 10. Upload outputs as GitHub Actions artefact (30-day retention)
+      #     Provides a fallback download link from the Actions run page.
+      # ------------------------------------------------------------------
+      - name: Upload run artefact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multiasset-outputs-${{ github.run_id }}
+          path: |
+            multiasset_freeze_0_1/outputs/multiasset_signal_status.txt
+            multiasset_freeze_0_1/outputs/multiasset_signal_log.csv
+            multiasset_freeze_0_1/outputs/multiasset_equity_chart.png
+            multiasset_freeze_0_1/outputs/multiasset_signal_snapshot.json
+            multiasset_freeze_0_1/MultiassetDailyRun.log
+          retention-days: 30
+
+      # ------------------------------------------------------------------
+      # 11. Verify critical outputs exist — fail loudly if missing
+      # ------------------------------------------------------------------
+      - name: Verify outputs
+        run: |
+          MISSING=0
+          for f in \
+            multiasset_freeze_0_1/outputs/multiasset_signal_snapshot.json \
+            multiasset_freeze_0_1/outputs/multiasset_signal_status.txt \
+            multiasset_freeze_0_1/outputs/multiasset_signal_log.csv \
+            multiasset_freeze_0_1/outputs/multiasset_equity_chart.png; do
+            if [ ! -f "$f" ]; then
+              echo "MISSING: $f"
+              MISSING=$((MISSING + 1))
+            else
+              echo "OK: $f"
+            fi
+          done
+          if [ "$MISSING" -gt 0 ]; then
+            echo "ERROR: $MISSING output file(s) missing. Check runfile logs."
+            exit 1
+          fi
+          echo "All outputs verified."
+
+      # ------------------------------------------------------------------
+      # 12. Credentials cleanup
+      # ------------------------------------------------------------------
+      - name: Remove credentials file
+        if: always()
+        run: rm -f /tmp/credentials.json
