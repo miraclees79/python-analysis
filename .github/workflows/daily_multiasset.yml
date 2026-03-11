@@ -124,29 +124,39 @@ jobs:
             exit 1
           fi
 
+          # Step A — eval only the three shell-safe values (no spaces, no /).
+          # WEIGHTS is intentionally excluded here; spaces and slashes in the
+          # value break eval ("80% EQ / 10% BD" is parsed as shell commands).
           eval "$(python - "$SNAPSHOT" <<'EOF'
           import json, sys
           snap = json.load(open(sys.argv[1]))
-          action   = snap.get("action",         "HOLD")
-          sig_eq   = snap.get("signal_equity",  "OUT")
-          sig_bd   = snap.get("signal_bond",    "OUT")
-          w        = snap.get("weights", {})
-          w_eq     = w.get("equity")
-          w_bd     = w.get("bond")
-          w_mmf    = w.get("mmf")
-          def _pct(v):
-              return f"{v*100:.0f}%" if v is not None else "N/A"
+          action = snap.get("action",        "HOLD")
+          sig_eq = snap.get("signal_equity", "OUT")
+          sig_bd = snap.get("signal_bond",   "OUT")
           print(f"ACTION={action}")
           print(f"SIGNAL_EQUITY={sig_eq}")
           print(f"SIGNAL_BOND={sig_bd}")
-          print(f"WEIGHTS={_pct(w_eq)} EQ / {_pct(w_bd)} BD / {_pct(w_mmf)} MMF")
           EOF
           )"
 
+          # Step B — write WEIGHTS directly to GITHUB_ENV from Python using
+          # the multiline delimiter syntax so spaces and slashes are safe.
+          python - "$SNAPSHOT" >> "$GITHUB_ENV" <<'EOF'
+          import json, sys
+          snap = json.load(open(sys.argv[1]))
+          w    = snap.get("weights", {})
+          def _pct(v):
+              return f"{v*100:.0f}%" if v is not None else "N/A"
+          weights_str = f"{_pct(w.get('equity'))} EQ / {_pct(w.get('bond'))} BD / {_pct(w.get('mmf'))} MMF"
+          print(f"WEIGHTS<<ENDWEIGHTS")
+          print(weights_str)
+          print("ENDWEIGHTS")
+          EOF
+
+          # Step C — write the three safe vars to GITHUB_ENV and GITHUB_OUTPUT
           echo "ACTION=$ACTION"               >> "$GITHUB_ENV"
           echo "SIGNAL_EQUITY=$SIGNAL_EQUITY" >> "$GITHUB_ENV"
           echo "SIGNAL_BOND=$SIGNAL_BOND"     >> "$GITHUB_ENV"
-          echo "WEIGHTS=$WEIGHTS"             >> "$GITHUB_ENV"
           echo "action=$ACTION"               >> "$GITHUB_OUTPUT"
           echo "Parsed: eq=$SIGNAL_EQUITY  bd=$SIGNAL_BOND  action=$ACTION  weights=$WEIGHTS"
 
