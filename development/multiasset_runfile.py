@@ -68,6 +68,7 @@ from multiasset_library import (
     print_allocation_robustness_report,
     build_spread_prefilter,
     build_yield_price_proxy,
+    build_yield_momentum_prefilter,
 )
 
 from mc_robustness import (
@@ -182,12 +183,28 @@ SL_BD       = [0.01, 0.02, 0.03]               # tight absolute stops for bonds
 
 # Validate: slow - fast >= 75 is enforced inside walk_forward automatically
 
+# --- Yield price proxy signal parameter grids ---
+# Proxy is significantly more volatile than TBSP price index.
+# Stops must be wide enough to survive normal yield oscillations
+# without firing on noise.
+#
+# Reference volatility: yield proxy daily vol ~0.4-0.6% 
+# (vs TBSP ~0.15-0.25%)
+# → stops need to be roughly 2-3x wider than TBSP equivalents
+#
+X_GRID_YLD  = [0.10, 0.15, 0.20, 0.25, 0.30]  # trailing stop from peak
+Y_GRID_YLD  = [0.001]                           # breakout still disabled
+FAST_YLD    = [50, 100, 150]                    # unchanged — scale-independent
+SLOW_YLD    = [200, 300, 400, 500]              # unchanged — scale-independent
+TV_YLD      = [0.08, 0.10, 0.12]               # unchanged
+SL_YLD      = [0.05, 0.08, 0.10, 0.15]         # 4-5x wider than TBSP SL_BD
+
 
 # Monte Carlo robustness checks 
-RUN_MONTE_CARLO_PARAM_SINGLE = True # MC parameter robustness for single asset strategies
+RUN_MONTE_CARLO_PARAM_SINGLE = False # MC parameter robustness for single asset strategies
 ITERATIONS_MC_PARAM_SINGLE = 1000 # 1000 is the true test variant, 10 for smoke test
 
-RUN_BLOCK_BOOTSTRAP_SINGLE = True # Run bootstrap robustness test for single asset strategies
+RUN_BLOCK_BOOTSTRAP_SINGLE = False # Run bootstrap robustness test for single asset strategies
 ITERATIONS_BOOTSTRAP_SINGLE = 500 # 500 is the true test variant, 10 for smoke test
 # ATTENTION - # ~3-6h on 12-core machine — run overnight
 
@@ -200,6 +217,22 @@ RUN_ROBUSTNESS_ALLOCATION_WEIGHT = True # Run deterministic perturbations on all
 # False = Option B: entry gate only — pre-filter breach blocks new bond
 #                   entries but does not force exit from existing positions
 SPREAD_PREFILTER_HARD_EXIT = False
+
+# --- Yield momentum pre-filter ---
+# Blocks new bond entries when PL 10Y yield has risen sharply.
+# Complements the spread pre-filter (which responds to PL-DE spread widening).
+# The two filters address different regimes:
+#   Spread filter : catches external stress (PL risk premium widening vs DE)
+#   Yield filter  : catches domestic rate-rising cycles (NBP hiking, inflation)
+#
+# True  = Option A: hard exit — rising yield forces exit from open bond position
+# False = Option B: entry gate only — blocks new entries, won't exit existing
+YIELD_PREFILTER_HARD_EXIT   = False   # Option B default
+
+# Threshold: block entry if 63-day yield change exceeds this many basis points
+# 50bp ~= one NBP hike cycle move over a quarter
+# 75bp ~= more aggressive — only blocks sustained hiking
+YIELD_PREFILTER_THRESHOLD_BP = 50.0
 
 # ============================================================
 # PHASE 1 — DATA DOWNLOAD
@@ -357,15 +390,16 @@ if USE_YIELD_SIGNAL:
     bond_signal_source = build_yield_price_proxy(PL10Y)
 
     # Wider grids — yield proxy has higher volatility than TBSP price index
-    X_GRID_BD_RUN = [0.08, 0.12, 0.15, 0.20, 0.25]
-    SL_GRID_BD_RUN = [0.03, 0.05, 0.08]
+    X_GRID_BD_RUN  = X_GRID_YLD
+    SL_GRID_BD_RUN = SL_YLD
 else:
     logging.info("Bond signal source: TBSP price index")
     bond_signal_source = TBSP
 
-    X_GRID_BD_RUN = X_GRID_BD     # original grids from user settings
+    X_GRID_BD_RUN  = X_GRID_BD
     SL_GRID_BD_RUN = SL_BD
 
+    
 
 
 # TBSP OOS window must start no earlier than equity OOS start
@@ -485,6 +519,67 @@ logging.info(
     n_blocked / sig_bond_raw.sum() * 100 if sig_bond_raw.sum() > 0 else 0,
 )
 
+sig_bond_post_spread = sig_bond.copy()   # after spread filter, before yield filter
+
+# --- Apply yield momentum pre-filter to bond signal ---
+yield_prefilter = build_yield_momentum_prefilter(
+    PL10Y,
+    rise_threshold_bp = YIELD_PREFILTER_THRESHOLD_BP,
+    lookback_days     = 63,
+)
+
+yield_prefilter_aligned = (
+    yield_prefilter
+    .reindex(sig_bond.index, method="ffill")
+    .fillna(1)
+    .astype(int)
+)
+
+sig_bond_raw_pre_yield = sig_bond.copy()   # preserve post-spread, pre-yield state
+
+if YIELD_PREFILTER_HARD_EXIT:
+    # Option A: AND gate — rising yield forces immediate exit
+    sig_bond = (sig_bond & yield_prefilter_aligned).astype(int)
+    logging.info(
+        "Yield momentum pre-filter mode: HARD EXIT (Option A)  "
+        "threshold=%.0fbp", YIELD_PREFILTER_THRESHOLD_BP
+    )
+else:
+    # Option B: entry gate only — same loop logic as spread pre-filter
+    sig_bond_shifted_y  = sig_bond.shift(1).fillna(0).astype(int)
+    new_entry_y         = (sig_bond == 1) & (sig_bond_shifted_y == 0)
+    filter_blocked_y    = (yield_prefilter_aligned == 0)
+
+    sig_bond_y = sig_bond.copy()
+    in_position = False
+    for date in sig_bond.index:
+        if sig_bond_raw_pre_yield[date] == 0:
+            in_position = False
+            sig_bond_y[date] = 0
+        elif new_entry_y[date] and filter_blocked_y[date]:
+            in_position = False
+            sig_bond_y[date] = 0
+        elif in_position:
+            sig_bond_y[date] = 1
+        else:
+            in_position = True
+            sig_bond_y[date] = 1
+
+    sig_bond = sig_bond_y.astype(int)
+    logging.info(
+        "Yield momentum pre-filter mode: ENTRY GATE ONLY (Option B)  "
+        "threshold=%.0fbp", YIELD_PREFILTER_THRESHOLD_BP
+    )
+
+n_blocked_yield = (sig_bond_raw_pre_yield - sig_bond).clip(lower=0).sum()
+logging.info(
+    "Yield momentum pre-filter applied: %d days blocked "
+    "(%.1f%% of post-spread bond-on days)",
+    n_blocked_yield,
+    n_blocked_yield / sig_bond_raw_pre_yield.sum() * 100
+    if sig_bond_raw_pre_yield.sum() > 0 else 0,
+)
+
 # ============================================================
 # PHASE 4 — ALLOCATION WALK-FORWARD  (both-signals-on weights)
 # ============================================================
@@ -568,6 +663,8 @@ print_multiasset_report(
     oos_end            = oos_end,
     sig_bond_raw     = sig_bond_raw,
     spread_prefilter = spread_prefilter_aligned,
+    yield_prefilter  = yield_prefilter,
+    sig_bond_post_spread = sig_bond_post_spread 
 )
 
 

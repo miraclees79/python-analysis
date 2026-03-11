@@ -810,8 +810,10 @@ def print_multiasset_report(
     sig_bond:           pd.Series,
     oos_start,
     oos_end,
-    sig_bond_raw:     pd.Series = None,   # new optional parameter
-    spread_prefilter: pd.Series = None,   # new optional parameter
+    sig_bond_raw        = None,
+    spread_prefilter    = None,
+    yield_prefilter     = None,          # NEW
+    sig_bond_post_spread = None,         # NEW — intermediate state between filters
 ) -> None:
     """
     Log a structured multi-asset backtest report.
@@ -881,24 +883,50 @@ def print_multiasset_report(
     logging.info("SIGNAL FREQUENCY (OOS period):")
     logging.info("  Equity signal ON          : %.1f%% of days", pct_eq)
     logging.info("  Bond signal ON (raw)      : %.1f%% of days",
-             sig_bond_raw.sum() / n * 100 if sig_bond_raw is not None else pct_bd)
+         sig_bond_raw.sum() / n * 100 if sig_bond_raw is not None else pct_bd)
     logging.info("  Bond signal ON (filtered) : %.1f%% of days", pct_bd)
 
     if sig_bond_raw is not None:
-        n_blocked = (sig_bond_raw - sig_bond).clip(lower=0)
-        n_blocked_oos = n_blocked.reindex(sig_bond.index).fillna(0).sum()
+        # Spread filter contribution
+        sig_post_spread = sig_bond_post_spread if sig_bond_post_spread is not None else sig_bond
+        n_blocked_spread = (sig_bond_raw - sig_post_spread).clip(lower=0).reindex(sig_bond.index).fillna(0).sum()
         logging.info(
             "  Spread pre-filter blocked : %d days  (%.1f%% of raw bond-on days)",
-            int(n_blocked_oos),
-            n_blocked_oos / sig_bond_raw.sum() * 100 if sig_bond_raw.sum() > 0 else 0,
-            )
+            int(n_blocked_spread),
+            n_blocked_spread / sig_bond_raw.sum() * 100 if sig_bond_raw.sum() > 0 else 0,
+    )
+
+    # Yield filter contribution (only shown if intermediate state available)
+    if sig_bond_post_spread is not None:
+        n_blocked_yield = (sig_bond_post_spread - sig_bond).clip(lower=0).reindex(sig_bond.index).fillna(0).sum()
+        logging.info(
+            "  Yield pre-filter blocked  : %d days  (%.1f%% of post-spread bond-on days)",
+            int(n_blocked_yield),
+            n_blocked_yield / sig_bond_post_spread.sum() * 100 if sig_bond_post_spread.sum() > 0 else 0,
+        )
+
+    # Combined total blocked across both filters
+    n_blocked_total = (sig_bond_raw - sig_bond).clip(lower=0).reindex(sig_bond.index).fillna(0).sum()
+    if sig_bond_post_spread is not None:
+        logging.info(
+            "  Both filters blocked      : %d days total  (%.1f%% of raw bond-on days)",
+            int(n_blocked_total),
+            n_blocked_total / sig_bond_raw.sum() * 100 if sig_bond_raw.sum() > 0 else 0,
+        )
 
     if spread_prefilter is not None:
         pf_aligned = spread_prefilter.reindex(sig_bond.index).fillna(1)
         logging.info(
         "  Spread pre-filter ON      : %.1f%% of OOS days",
         pf_aligned.mean() * 100,
-            )
+    )
+
+    if yield_prefilter is not None:
+        yf_aligned = yield_prefilter.reindex(sig_bond.index).fillna(1)
+        logging.info(
+        "  Yield pre-filter ON       : %.1f%% of OOS days",
+        yf_aligned.mean() * 100,
+    )
 
     logging.info("  Both ON                   : %.1f%% of days", both_on)
     logging.info("  Both OFF (MMF)            : %.1f%% of days", both_off)
@@ -1400,7 +1428,7 @@ def build_yield_price_proxy(
     containing the synthetic bond price. Ready to pass directly to
     walk_forward as the price input.
     """
-    ytm_series = pl10y.iloc[:, 1].copy()   # close column
+    ytm_series = pl10y.iloc[:, 1].copy() / 100   # convert % to decimal
 
     def _price(ytm):
         if pd.isna(ytm) or ytm <= 0:
@@ -1416,7 +1444,7 @@ def build_yield_price_proxy(
 
     logging.info(
         "Yield price proxy: %d rows  (%s to %s)  "
-        "price range [%.1f, %.1f]  at current yield %.2f%% → price %.1f",
+        "price range [%.1f, %.1f]  at current yield %.2f%% -> price %.1f",
         len(out),
         out.index.min().date(),
         out.index.max().date(),
@@ -1426,3 +1454,56 @@ def build_yield_price_proxy(
         prices.iloc[-1],
     )
     return out
+
+
+def build_yield_momentum_prefilter(
+    pl10y: pd.DataFrame,
+    rise_threshold_bp: float = 50.0,
+    lookback_days: int = 63,
+) -> pd.Series:
+    """
+    Yield momentum pre-filter for the bond signal.
+
+    Blocks new bond entries (and optionally forces exits) when PL 10Y yield
+    has risen sharply over the recent lookback window — indicating an adverse
+    rate environment for holding bonds.
+
+    Logic: filter = 1  if  (yield_today - yield_63d_ago) * 100 < threshold_bp
+           filter = 0  otherwise  (yield rising sharply — block bond entry)
+
+    A threshold of 50bp means: block entry if yield has risen more than 50bp
+    over the past 63 trading days (~3 months).
+
+    Parameters
+    ----------
+    pl10y             : pd.DataFrame — PL 10Y yield (stooq CSV, close col = col 1)
+                        Values expected in percent (e.g. 5.5 for 5.5%)
+    rise_threshold_bp : float        — threshold in basis points (default 50bp)
+    lookback_days     : int          — lookback in trading days (default 63 ~3m)
+
+    Returns
+    -------
+    pd.Series (int 0/1, DatetimeIndex) — 1 = filter passes, 0 = blocked
+    """
+    ytm = pl10y.iloc[:, 1].copy().ffill()   # forward-fill weekend gaps
+
+    # Change in basis points over lookback window
+    ytm_bp    = ytm * 100
+    ytm_chg   = ytm_bp - ytm_bp.shift(lookback_days)
+
+    # Filter: 1 if yield change below threshold, 0 if rising sharply
+    prefilter = (ytm_chg < rise_threshold_bp).astype(int)
+    prefilter.name = "yield_momentum_prefilter"
+
+    pct_on = prefilter.mean() * 100
+    logging.info(
+        "Yield momentum pre-filter: %.1f%% of days ON  |  "
+        "threshold=%.0fbp  window=%dd  "
+        "(series: %s to %s)",
+        pct_on,
+        rise_threshold_bp,
+        lookback_days,
+        prefilter.index.min().date(),
+        prefilter.index.max().date(),
+    )
+    return prefilter
