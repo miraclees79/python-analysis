@@ -67,6 +67,7 @@ from multiasset_library import (
     allocation_weight_robustness,
     print_allocation_robustness_report,
     build_spread_prefilter,
+    build_yield_price_proxy,
 )
 
 from mc_robustness import (
@@ -159,6 +160,14 @@ SLOW_EQ     = [150, 200, 250]
 TV_EQ       = [0.08, 0.10, 0.12, 0.15, 0.20]
 SL_EQ       = [0.05, 0.08, 0.10, 0.15]
 MOM_LB_EQ   = [126, 252]
+
+
+# --- Bond signal source ---
+# True  = use PL10Y yield-derived constant-maturity bond price as signal source
+#         (longer history back to 1999, duration-weighted price proxy)
+# False = use TBSP price index as signal source (current behaviour, from 2006)
+# Execution is always on TBSP regardless of this setting.
+USE_YIELD_SIGNAL = False  # default preserves current behaviour
 
 # --- TBSP signal parameter grids ---
 # Breakout disabled: Y_GRID_BD = [0.001] (price always > near-zero trough).
@@ -342,12 +351,29 @@ logging.info("PHASE 3: BOND SIGNAL WALK-FORWARD  (TBSP, train=%dy test=%dy)",
              TRAIN_YEARS_BD, TEST_YEARS_BD)
 logging.info("=" * 80)
 
+# --- Select bond signal source ---
+if USE_YIELD_SIGNAL:
+    logging.info("Bond signal source: PL10Y yield-derived price proxy")
+    bond_signal_source = build_yield_price_proxy(PL10Y)
+
+    # Wider grids — yield proxy has higher volatility than TBSP price index
+    X_GRID_BD_RUN = [0.08, 0.12, 0.15, 0.20, 0.25]
+    SL_GRID_BD_RUN = [0.03, 0.05, 0.08]
+else:
+    logging.info("Bond signal source: TBSP price index")
+    bond_signal_source = TBSP
+
+    X_GRID_BD_RUN = X_GRID_BD     # original grids from user settings
+    SL_GRID_BD_RUN = SL_BD
+
+
+
 # TBSP OOS window must start no earlier than equity OOS start
 # (they share the same combined OOS period for portfolio simulation).
 # walk_forward handles this naturally via TBSP's own data start date.
 
 wf_equity_bd, wf_results_bd, wf_trades_bd = walk_forward(
-    df                    = TBSP,
+    df                    = bond_signal_source,
     cash_df               = MMF,
     train_years           = TRAIN_YEARS_BD,
     test_years            = TEST_YEARS_BD,

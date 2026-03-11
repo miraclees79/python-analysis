@@ -1370,3 +1370,59 @@ def build_spread_prefilter(
         prefilter.index.max().date(),
     )
     return prefilter
+
+
+
+def build_yield_price_proxy(
+    pl10y: pd.DataFrame,
+    coupon: float = 0.05,
+    n_years: int = 10,
+    freq: int = 2,
+) -> pd.DataFrame:
+    """
+    Construct a constant-maturity bond price series from PL 10Y yield.
+
+    Models a par-100 fixed coupon bond repriced daily at the current YTM.
+    Price is duration-weighted and behaves like a tradeable instrument —
+    suitable as a drop-in replacement for TBSP as the signal source in
+    walk_forward.
+
+    Parameters
+    ----------
+    pl10y   : pd.DataFrame — PL 10Y yield (stooq CSV, close col = col index 1)
+    coupon  : float        — annual coupon rate (default 5%)
+    freq    : int          — coupon frequency per year (2 = semi-annual)
+    n_years : int          — bond maturity in years (10)
+
+    Returns
+    -------
+    pd.DataFrame with same index as pl10y, single column "Zamkniecie"
+    containing the synthetic bond price. Ready to pass directly to
+    walk_forward as the price input.
+    """
+    ytm_series = pl10y.iloc[:, 1].copy()   # close column
+
+    def _price(ytm):
+        if pd.isna(ytm) or ytm <= 0:
+            return np.nan
+        c = coupon / freq * 100
+        r = ytm / freq
+        n = n_years * freq
+        return c * (1 - (1 + r) ** -n) / r + 100 * (1 + r) ** -n
+
+    prices = ytm_series.apply(_price)
+
+    out = pd.DataFrame({"Zamkniecie": prices}, index=pl10y.index)
+
+    logging.info(
+        "Yield price proxy: %d rows  (%s to %s)  "
+        "price range [%.1f, %.1f]  at current yield %.2f%% → price %.1f",
+        len(out),
+        out.index.min().date(),
+        out.index.max().date(),
+        out["Zamkniecie"].min(),
+        out["Zamkniecie"].max(),
+        ytm_series.iloc[-1] * 100,
+        prices.iloc[-1],
+    )
+    return out
