@@ -128,14 +128,36 @@ def fetch_subfunds():
     log.info("List endpoint: %d subfunds. Fetching detail records...", len(raw))
 
     # 1b — fetch detail for each subfundId
+    _fund_tfi_cache: dict = {}   # fundId -> tfi_name
+
+    def fetch_tfi_name(fund_id) -> str | None:
+        """Return the management company (TFI) name for a given fundId.
+        Results are cached so each fund is fetched at most once."""
+        if fund_id is None:
+            return None
+        if fund_id in _fund_tfi_cache:
+            return _fund_tfi_cache[fund_id]
+        body = get_json(f"{BASE_URL}/v1/funds/{fund_id}")
+        name = None
+        if body:
+            # The fund detail holds the TFI under managementCompany.name
+            # (field may vary; fall back to the fund's own name if absent)
+            mc = body.get("managementCompany") or {}
+            name = mc.get("name") or body.get("managementCompany") or body.get("name")
+        _fund_tfi_cache[fund_id] = name
+        time.sleep(random.uniform(0.1, 0.2))
+        return name
+
     rows = []
     for i, s in enumerate(raw):
-        sfid   = s["subfundId"]
-        detail = get_json(f"{BASE_URL}/v1/subfunds/{sfid}") or s
+        sfid    = s["subfundId"]
+        detail  = get_json(f"{BASE_URL}/v1/subfunds/{sfid}") or s
+        fund_id = detail.get("fundId")
+        tfi     = fetch_tfi_name(fund_id)
 
         rows.append({
             "subfundId":      detail.get("subfundId"),
-            "fundId":         detail.get("fundId"),
+            "fundId":         fund_id,
             "nationalCode":   detail.get("nationalCode"),
             "name":           detail.get("name"),
             "fullName":       detail.get("fullName"),
@@ -145,6 +167,7 @@ def fetch_subfunds():
             "fromDate":       detail.get("fromDate"),
             "isLiquidating":  detail.get("isLiquidating", False),
             "isActive":       detail.get("isActive", True),
+            "tfi_name":       tfi,
         })
 
         if (i + 1) % 100 == 0:
@@ -507,12 +530,12 @@ def fetch_kid_data(subfund_df):
     df_kid = pd.DataFrame(rows)
     log.info("KID detail records: %d", len(df_kid))
 
-    # Merge with subfund names and categories
+    # Merge with subfund names, categories, and TFI name
     if not subfund_df.empty and not df_kid.empty:
-        df_kid = df_kid.merge(
-            subfund_df[["subfundId", "name", "classification", "category"]],
-            on="subfundId", how="left",
-        )
+        merge_cols = ["subfundId", "name", "classification", "category"]
+        if "tfi_name" in subfund_df.columns:
+            merge_cols.append("tfi_name")
+        df_kid = df_kid.merge(subfund_df[merge_cols], on="subfundId", how="left")
 
     if df_kid.empty:
         return df_kid
@@ -577,11 +600,16 @@ def write_reports(subfund_df, known_df, hist_df, kid_df):
 
     if not subfund_df.empty and not kid_df.empty:
         summary_cols = [
-            "subfundId", "name", "classification", "category", "type",
+            "subfundId", "name", "tfi_name", "classification", "category", "type",
             "fromDate", "riskLevel", "managementAndOtherFeesRate",
             "maxEntryFeeRate", "hasBenchmark", "benchmark",
         ]
-        summary = kid_df[[c for c in summary_cols if c in kid_df.columns]].copy()
+        # kid_df has name/classification/category but not tfi_name — join it in
+        summary = kid_df.merge(
+            subfund_df[["subfundId", "tfi_name"]],
+            on="subfundId", how="left",
+        )
+        summary = summary[[c for c in summary_cols if c in summary.columns]].copy()
         save(summary, "knf_summary.csv", "Summary (subfund+KID)")
 
     return written
