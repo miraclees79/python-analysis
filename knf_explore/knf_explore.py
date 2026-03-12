@@ -165,14 +165,13 @@ def probe_nav_history(subfund_df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     # Stratified sample: pick funds from each category proportionally
-    sampled = (
-        subfund_df
-        .groupby("category", group_keys=False)
-        .apply(lambda g: g.sample(min(len(g), max(1, HISTORY_N // 20)),
-                                  random_state=42))
-        .head(HISTORY_N)
-        .reset_index(drop=True)
-    )
+    categories = subfund_df["category"].unique()
+    per_cat    = max(1, HISTORY_N // max(len(categories), 1))
+    pieces     = []
+    for cat in categories:
+        group = subfund_df[subfund_df["category"] == cat]
+        pieces.append(group.sample(min(len(group), per_cat), random_state=42))
+    sampled = pd.concat(pieces).head(HISTORY_N).reset_index(drop=True)
 
     log.info("Sampling %d subfunds for NAV history probe", len(sampled))
 
@@ -226,6 +225,13 @@ def probe_nav_history(subfund_df: pd.DataFrame) -> pd.DataFrame:
         log.info("  subfund %d  %-45s  earliest=%s  obs=%s",
                  sfid, name[:45], earliest, total_obs)
         time.sleep(random.uniform(0.2, 0.5))
+
+    if not results:
+        log.warning("No history probe results collected.")
+        return pd.DataFrame(columns=[
+            "subfundId", "name", "category",
+            "earliest_date", "total_obs", "error"
+        ])
 
     df_hist = pd.DataFrame(results)
 
