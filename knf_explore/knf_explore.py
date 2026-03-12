@@ -171,16 +171,154 @@ def fetch_subfunds():
 
 
 # ---------------------------------------------------------------------------
-# STEP 2 — NAV history depth probe
+# STEP 2a — Known long-running funds: deep history probe without isPrimary
+# ---------------------------------------------------------------------------
+
+# These are confirmed long-running funds with stooq history since the 1990s.
+# We test them without isPrimary to see whether the KNF API holds pre-2024 NAV.
+# subfundId -> (name, stooq_code, stooq_history_since)
+KNOWN_LONG_FUNDS = {
+    196067: ("Goldman Sachs Akcji",       "2718", "1999"),
+    197630: ("Skarbiec Akcji Polskich",   "3872", "1997"),
+}
+
+def probe_known_funds() -> pd.DataFrame:
+    """
+    For each known long-running fund, query the full valuation history
+    WITHOUT the isPrimary filter to see the maximum depth available.
+    Also lists all available unit classes so we understand what isPrimary
+    was hiding.
+    """
+    log.info("=" * 60)
+    log.info("STEP 2a: Deep history probe for known long-running funds")
+    log.info("=" * 60)
+
+    results = []
+
+    for sfid, (name, stooq_code, stooq_since) in KNOWN_LONG_FUNDS.items():
+        log.info("  Probing subfundId=%d  %s  (stooq: %s, hist since %s)",
+                 sfid, name, stooq_code, stooq_since)
+
+        # --- What unit classes exist for this subfund? ---
+        units_body = get_json(f"{BASE_URL}/v1/valuations/units", {
+            "subfundId": sfid,
+            "fromDate":  HISTORY_FROM,
+            "sort":      "date,asc",
+            "size":      200,   # get enough to see all unit types
+            "page":      0,
+        })
+
+        if units_body is None:
+            log.warning("    Request failed for subfundId=%d", sfid)
+            results.append({
+                "subfundId": sfid, "name": name,
+                "stooq_code": stooq_code, "stooq_since": stooq_since,
+                "unit_class": None, "isPrimary": None,
+                "earliest_date": None, "total_obs": None, "error": "request failed",
+            })
+            continue
+
+        content   = units_body.get("content", [])
+        page_info = units_body.get("page", {})
+        total_obs = page_info.get("totalElements", 0)
+
+        # Collect distinct unit classes seen in this page
+        unit_classes = {}
+        for rec in content:
+            uc = rec.get("unit")
+            if uc not in unit_classes:
+                unit_classes[uc] = {
+                    "isPrimary":   rec.get("isPrimary"),
+                    "isArticle83": rec.get("isArticle83"),
+                    "currency":    rec.get("currency"),
+                    "first_date":  rec.get("date"),
+                }
+
+        log.info("    Unit classes found on first page: %s",
+                 {k: v["isPrimary"] for k, v in unit_classes.items()})
+        log.info("    Total valuation records (all units, from %s): %d",
+                 HISTORY_FROM, total_obs)
+
+        # Earliest date across all units on this first page
+        earliest_all = content[0]["date"] if content else None
+        log.info("    Earliest date (any unit, page 0): %s", earliest_all)
+
+        # --- Now probe each unit class individually ---
+        for uc, meta in unit_classes.items():
+            uc_body = get_json(f"{BASE_URL}/v1/valuations/units", {
+                "subfundId": sfid,
+                "unit":      uc,
+                "fromDate":  HISTORY_FROM,
+                "sort":      "date,asc",
+                "size":      1,
+                "page":      0,
+            })
+            if uc_body is None:
+                continue
+
+            uc_page  = uc_body.get("page", {})
+            uc_total = uc_page.get("totalElements", 0)
+            uc_cont  = uc_body.get("content", [])
+            uc_early = uc_cont[0]["date"] if uc_cont else None
+
+            log.info("    unit=%-4s  isPrimary=%-5s  earliest=%-12s  obs=%d",
+                     uc, meta["isPrimary"], uc_early or "none", uc_total)
+
+            results.append({
+                "subfundId":    sfid,
+                "name":         name,
+                "stooq_code":   stooq_code,
+                "stooq_since":  stooq_since,
+                "unit_class":   uc,
+                "isPrimary":    meta["isPrimary"],
+                "isArticle83":  meta["isArticle83"],
+                "currency":     meta["currency"],
+                "earliest_date": uc_early,
+                "total_obs":    uc_total,
+                "error":        None,
+            })
+            time.sleep(random.uniform(0.1, 0.2))
+
+        time.sleep(random.uniform(0.2, 0.4))
+
+    df = pd.DataFrame(results)
+
+    # Summary
+    if not df.empty and df["earliest_date"].notna().any():
+        valid = df[df["earliest_date"].notna()].copy()
+        valid["earliest_date"] = pd.to_datetime(valid["earliest_date"])
+        today = pd.Timestamp(date.today())
+        valid["years_history"] = (today - valid["earliest_date"]).dt.days / 365.25
+
+        log.info("\n--- Known funds history summary ---")
+        for _, r in valid.iterrows():
+            log.info("  %-45s  unit=%-4s  primary=%-5s  earliest=%s  yrs=%.1f  obs=%d",
+                     r["name"][:45], r["unit_class"], r["isPrimary"],
+                     r["earliest_date"].date(), r["years_history"], r["total_obs"])
+
+    return df
+
+
+# ---------------------------------------------------------------------------
+# STEP 2b — Broader category sample without isPrimary filter
 # ---------------------------------------------------------------------------
 
 def probe_nav_history(subfund_df):
     """
-    Sample HISTORY_N subfunds spread across categories, query NAV history
-    back to HISTORY_FROM, record earliest date and total observation count.
+    Sample HISTORY_N subfunds spread across the core investable categories,
+    query NAV history back to HISTORY_FROM WITHOUT the isPrimary filter.
+    Previous run with isPrimary showed universal 2024-01-01 floor — this run
+    checks whether dropping the filter reveals older data.
+
+    Core categories sampled (PPK, lifecycle, alternatywne excluded):
+        akcji polskich, akcji zagranicznych, akcji pozostałe,
+        obligacji skarbowych, obligacji korporacyjnych,
+        obligacji uniwersalne, obligacji pozostałe,
+        mieszane ograniczonej alokacji, mieszane aktywnej alokacji,
+        mieszane pozostałe, absolutnej stopy zwrotu, rynku surowców
     """
     log.info("=" * 60)
-    log.info("STEP 2: Probing NAV history depth (n=%d)", HISTORY_N)
+    log.info("STEP 2b: Category history probe — no isPrimary filter (n=%d)", HISTORY_N)
     log.info("=" * 60)
 
     empty_result = pd.DataFrame(columns=[
@@ -192,36 +330,35 @@ def probe_nav_history(subfund_df):
         log.warning("Subfund DataFrame is empty — skipping history probe.")
         return empty_result
 
-    # Split classifiable vs unclassified
-    classifiable = subfund_df[subfund_df["category"].notna()].copy()
-    unclassified = subfund_df[subfund_df["category"].isna()].copy()
-    log.info("  Classifiable: %d  |  Unclassified: %d",
-             len(classifiable), len(unclassified))
+    # Exclude categories that are out of scope for the assessment pipeline
+    EXCLUDE_GROUPS = {"PPK", "alternatywne"}
+    EXCLUDE_CATEGORY_PATTERNS = ["cyklu życia", "zdefiniowanej daty"]
 
-    # Stratified sample across categories
+    def is_excluded(row):
+        if row["classification"] in EXCLUDE_GROUPS:
+            return True
+        cat = row["category"] or ""
+        return any(p in cat for p in EXCLUDE_CATEGORY_PATTERNS)
+
+    core = subfund_df[~subfund_df.apply(is_excluded, axis=1)].copy()
+    log.info("  Core investable subfunds (after exclusions): %d / %d",
+             len(core), len(subfund_df))
+
+    # Stratified sample across core categories
     pieces = []
-    if not classifiable.empty:
-        categories = classifiable["category"].unique()
-        per_cat    = max(1, HISTORY_N // max(len(categories), 1))
-        for cat in categories:
-            grp = classifiable[classifiable["category"] == cat]
-            pieces.append(grp.sample(min(len(grp), per_cat), random_state=42))
-
-    # Add a handful of unclassified if budget remains
-    if not unclassified.empty:
-        remaining = HISTORY_N - sum(len(p) for p in pieces)
-        if remaining > 0:
-            pieces.append(
-                unclassified.sample(min(len(unclassified),
-                                        max(1, remaining // 4)),
-                                    random_state=42))
+    categories = core["category"].dropna().unique()
+    per_cat    = max(2, HISTORY_N // max(len(categories), 1))
+    for cat in categories:
+        grp = core[core["category"] == cat]
+        pieces.append(grp.sample(min(len(grp), per_cat), random_state=42))
 
     if not pieces:
-        log.warning("No subfunds available to sample.")
+        log.warning("No subfunds available after exclusions.")
         return empty_result
 
     sampled = pd.concat(pieces).head(HISTORY_N).reset_index(drop=True)
-    log.info("Sampling %d subfunds for history probe", len(sampled))
+    log.info("Sampling %d subfunds across %d categories",
+             len(sampled), len(categories))
 
     results = []
     for _, row in sampled.iterrows():
@@ -229,9 +366,9 @@ def probe_nav_history(subfund_df):
         name = row["name"]
         cat  = row.get("category") or "unclassified"
 
+        # No isPrimary filter — get oldest record across all unit classes
         body = get_json(f"{BASE_URL}/v1/valuations/units", {
             "subfundId": sfid,
-            "isPrimary": "true",
             "fromDate":  HISTORY_FROM,
             "sort":      "date,asc",
             "size":      1,
@@ -269,8 +406,10 @@ def probe_nav_history(subfund_df):
         today = pd.Timestamp(date.today())
         valid["years_history"] = (today - valid["earliest_date"]).dt.days / 365.25
 
-        log.info("\n--- NAV history depth summary (sampled) ---")
+        log.info("\n--- NAV history depth summary (no isPrimary filter) ---")
         log.info("  Median years : %.1f", valid["years_history"].median())
+        log.info("  >= 5 years   : %d / %d",
+                 (valid["years_history"] >= 5).sum(), len(valid))
         log.info("  >= 10 years  : %d / %d",
                  (valid["years_history"] >= 10).sum(), len(valid))
         log.info("  >= 15 years  : %d / %d",
@@ -284,7 +423,7 @@ def probe_nav_history(subfund_df):
                  .reset_index()
                  .sort_values("median", ascending=False)
         )
-        log.info("\n--- History by category ---")
+        log.info("\n--- History by category (no isPrimary filter) ---")
         for _, r in by_cat.iterrows():
             log.info("  %-45s  median=%.1fy  min=%.1fy  n=%d",
                      r["category"], r["median"], r["min"], r["count"])
@@ -419,7 +558,7 @@ def fetch_kid_data(subfund_df):
 # STEP 4 — Write CSV reports
 # ---------------------------------------------------------------------------
 
-def write_reports(subfund_df, hist_df, kid_df):
+def write_reports(subfund_df, known_df, hist_df, kid_df):
     written = []
 
     def save(df, filename, label):
@@ -431,9 +570,10 @@ def write_reports(subfund_df, hist_df, kid_df):
         log.info("Wrote %-30s %d rows → %s", label, len(df), path)
         written.append(path)
 
-    save(subfund_df, "knf_subfunds.csv",      "Active subfunds")
-    save(hist_df,    "knf_history_probe.csv", "NAV history probe")
-    save(kid_df,     "knf_kid_data.csv",      "KID data")
+    save(subfund_df, "knf_subfunds.csv",           "Active subfunds")
+    save(known_df,   "knf_known_funds_probe.csv",  "Known funds deep probe")
+    save(hist_df,    "knf_history_probe.csv",      "NAV history probe")
+    save(kid_df,     "knf_kid_data.csv",           "KID data")
 
     if not subfund_df.empty and not kid_df.empty:
         summary_cols = [
@@ -506,9 +646,10 @@ if __name__ == "__main__":
     log.info("OUTPUT_DIR    : %s", OUTPUT_DIR)
 
     subfund_df = fetch_subfunds()
+    known_df   = probe_known_funds()
     hist_df    = probe_nav_history(subfund_df)
     kid_df     = fetch_kid_data(subfund_df)
-    written    = write_reports(subfund_df, hist_df, kid_df)
+    written    = write_reports(subfund_df, known_df, hist_df, kid_df)
     upload_to_drive(written)
 
     log.info("KNF API exploration — complete. Files written: %d", len(written))
