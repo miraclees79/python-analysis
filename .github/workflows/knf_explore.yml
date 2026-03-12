@@ -1,0 +1,104 @@
+# .github/workflows/knf_explore.yml
+#
+# One-shot (manually triggered) workflow to explore the KNF
+# "Wybieram fundusze" API and upload CSV reports to Google Drive.
+#
+# Trigger: workflow_dispatch only — run manually from the Actions tab.
+#
+# Inputs (all optional, override script defaults):
+#   page_size        — items per API page          (default: 200)
+#   history_sample_n — subfunds to probe for NAV history (default: 50)
+#   history_from     — earliest NAV date to query  (default: 2000-01-01)
+#
+# Required repository secrets:
+#   GOOGLE_CREDENTIALS   — service account JSON (raw, pasted as-is)
+#   GDRIVE_FOLDER_ID     — target Google Drive folder ID
+#
+# Outputs uploaded to Drive:
+#   knf_subfunds.csv       — full active subfund list with classification
+#   knf_history_probe.csv  — NAV history depth sample
+#   knf_kid_data.csv       — KID benchmarks, fees, risk levels
+#   knf_summary.csv        — joined summary table (subfund + KID)
+
+name: KNF API Exploration
+
+on:
+  workflow_dispatch:
+    inputs:
+      page_size:
+        description: "Items per API page (default 200)"
+        required: false
+        default: "200"
+      history_sample_n:
+        description: "Number of subfunds to probe for NAV history depth (default 50)"
+        required: false
+        default: "50"
+      history_from:
+        description: "Earliest NAV date for history probe (YYYY-MM-DD, default 2000-01-01)"
+        required: false
+        default: "2000-01-01"
+
+jobs:
+  knf-explore:
+    name: Explore KNF fund API
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ----------------------------------------------------------------
+      # 1. Checkout
+      # ----------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ----------------------------------------------------------------
+      # 2. Python
+      # ----------------------------------------------------------------
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ----------------------------------------------------------------
+      # 3. Dependencies
+      # ----------------------------------------------------------------
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install requests pandas google-auth google-api-python-client
+
+      # ----------------------------------------------------------------
+      # 4. Write Google credentials
+      # ----------------------------------------------------------------
+      - name: Write Google credentials
+        run: echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
+
+      - name: Validate credentials JSON
+        run: |
+          python -c "import json; json.load(open('/tmp/credentials.json'))" \
+            && echo "Credentials JSON is valid."
+
+      # ----------------------------------------------------------------
+      # 5. Run exploration script
+      # ----------------------------------------------------------------
+      - name: Run KNF exploration
+        env:
+          GDRIVE_FOLDER_ID:   ${{ secrets.GDRIVE_FOLDER_ID }}
+          KNF_PAGE_SIZE:      ${{ github.event.inputs.page_size }}
+          HISTORY_SAMPLE_N:   ${{ github.event.inputs.history_sample_n }}
+          HISTORY_FROM_DATE:  ${{ github.event.inputs.history_from }}
+          OUTPUT_DIR:         /tmp/knf_outputs
+        run: |
+          python knf_explore/knf_explore.py
+
+      # ----------------------------------------------------------------
+      # 6. Upload CSV reports as GitHub Actions artefact
+      #    (backup in addition to Drive, useful if Drive upload fails)
+      # ----------------------------------------------------------------
+      - name: Upload CSVs as workflow artefact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: knf-exploration-results
+          path: /tmp/knf_outputs/*.csv
+          retention-days: 30
