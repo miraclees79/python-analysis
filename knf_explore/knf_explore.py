@@ -78,6 +78,14 @@ def fetch_all_pages(path: str, params: dict) -> list[dict]:
             log.error("GET %s page %d failed: %s", path, page, exc)
             break
 
+        # Diagnostics: log top-level keys and raw body on first page
+        if page == 0:
+            log.info("  Response top-level keys: %s", list(body.keys()))
+            # Log first 500 chars of raw JSON so we can see the actual shape
+            import json as _json
+            raw_preview = _json.dumps(body)[:500]
+            log.info("  Raw response preview: %s", raw_preview)
+
         content     = body.get("content", [])
         page_info   = body.get("page", {})
         total_pages = page_info.get("totalPages", 1)
@@ -113,6 +121,10 @@ def fetch_subfunds() -> pd.DataFrame:
         log.warning("No subfunds returned.")
         return pd.DataFrame()
 
+    # Diagnostic: inspect first raw record to confirm field names
+    log.info("First raw subfund record keys: %s", list(raw[0].keys()))
+    log.info("First raw subfund record: %s", raw[0])
+
     rows = []
     for s in raw:
         rows.append({
@@ -130,6 +142,10 @@ def fetch_subfunds() -> pd.DataFrame:
         })
 
     df = pd.DataFrame(rows)
+    log.info("DataFrame shape after build: %s", df.shape)
+    log.info("DataFrame columns: %s", list(df.columns))
+    if not df.empty:
+        log.info("First row: %s", df.iloc[0].to_dict())
     log.info("Total active subfunds fetched: %d", len(df))
 
     # Summary by category
