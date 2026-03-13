@@ -724,7 +724,8 @@ def run_strategy_with_trades(
     safe_rate=0.0,
     initial_state=None,       # NEW: accept carry-over state from prior window,
     warmup_df=None,    # NEW: pre-window data for indicator warm-up
-    fund_signal=None   # NEW: precomputed pd.Series from compute_fund_breadth_signal
+    fund_signal=None,   # NEW: precomputed pd.Series from compute_fund_breadth_signal
+    entry_gate=None,        # ADD — pre-sliced gate for this training window
 ):
 
 
@@ -846,7 +847,14 @@ def run_strategy_with_trades(
         df = pd.concat([warmup, df])
     else:
         df["_warmup"] = False
-
+    
+    # After df construction and warmup prepend (around line 850),
+    # align gate to df index:
+    if entry_gate is not None:
+        gate_aligned = entry_gate.reindex(df.index, method="ffill").fillna(1).astype(int)
+    else:
+        gate_aligned = None
+    
     test_start = df[~df["_warmup"]].index[0]  # capture before stripping
 
     if cash_df is not None:
@@ -1042,8 +1050,8 @@ def run_strategy_with_trades(
 
         if position == 0:
             m = price if m is None else min(m, price)
-
-            if (price > (1 + Y) * m) and filter_on:
+            gate_allows = (gate_aligned is None or gate_aligned[i] == 1)
+            if (price > (1 + Y) * m) and filter_on and gate_allows:
                 entry_reason = "BREAKOUT & FILTER"
                 position     = calc_position(vol, position_mode, target_vol, max_leverage)
                 entry_price  = price
@@ -1161,7 +1169,8 @@ def evaluate_params(
     filter_mode, fund_idx, fund_params, X, Y, fast, slow, tv, stop_loss,
     train, cash_train, vol_window, selected_mode, funds_df, train_start, train_end,
     objective="calmar",   # <-- new parameter, default preserves v0.1 behaviour,
-    mom_lookback=252       
+    mom_lookback=252,
+    entry_gate=None,        # ADD — pre-sliced gate for this training window       
 ):
     """
     Evaluate a single parameter combination on the training window.
@@ -1558,7 +1567,12 @@ def walk_forward(
             (cash_df.index >= train_start) & (cash_df.index < train_end)
             ]
         
-
+        # Around line 1564, after cash_train is sliced:
+        gate_train = None
+        if entry_gate_series is not None:
+            gate_train = entry_gate_series.reindex(
+                train.index, method="ffill"
+                ).fillna(1).astype(int)
         # -------------------------------------------------------
         # Grid search — always runs WITHOUT carry state
         # -------------------------------------------------------
@@ -1620,7 +1634,8 @@ def walk_forward(
                             filter_mode, fund_idx, fund_params,
                             X, Y, fast, slow, tv, stop_loss,
                             train, cash_train, vol_window, selected_mode,
-                            funds_df, train_start, train_end, objective=objective, mom_lookback=mom_lookback
+                            funds_df, train_start, train_end, objective=objective, mom_lookback=mom_lookback,
+                            entry_gate=gate_train,        # ADD
                             )
                         for (filter_mode, fund_idx, fund_params,
                              X, Y, fast, slow, tv, stop_loss, mom_lookback)
@@ -1632,7 +1647,8 @@ def walk_forward(
                             filter_mode, fund_idx, fund_params,
                             X, Y, fast, slow, tv, stop_loss,
                             train, cash_train, vol_window, selected_mode,
-                            funds_df, train_start, train_end, objective=objective, mom_lookback=mom_lookback
+                            funds_df, train_start, train_end, objective=objective, mom_lookback=mom_lookback,
+                            entry_gate=gate_train,
                             )
                         for (filter_mode, fund_idx, fund_params,
                              X, Y, fast, slow, tv, stop_loss, mom_lookback)
@@ -1764,6 +1780,14 @@ def walk_forward(
             oos_fund_signal = full_fund_signal.loc[
                 full_fund_signal.index >= train_end
             ]
+        # Before the run_strategy_with_trades call at line 1768,
+        # slice gate to warmup+test period:
+            gate_oos = None
+            if entry_gate_series is not None:
+                gate_oos = entry_gate_series.reindex(
+                    test.index, method="ffill"
+                    ).fillna(1).astype(int)
+
 
         bt_oos, test_metrics, oos_trades, end_state = run_strategy_with_trades(
             test,
@@ -1773,6 +1797,7 @@ def walk_forward(
             vol_window=vol_window,
             initial_state=carry_state,
             warmup_df=warmup,
+            entry_gate=gate_oos,
             fund_signal=oos_fund_signal,
             use_momentum=(best_params["filter_mode"] == "mom"),
             mom_lookback=best_params["mom_lookback"],    # ADD
@@ -2363,36 +2388,3 @@ def run_regime_decomposition(close, high, low,
 
     return results
 
-
-    def _backtest_with_gate(prices, params, gate, objective):
-    """
-    Run single-combo backtest on prices with optional entry gate.
-    gate: pd.Series (0/1) or None. If provided, new entries are blocked
-    on days when gate==0. Existing positions are not forced out (Option B).
-    """
-    # Generate raw signal from strategy engine (existing call)
-    sig_raw = generate_signal(prices, **params)   # existing function
-
-    if gate is not None:
-        sig = _apply_entry_gate(sig_raw, gate)
-    else:
-        sig = sig_raw
-
-    return compute_objective(prices, sig, objective)
-
-
-def _apply_entry_gate(sig_raw, gate):
-    """Option B entry gate: block new entries when gate==0, hold existing."""
-    sig = sig_raw.copy()
-    in_position = False
-    for date in sig.index:
-        if sig_raw[date] == 0:
-            in_position = False
-            sig[date] = 0
-        elif (not in_position) and gate[date] == 0:
-            # New entry attempt blocked
-            sig[date] = 0
-        else:
-            in_position = True
-            sig[date] = sig_raw[date]
-    return sig

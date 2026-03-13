@@ -305,6 +305,38 @@ ret_eq  = ret_eq.dropna()
 ret_bd  = ret_bd.dropna()
 ret_mmf = ret_mmf.dropna()
 
+
+# After line 306 (ret_mmf = ret_mmf.dropna())
+
+# --- Bond entry gate (spread + yield) — built once, passed into walk_forward ---
+# Applied inside training windows to match the constraints active in production.
+spread_prefilter = build_spread_prefilter(PL10Y, DE10Y)
+yield_prefilter  = build_yield_momentum_prefilter(
+    PL10Y,
+    rise_threshold_bp = YIELD_PREFILTER_THRESHOLD_BP,
+    lookback_days     = 63,
+)
+bond_entry_gate = (
+    spread_prefilter.reindex(
+        pd.date_range(spread_prefilter.index.min(), ret_bd.index.max(), freq="B"),
+        method="ffill"
+    ).fillna(1).astype(int)
+    &
+    yield_prefilter.reindex(
+        pd.date_range(yield_prefilter.index.min(), ret_bd.index.max(), freq="B"),
+        method="ffill"
+    ).fillna(1).astype(int)
+).astype(int)
+bond_entry_gate.name = "bond_entry_gate"
+
+logging.info(
+    "Bond entry gate built: %.1f%% of days pass  "
+    "(spread: %.1f%% pass | yield: %.1f%% pass)",
+    bond_entry_gate.mean() * 100,
+    spread_prefilter.mean() * 100,
+    yield_prefilter.mean() * 100,
+)
+
 logging.info(
     "Return series: equity %d rows | bond %d rows | mmf %d rows",
     len(ret_eq), len(ret_bd), len(ret_mmf)
@@ -422,6 +454,7 @@ wf_equity_bd, wf_results_bd, wf_trades_bd = walk_forward(
     sl_grid               = SL_BD,
     mom_lookback_grid     = [252],                  # not used (filter_mode=ma)
     n_jobs                = N_JOBS,
+    entry_gate_series     = bond_entry_gate,
 )
 
 if wf_equity_bd.empty:
@@ -457,75 +490,19 @@ logging.info(
     sig_bond.mean() * 100, sig_bond.sum(), len(sig_bond)
 )
 
-# --- Apply PL-DE spread pre-filter to bond signal ---
-spread_prefilter = build_spread_prefilter(PL10Y, DE10Y)
+# --- Post-walk_forward filter diagnostics (gate was applied inside walk_forward) ---
+# sig_bond from build_signal_series already reflects the entry gate.
+# Reconstruct the pre-gate counterfactual for reporting purposes only.
+
+sig_bond_raw = build_signal_series(wf_equity_bd, wf_trades_bd)   # same as sig_bond
+# (they are identical — the gate was applied inside wf, so the trade log
+#  already reflects gated entries. sig_bond_raw here is kept for report compatibility.)
 
 spread_prefilter_aligned = (
     spread_prefilter
     .reindex(sig_bond.index, method="ffill")
     .fillna(1)
     .astype(int)
-)
-
-sig_bond_raw = sig_bond.copy()
-
-if SPREAD_PREFILTER_HARD_EXIT:
-    # Option A: AND gate on every day — pre-filter breach forces exit
-    sig_bond = (sig_bond & spread_prefilter_aligned).astype(int)
-    logging.info("Spread pre-filter mode: HARD EXIT (Option A)")
-else:
-    # Option B: entry gate only — only block days where sig_bond is
-    # transitioning from 0→1 (new entry). Existing positions (sig_bond
-    # was already 1 on the previous day) are unaffected.
-    sig_bond_shifted = sig_bond.shift(1).fillna(0).astype(int)
-    new_entry        = (sig_bond == 1) & (sig_bond_shifted == 0)
-    filter_blocked   = (spread_prefilter_aligned == 0)
-
-    # A blocked new entry propagates forward until the MA signal
-    # naturally exits — achieved by zeroing the entry day and letting
-    # the downstream signal series handle the rest.
-    # Implementation: suppress entry day; subsequent days stay 1
-    # as long as MA signal remains 1 (existing position logic).
-    blocked_entries  = new_entry & filter_blocked
-    
-    # Build corrected signal: carry forward position state,
-    # but don't start a new position on a blocked entry day
-    sig_bond_b = sig_bond.copy()
-    in_position = False
-    for date in sig_bond.index:
-        if sig_bond_raw[date] == 0:
-            in_position = False
-            sig_bond_b[date] = 0
-        elif new_entry[date] and filter_blocked[date]:
-            # MA signal says enter but pre-filter blocks — stay out
-            in_position = False
-            sig_bond_b[date] = 0
-        elif in_position:
-            # Already in a position — pre-filter cannot force exit
-            sig_bond_b[date] = 1
-        else:
-            # MA signal says enter and pre-filter passes
-            in_position = True
-            sig_bond_b[date] = 1
-    
-    sig_bond = sig_bond_b.astype(int)
-    logging.info("Spread pre-filter mode: ENTRY GATE ONLY (Option B)")
-
-n_blocked = (sig_bond_raw - sig_bond).clip(lower=0).sum()
-logging.info(
-    "Spread pre-filter applied to bond signal: %d days blocked "
-    "(%.1f%% of raw bond-on days)",
-    n_blocked,
-    n_blocked / sig_bond_raw.sum() * 100 if sig_bond_raw.sum() > 0 else 0,
-)
-
-sig_bond_post_spread = sig_bond.copy()   # after spread filter, before yield filter
-
-# --- Apply yield momentum pre-filter to bond signal ---
-yield_prefilter = build_yield_momentum_prefilter(
-    PL10Y,
-    rise_threshold_bp = YIELD_PREFILTER_THRESHOLD_BP,
-    lookback_days     = 63,
 )
 
 yield_prefilter_aligned = (
@@ -535,49 +512,14 @@ yield_prefilter_aligned = (
     .astype(int)
 )
 
-sig_bond_raw_pre_yield = sig_bond.copy()   # preserve post-spread, pre-yield state
+sig_bond_post_spread = sig_bond.copy()   # kept for report signature compatibility
 
-if YIELD_PREFILTER_HARD_EXIT:
-    # Option A: AND gate — rising yield forces immediate exit
-    sig_bond = (sig_bond & yield_prefilter_aligned).astype(int)
-    logging.info(
-        "Yield momentum pre-filter mode: HARD EXIT (Option A)  "
-        "threshold=%.0fbp", YIELD_PREFILTER_THRESHOLD_BP
-    )
-else:
-    # Option B: entry gate only — same loop logic as spread pre-filter
-    sig_bond_shifted_y  = sig_bond.shift(1).fillna(0).astype(int)
-    new_entry_y         = (sig_bond == 1) & (sig_bond_shifted_y == 0)
-    filter_blocked_y    = (yield_prefilter_aligned == 0)
-
-    sig_bond_y = sig_bond.copy()
-    in_position = False
-    for date in sig_bond.index:
-        if sig_bond_raw_pre_yield[date] == 0:
-            in_position = False
-            sig_bond_y[date] = 0
-        elif new_entry_y[date] and filter_blocked_y[date]:
-            in_position = False
-            sig_bond_y[date] = 0
-        elif in_position:
-            sig_bond_y[date] = 1
-        else:
-            in_position = True
-            sig_bond_y[date] = 1
-
-    sig_bond = sig_bond_y.astype(int)
-    logging.info(
-        "Yield momentum pre-filter mode: ENTRY GATE ONLY (Option B)  "
-        "threshold=%.0fbp", YIELD_PREFILTER_THRESHOLD_BP
-    )
-
-n_blocked_yield = (sig_bond_raw_pre_yield - sig_bond).clip(lower=0).sum()
 logging.info(
-    "Yield momentum pre-filter applied: %d days blocked "
-    "(%.1f%% of post-spread bond-on days)",
-    n_blocked_yield,
-    n_blocked_yield / sig_bond_raw_pre_yield.sum() * 100
-    if sig_bond_raw_pre_yield.sum() > 0 else 0,
+    "Bond signal (gate-consistent): %.1f%% of OOS days in position  "
+    "| spread filter ON %.1f%% | yield filter ON %.1f%%",
+    sig_bond.mean() * 100,
+    spread_prefilter_aligned.mean() * 100,
+    yield_prefilter_aligned.mean() * 100,
 )
 
 # ============================================================
