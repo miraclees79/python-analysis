@@ -173,20 +173,28 @@ def load_match_list(service) -> pd.DataFrame:
     confirmed = download_csv_from_drive(service, GDRIVE_FOLDER, CONFIRMED_FILE)
     if confirmed is not None and not confirmed.empty:
         log.info("Using confirmed match list: %d funds", len(confirmed))
-        # Confirmed file must have at least: subfundId, stooq_id, knf_name, stooq_name
-        # Category metadata joined in from matches file if missing
-        missing_meta = [c for c in ("category", "classification", "tfi_name")
-                        if c not in confirmed.columns]
+        log.info("  Confirmed columns: %s", list(confirmed.columns))
+
+        # Confirmed file must have at least: stooq_id, knf_name, stooq_name
+        # Category metadata (category, classification, tfi_name, subfundId, fees, etc.)
+        # is joined in from knf_stooq_matches.csv using stooq_id as the join key.
+        META_COLS = (
+            "subfundId", "category", "classification", "tfi_name",
+            "riskLevel", "managementAndOtherFeesRate", "maxEntryFeeRate",
+            "hasBenchmark", "benchmark",
+        )
+        missing_meta = [c for c in META_COLS if c not in confirmed.columns]
         if missing_meta:
             log.info("  Confirmed file missing %s — joining from matches file", missing_meta)
             matches = download_csv_from_drive(service, GDRIVE_FOLDER, MATCHES_FILE)
             if matches is not None:
-                meta_cols = ["subfundId"] + missing_meta
-                available = [c for c in meta_cols if c in matches.columns]
+                log.info("  Matches columns: %s", list(matches.columns))
+                join_cols = ["stooq_id"] + [c for c in missing_meta if c in matches.columns]
                 confirmed = confirmed.merge(
-                    matches[available].drop_duplicates("subfundId"),
-                    on="subfundId", how="left",
+                    matches[join_cols].drop_duplicates("stooq_id"),
+                    on="stooq_id", how="left",
                 )
+                log.info("  After join: %d rows, columns: %s", len(confirmed), list(confirmed.columns))
         return confirmed
 
     # Fallback: raw matches, restrict to high-confidence tiers
