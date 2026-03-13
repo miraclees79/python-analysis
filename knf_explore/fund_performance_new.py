@@ -164,20 +164,48 @@ def download_csv_from_drive(service, folder_id: str, filename: str) -> pd.DataFr
     return pd.read_csv(buf, sep=None, engine="python", encoding="utf-8")
 
 
-def upload_csv_to_drive(service, folder_id: str, local_path: str):
+def upload_csv_to_drive(service, folder_id: str, local_path: str,
+                        max_retries: int = 3):
+    """
+    Upload a local CSV to Drive, retrying with a fresh service object on any
+    connection error. The original service may have a stale SSL connection after
+    long-running NAV downloads — rebuilding it on failure is the safest fix.
+    """
     filename = os.path.basename(local_path)
-    query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
-    res = service.files().list(q=query, fields="files(id)").execute()
-    items = res.get("files", [])
-    with open(local_path, "rb") as f:
-        buf = io.BytesIO(f.read())
-    media = MediaIoBaseUpload(buf, mimetype="text/csv", resumable=False)
-    if items:
-        service.files().update(fileId=items[0]["id"], media_body=media).execute()
-    else:
-        meta = {"name": filename, "parents": [folder_id]}
-        service.files().create(body=meta, media_body=media, fields="id").execute()
-    log.info("Uploaded %s to Drive", filename)
+    query    = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
+
+    delay = 5.0
+    for attempt in range(1, max_retries + 1):
+        try:
+            # Rebuild service on every attempt after the first to avoid stale
+            # SSL connections that form during long computation phases.
+            svc = get_drive_service() if attempt > 1 else service
+
+            res   = svc.files().list(q=query, fields="files(id)").execute()
+            items = res.get("files", [])
+
+            with open(local_path, "rb") as f:
+                buf = io.BytesIO(f.read())
+            media = MediaIoBaseUpload(buf, mimetype="text/csv", resumable=False)
+
+            if items:
+                svc.files().update(fileId=items[0]["id"], media_body=media).execute()
+            else:
+                meta = {"name": filename, "parents": [folder_id]}
+                svc.files().create(body=meta, media_body=media, fields="id").execute()
+
+            log.info("Uploaded %s to Drive", filename)
+            return
+
+        except Exception as exc:
+            log.warning("Upload attempt %d/%d failed for %s: %s",
+                        attempt, max_retries, filename, exc)
+            if attempt < max_retries:
+                log.info("  Retrying in %.0fs with a fresh Drive connection...", delay)
+                time.sleep(delay)
+                delay *= 2
+            else:
+                raise
 
 
 # ---------------------------------------------------------------------------
