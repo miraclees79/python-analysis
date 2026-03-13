@@ -26,7 +26,12 @@
 #      Falls back to full pool if pool is empty; flagged match_tfi_fallback=True.
 #   2. Exact match on normalised residual name (brand + legal tokens stripped).
 #   3. Fuzzy token-sort match on residual name (rapidfuzz), score >= threshold.
-#   4. No match.
+#   4. History pass (only for unmatched):
+#      Fetches /v1/subfunds/{id}/history from the KNF API, extracts all former
+#      names (validTo != "9999-12-31"), normalises each, and retries exact then
+#      fuzzy against the same TFI-constrained pool.  Recorded as tier
+#      "historical_exact" / "historical_fuzzy"; knf_former_name_matched is set.
+#   5. No match.
 #
 # Inputs (from Drive):
 #   knf_summary.csv       — must include `tfi_name` column (from knf_explore.py)
@@ -50,8 +55,12 @@
 import os
 import io
 import re
+import time
 import logging
 import unicodedata
+import urllib.request
+import urllib.error
+import json
 import pandas as pd
 from rapidfuzz import process, fuzz
 
@@ -69,7 +78,11 @@ log = logging.getLogger(__name__)
 GDRIVE_FOLDER   = os.getenv("GDRIVE_FOLDER_ID", "")
 CREDS_PATH      = "/tmp/credentials.json"
 OUTPUT_DIR      = "/tmp/knf_match"
-FUZZY_THRESHOLD = int(os.getenv("FUZZY_THRESHOLD", "75"))
+FUZZY_THRESHOLD  = int(os.getenv("FUZZY_THRESHOLD", "75"))
+
+KNF_API_BASE     = "https://wybieramfundusze-api.knf.gov.pl"
+KNF_API_RETRIES  = 3
+KNF_API_BACKOFF  = 2.0   # seconds, doubled on each retry
 
 NAZWY_FILES = [
     "nazwy1000.csv",
@@ -471,6 +484,55 @@ def load_stooq_names(service, knf_tfi_keys: set[str]) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# KNF history fetch
+# ---------------------------------------------------------------------------
+
+def fetch_subfund_history(subfund_id: int) -> list[str]:
+    """
+    Returns a deduplicated list of *former* names for the given subfund,
+    i.e. name values from history entries whose validTo is not "9999-12-31"
+    (the sentinel for "still current").  Current name is excluded — it has
+    already been tried in passes 1 and 2.
+
+    Returns [] on any API error (logged as a warning) so the caller can
+    treat history as unavailable and move on.
+    """
+    url = f"{KNF_API_BASE}/v1/subfunds/{subfund_id}/history?size=50&sort=validFrom,desc"
+    delay = KNF_API_BACKOFF
+    for attempt in range(1, KNF_API_RETRIES + 1):
+        try:
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                payload = json.loads(resp.read())
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return []          # subfund unknown to history API — not an error
+            log.warning("KNF history fetch HTTP %d for subfundId=%s (attempt %d/%d)",
+                        exc.code, subfund_id, attempt, KNF_API_RETRIES)
+        except Exception as exc:
+            log.warning("KNF history fetch error for subfundId=%s: %s (attempt %d/%d)",
+                        subfund_id, exc, attempt, KNF_API_RETRIES)
+        if attempt < KNF_API_RETRIES:
+            time.sleep(delay)
+            delay *= 2
+    else:
+        return []
+
+    former: list[str] = []
+    seen: set[str] = set()
+    for entry in payload.get("content", []):
+        valid_to = str(entry.get("validTo", ""))
+        if valid_to == "9999-12-31":
+            continue                   # current record — skip
+        name = entry.get("data", {}).get("name", "")
+        if name and name not in seen:
+            former.append(name)
+            seen.add(name)
+    return former
+
+
+# ---------------------------------------------------------------------------
 # Matching
 # ---------------------------------------------------------------------------
 
@@ -481,6 +543,9 @@ def match_funds(knf_df: pd.DataFrame, stooq_df: pd.DataFrame) -> pd.DataFrame:
         Falls back to full pool if empty; flagged match_tfi_fallback=True.
       - Pass 1: exact match on normalised residual name.
       - Pass 2: fuzzy token-sort (score >= FUZZY_THRESHOLD).
+      - Pass 3: history — fetch former names from KNF API, retry exact then
+                fuzzy for each.  Tier recorded as "historical_exact" or
+                "historical_fuzzy"; knf_former_name_matched is set.
       - Else: tier = "none".
     """
     tfi_groups: dict[str, pd.DataFrame] = {}
@@ -510,6 +575,7 @@ def match_funds(knf_df: pd.DataFrame, stooq_df: pd.DataFrame) -> pd.DataFrame:
             "match_tier":                 "none",
             "match_score":                0,
             "match_tfi_fallback":         False,
+            "knf_former_name_matched":    None,
             "stooq_id":                   None,
             "stooq_title":                None,
             "stooq_name":                 None,
@@ -563,6 +629,54 @@ def match_funds(knf_df: pd.DataFrame, stooq_df: pd.DataFrame) -> pd.DataFrame:
                 "stooq_tfi_key_matched": row["stooq_tfi_key"],
                 "stooq_norm_matched":    matched_norm,
             })
+            results.append(result)
+            continue
+
+        # Pass 3: history — try former KNF names against the same pool
+        subfund_id = knf_row.get("subfundId")
+        if subfund_id is not None:
+            former_names = fetch_subfund_history(int(subfund_id))
+            for former_name in former_names:
+                former_norm = residual_name(former_name, knf_tfi_key)
+                if not former_norm:
+                    continue
+
+                # Pass 3a: exact on former name
+                exact_h = pool[pool["stooq_norm"] == former_norm]
+                if not exact_h.empty:
+                    best = exact_h.iloc[0]
+                    result.update({
+                        "match_tier":              "historical_exact",
+                        "match_score":             100,
+                        "knf_former_name_matched": former_name,
+                        "stooq_id":                best["stooq_id"],
+                        "stooq_title":             best["stooq_title"],
+                        "stooq_name":              best["stooq_name"],
+                        "stooq_tfi_key_matched":   best["stooq_tfi_key"],
+                        "stooq_norm_matched":       best["stooq_norm"],
+                    })
+                    break
+
+                # Pass 3b: fuzzy on former name
+                best_h = process.extractOne(
+                    former_norm, pool_norms,
+                    scorer=fuzz.token_sort_ratio,
+                    score_cutoff=FUZZY_THRESHOLD,
+                )
+                if best_h is not None:
+                    matched_norm, score, idx = best_h
+                    row = pool.iloc[idx]
+                    result.update({
+                        "match_tier":              "historical_fuzzy",
+                        "match_score":             round(score, 1),
+                        "knf_former_name_matched": former_name,
+                        "stooq_id":                row["stooq_id"],
+                        "stooq_title":             row["stooq_title"],
+                        "stooq_name":              row["stooq_name"],
+                        "stooq_tfi_key_matched":   row["stooq_tfi_key"],
+                        "stooq_norm_matched":      matched_norm,
+                    })
+                    break   # take best-scoring former name; don't try more
 
         results.append(result)
 
@@ -574,19 +688,26 @@ def match_funds(knf_df: pd.DataFrame, stooq_df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def analyse_matches(match_df: pd.DataFrame):
-    total    = len(match_df)
-    exact    = (match_df["match_tier"] == "exact").sum()
-    fuzzy    = (match_df["match_tier"] == "fuzzy").sum()
-    none_    = (match_df["match_tier"] == "none").sum()
-    fallback = match_df["match_tfi_fallback"].sum()
-    review   = ((match_df["match_tier"] == "fuzzy") & (match_df["match_score"] < 90)).sum()
+    total      = len(match_df)
+    exact      = (match_df["match_tier"] == "exact").sum()
+    fuzzy      = (match_df["match_tier"] == "fuzzy").sum()
+    hist_exact = (match_df["match_tier"] == "historical_exact").sum()
+    hist_fuzzy = (match_df["match_tier"] == "historical_fuzzy").sum()
+    none_      = (match_df["match_tier"] == "none").sum()
+    fallback   = match_df["match_tfi_fallback"].sum()
+    review     = (
+        (match_df["match_tier"].isin(["fuzzy", "historical_fuzzy"])) &
+        (match_df["match_score"] < 90)
+    ).sum()
 
     log.info("\n--- Match summary ---")
     log.info("  Total KNF subfunds       : %d", total)
-    log.info("  Exact matches            : %d  (%.0f%%)", exact,  100 * exact  / total)
-    log.info("  Fuzzy matches            : %d  (%.0f%%)", fuzzy,  100 * fuzzy  / total)
+    log.info("  Exact matches            : %d  (%.0f%%)", exact,      100 * exact      / total)
+    log.info("  Fuzzy matches            : %d  (%.0f%%)", fuzzy,      100 * fuzzy      / total)
+    log.info("  Historical exact         : %d  (%.0f%%)", hist_exact, 100 * hist_exact / total)
+    log.info("  Historical fuzzy         : %d  (%.0f%%)", hist_fuzzy, 100 * hist_fuzzy / total)
     log.info("    of which score < 90    : %d  (needs review)", review)
-    log.info("  No match                 : %d  (%.0f%%)", none_,  100 * none_  / total)
+    log.info("  No match                 : %d  (%.0f%%)", none_,      100 * none_      / total)
     log.info("  TFI pool fallback        : %d", fallback)
 
     log.info("\n--- Match rate by category ---")
@@ -605,7 +726,8 @@ def analyse_matches(match_df: pd.DataFrame):
                  r["category"], r["matched"], r["total"], r["pct"], r["exact"])
 
     review_df = match_df[
-        (match_df["match_tier"] == "fuzzy") & (match_df["match_score"] < 90)
+        (match_df["match_tier"].isin(["fuzzy", "historical_fuzzy"])) &
+        (match_df["match_score"] < 90)
     ].sort_values("match_score")
     if not review_df.empty:
         log.info("\n--- Fuzzy score < 90 (worst first, up to 20) ---")
@@ -653,7 +775,8 @@ if __name__ == "__main__":
     save(match_df[match_df["match_tier"] == "none"], "knf_stooq_unmatched.csv")
 
     review_mask = (
-        ((match_df["match_tier"] == "fuzzy") & (match_df["match_score"] < 90)) |
+        (match_df["match_tier"].isin(["fuzzy", "historical_fuzzy"]) &
+         (match_df["match_score"] < 90)) |
         (match_df["match_tfi_fallback"] == True)
     )
     save(match_df[review_mask].sort_values("match_score"), "knf_stooq_review.csv")
