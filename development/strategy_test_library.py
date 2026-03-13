@@ -1534,7 +1534,8 @@ def walk_forward(
         logging.info("filter_modes overridden to: %s", filter_modes_override)
 
     while True:
-
+        gate_train = None   # reset each iteration
+        gate_oos   = None   # reset each iteration
         train_start = start
         train_end   = train_start + pd.DateOffset(years=train_years)
         test_end    = train_end   + pd.DateOffset(years=test_years)

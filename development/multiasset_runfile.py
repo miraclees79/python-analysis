@@ -316,26 +316,36 @@ yield_prefilter  = build_yield_momentum_prefilter(
     rise_threshold_bp = YIELD_PREFILTER_THRESHOLD_BP,
     lookback_days     = 63,
 )
-bond_entry_gate = (
-    spread_prefilter.reindex(
-        pd.date_range(spread_prefilter.index.min(), ret_bd.index.max(), freq="B"),
-        method="ffill"
-    ).fillna(1).astype(int)
-    &
-    yield_prefilter.reindex(
-        pd.date_range(yield_prefilter.index.min(), ret_bd.index.max(), freq="B"),
-        method="ffill"
-    ).fillna(1).astype(int)
-).astype(int)
+# Replace the bond_entry_gate block entirely:
+
+# Align both filters to TBSP's actual date index
+tbsp_index = TBSP.index
+
+spread_gate = (
+    spread_prefilter
+    .reindex(tbsp_index, method="ffill")
+    .fillna(1)
+    .astype(int)
+)
+
+yield_gate = (
+    yield_prefilter
+    .reindex(tbsp_index, method="ffill")
+    .fillna(1)
+    .astype(int)
+)
+
+bond_entry_gate = (spread_gate & yield_gate).astype(int)
 bond_entry_gate.name = "bond_entry_gate"
 
 logging.info(
     "Bond entry gate built: %.1f%% of days pass  "
     "(spread: %.1f%% pass | yield: %.1f%% pass)",
     bond_entry_gate.mean() * 100,
-    spread_prefilter.mean() * 100,
-    yield_prefilter.mean() * 100,
+    spread_gate.mean() * 100,
+    yield_gate.mean() * 100,
 )
+
 
 logging.info(
     "Return series: equity %d rows | bond %d rows | mmf %d rows",
