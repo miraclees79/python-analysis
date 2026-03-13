@@ -169,6 +169,7 @@ _LEGAL = re.compile(
     r"|fundusz inwestycyjny"
     r"|sfio|fio|fiz"
     r"|subfundusz"
+    r"|parasolowy|parasol"
     r"|towarzystwo funduszy inwestycyjnych"
     r"|tfi"
     r")\b",
@@ -283,7 +284,7 @@ def residual_name(name_without_prefix: str, brand_token: str = "") -> str:
 TFI_NO_STOOQ: set[str] = {
     "pfr tfi s.a.",
     "mtfi s.a.",
-    }
+}
 
 
 # ---------------------------------------------------------------------------
