@@ -1,10 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Fri Mar 13 20:26:37 2026
-
-@author: adamg
-"""
-
 # fund_performance.py
 #
 # Computes risk-adjusted performance measures for matched KNF-stooq funds,
@@ -108,6 +101,14 @@ MIN_CATEGORY_PEERS = int(os.getenv("MIN_CATEGORY_PEERS",  "3"))
 
 CONFIRMED_FILE     = "knf_stooq_confirmed.csv"
 MATCHES_FILE       = "knf_stooq_matches.csv"
+
+# KNF API — mirroring knf_explore.py
+KNF_API_BASE    = "https://wybieramfundusze-api.knf.gov.pl"
+KNF_API_RETRIES = int(os.getenv("KNF_API_RETRIES", "3"))
+KNF_API_BACKOFF = float(os.getenv("KNF_API_BACKOFF", "2.0"))
+
+KNF_SESSION = requests.Session()
+KNF_SESSION.headers.update({"Accept": "application/json"})
 
 # Windows: name -> number of trading days (None = full history)
 WINDOWS = {
@@ -458,6 +459,183 @@ def compute_rolling_ir(
 
 
 # ---------------------------------------------------------------------------
+# Phase 1a: fetch KNF subfund detail + KID metadata for all confirmed funds
+# ---------------------------------------------------------------------------
+
+def _knf_get(path: str, params: dict = None) -> dict | None:
+    """Single KNF API GET with retry/backoff. Returns parsed JSON or None."""
+    url   = KNF_API_BASE + path
+    delay = KNF_API_BACKOFF
+    for attempt in range(1, KNF_API_RETRIES + 1):
+        try:
+            r = KNF_SESSION.get(url, params=params, timeout=30)
+            r.raise_for_status()
+            return r.json()
+        except Exception as exc:
+            log.warning("KNF GET %s (attempt %d): %s", path, attempt, exc)
+            if attempt < KNF_API_RETRIES:
+                time.sleep(delay)
+                delay *= 2
+    return None
+
+
+def fetch_knf_metadata(match_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    For every subfundId in match_df, independently fetches:
+      - subfund detail: classification, category, tfi_name, fromDate
+      - KID detail:     riskLevel, managementAndOtherFeesRate, maxEntryFeeRate,
+                        hasBenchmark, benchmark
+
+    This is independent of the matching pipeline so that funds added manually
+    to knf_stooq_confirmed.csv (from the unmatched subsample) also receive
+    full metadata — they were never in knf_stooq_matches.csv.
+
+    Returns a DataFrame indexed by subfundId with all metadata columns.
+    Missing columns are filled with None. Existing non-null values in
+    match_df are preserved; only gaps are filled.
+    """
+    subfund_ids = match_df["subfundId"].dropna().astype(int).tolist()
+    n = len(subfund_ids)
+    log.info("Fetching KNF subfund detail for %d funds...", n)
+
+    # ── Step A: subfund detail (classification, category, tfi via fund chain) ──
+    # Build companyId → tfi_name lookup once
+    company_raw = _knf_get("/v1/companies", {
+        "includeInactive": "false", "sort": "name,asc", "size": 500, "page": 0,
+    })
+    company_by_id = {}
+    if company_raw:
+        for c in company_raw.get("content", []):
+            if c.get("companyId") is not None:
+                company_by_id[c["companyId"]] = c["name"]
+    log.info("  Companies loaded: %d", len(company_by_id))
+
+    # Build fundId → companyId lookup
+    fund_raw = _knf_get("/v1/funds", {
+        "includeInactive": "false", "includeLiquidating": "false",
+        "sort": "name,asc", "size": 2000, "page": 0,
+    })
+    company_by_fund = {}
+    if fund_raw:
+        for f in fund_raw.get("content", []):
+            fid = f.get("fundId")
+            cid = f.get("companyId")
+            if fid and cid:
+                company_by_fund[fid] = cid
+    log.info("  Funds loaded: %d", len(company_by_fund))
+
+    detail_rows = {}
+    for i, sfid in enumerate(subfund_ids):
+        detail = _knf_get(f"/v1/subfunds/{sfid}")
+        if detail:
+            fund_id = detail.get("fundId")
+            cid     = company_by_fund.get(fund_id)
+            tfi     = company_by_id.get(cid, "") if cid else ""
+            detail_rows[sfid] = {
+                "subfundId":      sfid,
+                "classification": detail.get("classification"),
+                "category":       detail.get("category"),
+                "fromDate":       detail.get("fromDate"),
+                "tfi_name":       tfi,
+            }
+        if (i + 1) % 50 == 0:
+            log.info("  subfund detail: %d / %d", i + 1, n)
+        time.sleep(random.uniform(0.1, 0.2))
+
+    log.info("Subfund detail fetched: %d / %d", len(detail_rows), n)
+
+    # ── Step B: KID data (fees, risk level, benchmark) ──
+    log.info("Fetching KID data for %d funds...", n)
+    uuid_map = {}
+    for i, sfid in enumerate(subfund_ids):
+        body = _knf_get("/v1/key-information/units", {
+            "subfundId":       sfid,
+            "isPrimary":       "true",
+            "includeInactive": "false",
+            "sort":            "publicationDate,desc",
+            "size":            1,
+            "page":            0,
+        })
+        if body:
+            content = body.get("content", [])
+            if content:
+                uuid_map[sfid] = content[0]["documentUuid"]
+        if (i + 1) % 50 == 0:
+            log.info("  KID UUID: %d / %d  (%d found)", i + 1, n, len(uuid_map))
+        time.sleep(random.uniform(0.1, 0.2))
+
+    log.info("KID UUIDs found: %d / %d", len(uuid_map), n)
+
+    kid_rows = {}
+    for i, (sfid, uuid) in enumerate(uuid_map.items()):
+        kid = _knf_get(f"/v1/key-information/units/{uuid}")
+        if kid:
+            kid_rows[sfid] = {
+                "subfundId":                  sfid,
+                "riskLevel":                  kid.get("riskLevel"),
+                "maxEntryFeeRate":            kid.get("maxEntryFeeRate"),
+                "maxExitFeeRate":             kid.get("maxExitFeeRate"),
+                "managementAndOtherFeesRate": kid.get("managementAndOtherFeesRate"),
+                "hasBenchmark":               kid.get("hasBenchmark"),
+                "benchmark":                  kid.get("benchmark"),
+            }
+        if (i + 1) % 50 == 0:
+            log.info("  KID detail: %d / %d", i + 1, len(uuid_map))
+        time.sleep(random.uniform(0.1, 0.2))
+
+    log.info("KID detail fetched: %d / %d", len(kid_rows), n)
+
+    # ── Merge into a single metadata DataFrame ──
+    meta_df = pd.DataFrame(list(detail_rows.values())) if detail_rows else pd.DataFrame()
+    kid_df  = pd.DataFrame(list(kid_rows.values()))    if kid_rows  else pd.DataFrame()
+
+    if not meta_df.empty and not kid_df.empty:
+        meta_df = meta_df.merge(kid_df, on="subfundId", how="left")
+    elif not kid_df.empty:
+        meta_df = kid_df
+
+    if meta_df.empty:
+        log.warning("fetch_knf_metadata returned no data — metadata gaps will remain.")
+        return match_df
+
+    # ── Fill gaps in match_df (preserve existing non-null values) ──
+    META_COLS = [
+        "classification", "category", "fromDate", "tfi_name",
+        "riskLevel", "maxEntryFeeRate", "maxExitFeeRate",
+        "managementAndOtherFeesRate", "hasBenchmark", "benchmark",
+    ]
+    meta_df["subfundId"] = meta_df["subfundId"].astype(str)
+    match_df = match_df.copy()
+    match_df["subfundId"] = match_df["subfundId"].astype(str)
+
+    # Add missing columns to match_df first
+    for col in META_COLS:
+        if col not in match_df.columns:
+            match_df[col] = None
+
+    merged = match_df.merge(
+        meta_df[["subfundId"] + [c for c in META_COLS if c in meta_df.columns]],
+        on="subfundId", how="left", suffixes=("", "_knf"),
+    )
+
+    # For each metadata column: use _knf value only where original is null
+    for col in META_COLS:
+        knf_col = col + "_knf"
+        if knf_col in merged.columns:
+            merged[col] = merged[col].where(
+                merged[col].notna() & (merged[col] != ""),
+                merged[knf_col],
+            )
+            merged.drop(columns=[knf_col], inplace=True)
+
+    n_filled = len(merged[merged["category"].notna()]) - len(match_df[match_df.get("category", pd.Series()).notna()]) if "category" in match_df.columns else 0
+    log.info("Metadata refresh complete. category non-null: %d / %d",
+             merged["category"].notna().sum(), len(merged))
+
+    return merged
+
+
+# ---------------------------------------------------------------------------
 # Phase 1: fetch all NAV series
 # ---------------------------------------------------------------------------
 
@@ -649,6 +827,14 @@ if __name__ == "__main__":
     service  = get_drive_service()
     match_df = load_match_list(service)
     log.info("Match list loaded: %d funds, %d categories",
+             len(match_df),
+             match_df["category"].nunique() if "category" in match_df.columns else 0)
+
+    # Phase 1a — refresh KNF metadata for all funds (fills gaps for manually
+    # added funds that were never in knf_stooq_matches.csv)
+    log.info("=== Phase 1a: Fetching KNF metadata ===")
+    match_df = fetch_knf_metadata(match_df)
+    log.info("Match list after metadata refresh: %d funds, %d categories",
              len(match_df),
              match_df["category"].nunique() if "category" in match_df.columns else 0)
 
