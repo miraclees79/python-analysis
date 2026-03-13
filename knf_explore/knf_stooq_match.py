@@ -228,8 +228,22 @@ def strip_stooq_prefix(title: str, stooq_id) -> str:
 # ---------------------------------------------------------------------------
 
 TFI_BRAND_OVERRIDES: dict[str, str] = {
+    # Slash/abbreviation in name — general stripping cannot derive correct token
     "vig/c-quadrat tfi s.a.": "vig cq",
+    # TFI name starts with "TFI" — stripping leaves "allianz polska", stooq uses "allianz"
     "tfi allianz polska s.a.": "allianz",
+    # stooq uses abbreviated brand name
+    "agiofunds tfi s.a.": "agio",
+    # stooq drops "polska" from the brand
+    "amundi polska tfi s.a.": "amundi",
+    # stooq drops "investments" from the brand
+    "generali investments tfi s.a.": "generali",
+    # stooq uses singular "investor" not plural "investors"
+    "investors tfi s.a.": "investor",
+    # Add further overrides here when stooq uses a different brand name than KNF.
+    # Key:   to_ascii(tfi_name.strip().lower())
+    # Value: brand token as it appears in stooq titles (lowercased, ASCII)
+    # Check stooq titles for the TFI in question before adding — do not guess.
 }
 
 
@@ -284,7 +298,18 @@ def residual_name(name_without_prefix: str, brand_token: str = "") -> str:
 TFI_NO_STOOQ: set[str] = {
     "pfr tfi s.a.",
     "mtfi s.a.",
+    "velofund tfi s.a.",
 }
+
+# ---------------------------------------------------------------------------
+# KNF categories excluded from matching — funds in these categories are not
+# on stooq regardless of TFI (e.g. PPK workplace pension products).
+# Values match the "category" column in knf_summary.csv (substring match).
+# ---------------------------------------------------------------------------
+
+CATEGORY_NO_STOOQ_PREFIXES: tuple[str, ...] = (
+    "PPK",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +338,18 @@ def load_knf_summary(service) -> pd.DataFrame:
                  n_excluded,
                  ", ".join(df.loc[excluded_mask, "tfi_name"].unique()))
         df = df[~excluded_mask].copy()
+
+    # Exclude categories not on stooq (PPK workplace pension products etc.)
+    if "category" in df.columns:
+        cat_mask = df["category"].apply(
+            lambda c: isinstance(c, str) and c.startswith(CATEGORY_NO_STOOQ_PREFIXES)
+        )
+        n_cat = cat_mask.sum()
+        if n_cat:
+            log.info("Excluding %d subfunds in categories not on stooq: %s",
+                     n_cat,
+                     ", ".join(sorted(df.loc[cat_mask, "category"].unique())))
+            df = df[~cat_mask].copy()
 
     # Derive brand token from the official KNF company name
     df["knf_tfi_key"] = df["tfi_name"].apply(tfi_brand_token)
