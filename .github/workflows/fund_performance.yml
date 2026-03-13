@@ -1,13 +1,18 @@
 # .github/workflows/fund_performance.yml
 #
-# Manually triggered workflow that downloads NAV series from stooq for all
-# matched KNF funds, computes risk-adjusted performance measures within each
-# category, and uploads the results to Google Drive.
+# Scheduled and manually triggered workflow that:
+#   - Fetches KNF metadata (subfund detail + KID) for all confirmed funds
+#   - Downloads NAV series from stooq
+#   - Computes absolute and category-relative performance metrics
+#   - Uploads fund_performance_YYYYMMDD.csv and fund_ranking_YYYYMMDD.csv to Drive
+#
+# Schedule: Saturdays at 08:00 Warsaw (06:00 UTC year-round — Warsaw is UTC+1
+# in winter and UTC+2 in summer; 06:00 UTC is 07:00 or 08:00 Warsaw, safely
+# after Friday NAV data is available on stooq).
 #
 # Required secrets:
 #   GOOGLE_CREDENTIALS   — service account JSON
-#   GDRIVE_FOLDER_ID     — Drive folder containing input files and
-#                          where output files will be written
+#   GDRIVE_FOLDER_ID     — Drive folder containing input and output files
 #
 # Input files expected in the Drive folder (in priority order):
 #   knf_stooq_confirmed.csv  — manually reviewed match list (authoritative)
@@ -15,11 +20,14 @@
 #
 # Output files written to the same Drive folder:
 #   fund_performance_YYYYMMDD.csv  — full metrics table (all funds, all windows)
-#   fund_ranking_YYYYMMDD.csv      — within-category Sharpe rankings
+#   fund_ranking_YYYYMMDD.csv      — within-category IR rankings
 
 name: Fund Performance Comparison
 
 on:
+  schedule:
+    # Saturdays 06:00 UTC = 07:00 Warsaw winter / 08:00 Warsaw summer
+    - cron: "0 6 * * 6"
   workflow_dispatch:
     inputs:
       min_history_days:
@@ -34,6 +42,10 @@ on:
         description: "Max seconds between stooq requests (default 1.5)"
         required: false
         default: "1.5"
+      knf_api_retries:
+        description: "KNF API retries per request (default 3)"
+        required: false
+        default: "3"
 
 jobs:
   performance:
@@ -67,13 +79,18 @@ jobs:
         env:
           GDRIVE_FOLDER_ID:  ${{ secrets.GDRIVE_FOLDER_ID }}
           CSV_BASE_URL:      "https://stooq.pl/q/d/l/?s={}.n&i=d"
-          MIN_HISTORY_DAYS:  ${{ github.event.inputs.min_history_days }}
-          STOOQ_DELAY_MIN:   ${{ github.event.inputs.stooq_delay_min }}
-          STOOQ_DELAY_MAX:   ${{ github.event.inputs.stooq_delay_max }}
+          # On scheduled runs github.event.inputs is empty — the script's own
+          # defaults apply. On manual runs the dispatch inputs override them.
+          MIN_HISTORY_DAYS:  ${{ github.event.inputs.min_history_days || '252' }}
+          STOOQ_DELAY_MIN:   ${{ github.event.inputs.stooq_delay_min  || '0.5' }}
+          STOOQ_DELAY_MAX:   ${{ github.event.inputs.stooq_delay_max  || '1.5' }}
           STOOQ_MAX_RETRIES: "3"
           STOOQ_BACKOFF:     "2.0"
+          KNF_API_RETRIES:   ${{ github.event.inputs.knf_api_retries  || '3' }}
+          KNF_API_BACKOFF:   "2.0"
+          MIN_CATEGORY_PEERS: "3"
         run: |
-          python knf_explore/fund_performance_new.py
+          python knf_explore/fund_performance.py
 
       - name: Upload results as workflow artefact
         if: always()
