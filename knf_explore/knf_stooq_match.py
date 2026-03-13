@@ -196,13 +196,9 @@ def strip_stooq_prefix(title: str, stooq_id) -> str:
     # Try exact prefix constructed from the known numeric ID first
     if stooq_id is not None:
         try:
+            # Match "XXXX.N - " or "XXXX.n - " — titles use uppercase .N
             exact_prefix = f"{int(stooq_id)}.n - "
-            if title.startswith(exact_prefix):
-                return title[len(exact_prefix):]
-            # Also try case-insensitive variant (titles are usually consistent,
-            # but be defensive)
-            lp = exact_prefix.lower()
-            if title.lower().startswith(lp):
+            if title.lower().startswith(exact_prefix):
                 return title[len(exact_prefix):]
         except (ValueError, TypeError):
             pass
@@ -314,7 +310,7 @@ def load_stooq_names(service, knf_tfi_keys: set[str]) -> pd.DataFrame:
     # (means the title's numeric prefix didn't match the stooq_id column)
     def prefix_matched(row) -> bool:
         try:
-            return row["stooq_title"].startswith(f"{int(row['stooq_id'])}.n")
+            return row["stooq_title"].lower().startswith(f"{int(row['stooq_id'])}.n")
         except (ValueError, TypeError):
             return False
 
