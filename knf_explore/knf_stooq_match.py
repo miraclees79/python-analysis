@@ -300,7 +300,7 @@ def residual_name(name_without_prefix: str, brand_token: str = "") -> str:
 TFI_NO_STOOQ: set[str] = {
     "pfr tfi s.a.",
     "mtfi s.a.",
-    "velofund tfi s.a.",
+    "velofunds tfi s.a.",
 }
 
 # ---------------------------------------------------------------------------
