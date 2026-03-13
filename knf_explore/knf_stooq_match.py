@@ -233,7 +233,9 @@ TFI_BRAND_OVERRIDES: dict[str, str] = {
     # TFI name starts with "TFI" — stripping leaves "allianz polska", stooq uses "allianz"
     "tfi allianz polska s.a.": "allianz",
     # stooq uses abbreviated brand name
+    # KNF may return "AgioFunds" (one word) or "AGIO Funds" (two words)
     "agiofunds tfi s.a.": "agio",
+    "agio funds tfi s.a.": "agio",
     # stooq drops "polska" from the brand
     "amundi polska tfi s.a.": "amundi",
     # stooq drops "investments" from the brand
