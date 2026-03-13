@@ -228,6 +228,7 @@ def strip_stooq_prefix(title: str, stooq_id) -> str:
 
 TFI_BRAND_OVERRIDES: dict[str, str] = {
     "vig/c-quadrat tfi s.a.": "vig cq",
+    "tfi allianz polska s.a.": "allianz",
 }
 
 
