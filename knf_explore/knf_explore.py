@@ -127,33 +127,42 @@ def fetch_subfunds():
 
     log.info("List endpoint: %d subfunds. Fetching detail records...", len(raw))
 
-    # 1b — fetch detail for each subfundId
-    _fund_tfi_cache: dict = {}   # fundId -> tfi_name
+    # 1b — build companyId -> name lookup from /v1/companies (one paged fetch)
+    log.info("Building company lookup from /v1/companies ...")
+    company_raw = fetch_all_ids("/v1/companies", {
+        "includeInactive": "false",
+        "sort":            "name,asc",
+    })
+    company_by_id: dict[int, str] = {
+        c["companyId"]: c["name"]
+        for c in company_raw
+        if c.get("companyId") is not None
+    }
+    log.info("  Companies loaded: %d", len(company_by_id))
 
-    def fetch_tfi_name(fund_id) -> str | None:
-        """Return the management company (TFI) name for a given fundId.
-        Results are cached so each fund is fetched at most once."""
-        if fund_id is None:
-            return None
-        if fund_id in _fund_tfi_cache:
-            return _fund_tfi_cache[fund_id]
-        body = get_json(f"{BASE_URL}/v1/funds/{fund_id}")
-        name = None
-        if body:
-            # The fund detail holds the TFI under managementCompany.name
-            # (field may vary; fall back to the fund's own name if absent)
-            mc = body.get("managementCompany") or {}
-            name = mc.get("name") or body.get("managementCompany") or body.get("name")
-        _fund_tfi_cache[fund_id] = name
-        time.sleep(random.uniform(0.1, 0.2))
-        return name
+    # 1c — build fundId -> tfi_name lookup from /v1/funds list
+    #      The funds list already returns companyId — no detail calls needed.
+    log.info("Building fund -> company lookup from /v1/funds ...")
+    fund_raw = fetch_all_ids("/v1/funds", {
+        "includeInactive":    "false",
+        "includeLiquidating": "false",
+        "sort":               "name,asc",
+    })
+    company_by_fund: dict[int, str] = {}
+    for f in fund_raw:
+        fid = f.get("fundId")
+        cid = f.get("companyId")
+        if fid is not None and cid is not None:
+            company_by_fund[fid] = company_by_id.get(cid, "")
+    log.info("  Fund -> company mappings: %d", len(company_by_fund))
 
+    # 1d — fetch subfund detail and attach tfi_name via the lookup chain
     rows = []
     for i, s in enumerate(raw):
         sfid    = s["subfundId"]
         detail  = get_json(f"{BASE_URL}/v1/subfunds/{sfid}") or s
         fund_id = detail.get("fundId")
-        tfi     = fetch_tfi_name(fund_id)
+        tfi     = company_by_fund.get(fund_id, "") if fund_id else ""
 
         rows.append({
             "subfundId":      detail.get("subfundId"),
@@ -599,16 +608,22 @@ def write_reports(subfund_df, known_df, hist_df, kid_df):
     save(kid_df,     "knf_kid_data.csv",           "KID data")
 
     if not subfund_df.empty and not kid_df.empty:
+        # kid_df already carries tfi_name, name, classification, category from
+        # the merge done inside fetch_kid_data.  "type" and "fromDate" live only
+        # on subfund_df, so join those if not already present.
+        extra_cols = [c for c in ["type", "fromDate"]
+                      if c in subfund_df.columns and c not in kid_df.columns]
+        summary = kid_df.copy()
+        if extra_cols:
+            summary = summary.merge(
+                subfund_df[["subfundId"] + extra_cols],
+                on="subfundId", how="left",
+            )
         summary_cols = [
             "subfundId", "name", "tfi_name", "classification", "category", "type",
             "fromDate", "riskLevel", "managementAndOtherFeesRate",
             "maxEntryFeeRate", "hasBenchmark", "benchmark",
         ]
-        # kid_df has name/classification/category but not tfi_name — join it in
-        summary = kid_df.merge(
-            subfund_df[["subfundId", "tfi_name"]],
-            on="subfundId", how="left",
-        )
         summary = summary[[c for c in summary_cols if c in summary.columns]].copy()
         save(summary, "knf_summary.csv", "Summary (subfund+KID)")
 
