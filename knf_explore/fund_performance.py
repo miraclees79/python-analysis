@@ -10,8 +10,10 @@
 #   2. knf_stooq_matches.csv     — raw matcher output (fallback until review complete)
 #      Only tier == "exact" rows used from this file to keep quality high.
 #
-# For each fund the script fetches daily NAV from stooq's CSV endpoint:
-#   https://stooq.pl/q/d/l/?s={stooq_id}.n&i=d
+# For each fund the script fetches daily NAV from stooq's CSV endpoint via
+# download_csv(), mirroring the pattern used in Download-oceny_v3-FI.py:
+#   CSV_BASE_URL env var  (default: https://stooq.pl/q/d/l/?s={}.n&i=d)
+#   Rotating User-Agent headers, configurable delay, retry with backoff.
 #
 # Performance measures computed over 1Y / 3Y / 5Y windows and full history:
 #   ann_return      — CAGR
@@ -31,9 +33,13 @@
 #   GDRIVE_FOLDER_ID     — Drive folder containing input and output files
 #
 # Optional env vars:
+#   CSV_BASE_URL         — stooq CSV template, {} replaced by stooq ID
+#                          (default: https://stooq.pl/q/d/l/?s={}.n&i=d)
 #   STOOQ_DELAY_MIN      — min seconds between stooq requests (default 0.5)
 #   STOOQ_DELAY_MAX      — max seconds between stooq requests (default 1.5)
-#   MIN_HISTORY_DAYS     — minimum days of NAV required to include a fund (default 252)
+#   STOOQ_MAX_RETRIES    — retries per fund on transient errors (default 3)
+#   STOOQ_BACKOFF        — initial backoff seconds, doubles per retry (default 2.0)
+#   MIN_HISTORY_DAYS     — minimum days of data required to include a fund (default 252)
 #
 # Dependencies:
 #   pip install pandas numpy requests google-auth google-api-python-client
@@ -67,10 +73,15 @@ GDRIVE_FOLDER    = os.getenv("GDRIVE_FOLDER_ID", "")
 CREDS_PATH       = "/tmp/credentials.json"
 OUTPUT_DIR       = "/tmp/fund_perf"
 
-STOOQ_NAV_URL    = "https://stooq.pl/q/d/l/?s={stooq_id}.n&i=d"
-STOOQ_DELAY_MIN  = float(os.getenv("STOOQ_DELAY_MIN", "0.5"))
-STOOQ_DELAY_MAX  = float(os.getenv("STOOQ_DELAY_MAX", "1.5"))
-MIN_HISTORY_DAYS = int(os.getenv("MIN_HISTORY_DAYS", "252"))
+# Mirrors the CSV_BASE_URL pattern from Download-oceny_v3-FI.py.
+# The placeholder {} is replaced with the stooq numeric ID.
+CSV_BASE_URL      = os.getenv("CSV_BASE_URL", "https://stooq.pl/q/d/l/?s={}.n&i=d")
+
+STOOQ_DELAY_MIN   = float(os.getenv("STOOQ_DELAY_MIN", "0.5"))
+STOOQ_DELAY_MAX   = float(os.getenv("STOOQ_DELAY_MAX", "1.5"))
+STOOQ_MAX_RETRIES = int(os.getenv("STOOQ_MAX_RETRIES", "3"))
+STOOQ_BACKOFF     = float(os.getenv("STOOQ_BACKOFF", "2.0"))   # seconds, doubled per retry
+MIN_HISTORY_DAYS  = int(os.getenv("MIN_HISTORY_DAYS", "252"))
 
 CONFIRMED_FILE   = "knf_stooq_confirmed.csv"
 MATCHES_FILE     = "knf_stooq_matches.csv"
@@ -217,37 +228,72 @@ def load_match_list(service) -> pd.DataFrame:
 # Stooq NAV fetch
 # ---------------------------------------------------------------------------
 
-def fetch_nav(stooq_id) -> pd.Series | None:
+def download_csv(stooq_id) -> pd.Series | None:
     """
-    Downloads daily NAV series for a stooq fund ID.
-    Returns a pd.Series indexed by date (datetime), values = Close price.
-    Returns None on failure (404, empty, parse error).
+    Downloads daily NAV CSV for a stooq numeric fund ID.
+
+    Mirrors Download-oceny_v3-FI.py: rotating User-Agent, retry with
+    exponential backoff, empty-response guard, CSV parse via pandas.
+
+    Returns a pd.Series indexed by date (datetime64), values = Close price,
+    sorted ascending. Returns None on any unrecoverable failure.
     """
-    url = STOOQ_NAV_URL.format(stooq_id=int(stooq_id))
-    headers = {"User-Agent": random.choice(USER_AGENTS)}
-    try:
-        resp = requests.get(url, headers=headers, timeout=15)
-        if resp.status_code == 404 or not resp.content.strip():
-            log.warning("  stooq %s: empty/404", stooq_id)
-            return None
-        resp.raise_for_status()
-        df = pd.read_csv(io.StringIO(resp.text))
-        if df.empty or "Close" not in df.columns:
-            log.warning("  stooq %s: no Close column or empty CSV", stooq_id)
-            return None
-        df["Date"] = pd.to_datetime(df["Date"])
-        df = df.sort_values("Date").set_index("Date")
-        series = df["Close"].dropna()
-        if len(series) < MIN_HISTORY_DAYS:
-            log.warning(
-                "  stooq %s: only %d days of history (min %d) — skipping",
-                stooq_id, len(series), MIN_HISTORY_DAYS,
+    url = CSV_BASE_URL.format(int(stooq_id))
+    delay = STOOQ_BACKOFF
+
+    for attempt in range(1, STOOQ_MAX_RETRIES + 1):
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        try:
+            log.debug("  GET %s  (attempt %d)", url, attempt)
+            resp = requests.get(url, headers=headers, timeout=15)
+
+            if resp.status_code == 404:
+                log.warning("  stooq %s: 404 — fund not found on stooq", stooq_id)
+                return None
+
+            resp.raise_for_status()
+
+            if not resp.content.strip():
+                log.warning("  stooq %s: empty response (attempt %d)", stooq_id, attempt)
+                if attempt < STOOQ_MAX_RETRIES:
+                    time.sleep(delay)
+                    delay *= 2
+                    continue
+                return None
+
+            df = pd.read_csv(io.StringIO(resp.text))
+
+            if df.empty or "Zamkniecie" not in df.columns:
+                log.warning("  stooq %s: no Zamkniecie column or empty CSV", stooq_id)
+                return None
+
+            df["Data"] = pd.to_datetime(df["Data"])
+            series = (
+                df.sort_values("Data")
+                  .set_index("Data")["Zamkniecie"]
+                  .dropna()
             )
-            return None
-        return series
-    except Exception as exc:
-        log.warning("  stooq %s: fetch error %s", stooq_id, exc)
-        return None
+
+            if len(series) < MIN_HISTORY_DAYS:
+                log.warning(
+                    "  stooq %s: only %d days of history (min %d required) — skipping",
+                    stooq_id, len(series), MIN_HISTORY_DAYS,
+                )
+                return None
+
+            return series
+
+        except requests.HTTPError as exc:
+            log.warning("  stooq %s: HTTP error %s (attempt %d)", stooq_id, exc, attempt)
+        except Exception as exc:
+            log.warning("  stooq %s: error %s (attempt %d)", stooq_id, exc, attempt)
+
+        if attempt < STOOQ_MAX_RETRIES:
+            time.sleep(delay)
+            delay *= 2
+
+    log.warning("  stooq %s: all %d attempts failed", stooq_id, STOOQ_MAX_RETRIES)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +385,7 @@ def build_performance_table(match_df: pd.DataFrame) -> pd.DataFrame:
             i + 1, n_total, str(stooq_id), str(knf_name)[:60],
         )
 
-        prices = fetch_nav(stooq_id)
+        prices = download_csv(stooq_id)
         if prices is None:
             # Record as unfetched so it's visible in output
             for window_name in WINDOWS:
@@ -368,7 +414,7 @@ def build_performance_table(match_df: pd.DataFrame) -> pd.DataFrame:
             time.sleep(random.uniform(STOOQ_DELAY_MIN, STOOQ_DELAY_MAX))
             continue
 
-        log.info("  %d days of NAV (%.1f years)", len(prices),
+        log.info("  %d days of data (%.1f years)", len(prices),
                  len(prices) / TRADING_DAYS_PER_YEAR)
 
         for window_name, window_days in WINDOWS.items():
@@ -428,6 +474,8 @@ if __name__ == "__main__":
 
     log.info("Fund performance comparison — start  (%s)", today)
     log.info("GDRIVE_FOLDER    : %s", GDRIVE_FOLDER)
+    log.info("CSV_BASE_URL     : %s", CSV_BASE_URL)
+    log.info("STOOQ_MAX_RETRIES: %d  BACKOFF: %.1fs", STOOQ_MAX_RETRIES, STOOQ_BACKOFF)
     log.info("MIN_HISTORY_DAYS : %d", MIN_HISTORY_DAYS)
     log.info("Windows          : %s", list(WINDOWS.keys()))
 

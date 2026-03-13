@@ -1,0 +1,84 @@
+# .github/workflows/fund_performance.yml
+#
+# Manually triggered workflow that downloads NAV series from stooq for all
+# matched KNF funds, computes risk-adjusted performance measures within each
+# category, and uploads the results to Google Drive.
+#
+# Required secrets:
+#   GOOGLE_CREDENTIALS   — service account JSON
+#   GDRIVE_FOLDER_ID     — Drive folder containing input files and
+#                          where output files will be written
+#
+# Input files expected in the Drive folder (in priority order):
+#   knf_stooq_confirmed.csv  — manually reviewed match list (authoritative)
+#   knf_stooq_matches.csv    — raw matcher output (fallback; exact/partial only)
+#
+# Output files written to the same Drive folder:
+#   fund_performance_YYYYMMDD.csv  — full metrics table (all funds, all windows)
+#   fund_ranking_YYYYMMDD.csv      — within-category Sharpe rankings
+
+name: Fund Performance Comparison
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_history_days:
+        description: "Minimum NAV history required to include a fund (default 252)"
+        required: false
+        default: "252"
+      stooq_delay_min:
+        description: "Min seconds between stooq requests (default 0.5)"
+        required: false
+        default: "0.5"
+      stooq_delay_max:
+        description: "Max seconds between stooq requests (default 1.5)"
+        required: false
+        default: "1.5"
+
+jobs:
+  performance:
+    name: Compute fund performance within categories
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pandas numpy requests google-auth google-api-python-client
+
+      - name: Write Google credentials
+        run: echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
+
+      - name: Validate credentials
+        run: |
+          python -c "import json; json.load(open('/tmp/credentials.json'))" \
+            && echo "Credentials JSON is valid."
+
+      - name: Run performance script
+        env:
+          GDRIVE_FOLDER_ID:  ${{ secrets.GDRIVE_FOLDER_ID }}
+          CSV_BASE_URL:      "https://stooq.pl/q/d/l/?s={}.n&i=d"
+          MIN_HISTORY_DAYS:  ${{ github.event.inputs.min_history_days }}
+          STOOQ_DELAY_MIN:   ${{ github.event.inputs.stooq_delay_min }}
+          STOOQ_DELAY_MAX:   ${{ github.event.inputs.stooq_delay_max }}
+          STOOQ_MAX_RETRIES: "3"
+          STOOQ_BACKOFF:     "2.0"
+        run: |
+          python knf_explore/fund_performance.py
+
+      - name: Upload results as workflow artefact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fund-performance-results
+          path: /tmp/fund_perf/*.csv
+          retention-days: 30
