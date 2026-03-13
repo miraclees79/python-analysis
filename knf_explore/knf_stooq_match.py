@@ -180,40 +180,72 @@ def to_ascii(s: str) -> str:
     return unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode("ascii")
 
 
+_STOOQ_SUFFIX = re.compile(r"\s*-\s*stooq\s*$", re.IGNORECASE)
+
+
 def strip_stooq_prefix(title: str, stooq_id) -> str:
     """
-    Remove the leading "XXXX.n - " prefix from a stooq page title.
+    Remove the leading "XXXX.N - " prefix and the trailing " - Stooq" suffix
+    from a stooq page title, leaving only the bare fund name.
 
-    The prefix is constructed from the known stooq_id when available,
-    giving an exact match.  Falls back to the regex pattern if the ID
-    is missing or doesn't match (logs nothing — caller handles that).
+    Example:
+      "2714.N - Goldman Sachs SFIO Spolek Dywidendowych - Stooq"
+      -> "Goldman Sachs SFIO Spolek Dywidendowych"
 
-    Returns the fund name portion only, e.g.:
-      "2710.n - Goldman Sachs Parasol FIO Akcji"  ->  "Goldman Sachs Parasol FIO Akcji"
+    The leading prefix is matched case-insensitively using the known stooq_id.
+    Falls back to the regex pattern if the id is missing or mismatched.
     """
     if not isinstance(title, str):
         return ""
-    # Try exact prefix constructed from the known numeric ID first
+    # Strip leading "XXXX.N - "
+    name = ""
     if stooq_id is not None:
         try:
-            # Match "XXXX.N - " or "XXXX.n - " — titles use uppercase .N
             exact_prefix = f"{int(stooq_id)}.n - "
             if title.lower().startswith(exact_prefix):
-                return title[len(exact_prefix):]
+                name = title[len(exact_prefix):]
         except (ValueError, TypeError):
             pass
-    # Fallback: strip any leading "\d+.n - " pattern
-    return _STOOQ_PREFIX.sub("", title)
+    if not name:
+        name = _STOOQ_PREFIX.sub("", title)
+    # Strip trailing " - Stooq"
+    name = _STOOQ_SUFFIX.sub("", name)
+    return name.strip()
+
+
+# ---------------------------------------------------------------------------
+# Manual overrides for TFI brand tokens.
+#
+# Used when the general stripping logic cannot derive the correct stooq brand
+# token from the KNF company name — typically abbreviations or name changes.
+#
+# Key:   result of to_ascii(company_name.lower())  (pre-stripping, punctuation intact)
+# Value: the exact brand token as it appears in stooq titles (lowercased, ASCII)
+#
+# To add a new override: run the script once, check the "TFI tokens in KNF but
+# absent from stooq" log line, then add the mapping here.
+# ---------------------------------------------------------------------------
+
+TFI_BRAND_OVERRIDES: dict[str, str] = {
+    "vig/c-quadrat tfi s.a.": "vig cq",
+}
 
 
 def tfi_brand_token(company_name: str) -> str:
     """
     Derive a short brand token from a KNF company name.
-    Steps: lowercase → fold diacritics → strip structural words → collapse whitespace.
+
+    Checks TFI_BRAND_OVERRIDES first (for cases where the general stripping
+    logic cannot produce the correct stooq brand token, e.g. abbreviations).
+    Otherwise: lowercase → fold diacritics → strip structural words → collapse whitespace.
     """
     if not isinstance(company_name, str) or not company_name.strip():
         return ""
-    s = to_ascii(company_name.lower())
+    # Check override table using the raw lowercased ASCII name as key
+    raw_key = to_ascii(company_name.strip().lower())
+    if raw_key in TFI_BRAND_OVERRIDES:
+        return TFI_BRAND_OVERRIDES[raw_key]
+    s = raw_key
     s = _TFI_STRUCTURAL.sub(" ", s)
     s = re.sub(r"[^a-z0-9 ]", " ", s)
     return re.sub(r"\s+", " ", s).strip()
@@ -243,6 +275,17 @@ def residual_name(name_without_prefix: str, brand_token: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
+# TFIs whose funds are on KNF but not on stooq — excluded from matching.
+# Key: to_ascii(tfi_name.strip().lower())
+# ---------------------------------------------------------------------------
+
+TFI_NO_STOOQ: set[str] = {
+    "pfr tfi s.a.",
+    "mtfi s.a.",
+}
+
+
+# ---------------------------------------------------------------------------
 # Load and prepare data
 # ---------------------------------------------------------------------------
 
@@ -257,6 +300,18 @@ def load_knf_summary(service) -> pd.DataFrame:
             "Re-run knf_explore.py to regenerate it with TFI data."
         )
 
+    # Exclude TFIs whose data is not on stooq
+    tfi_key_raw = df["tfi_name"].apply(
+        lambda n: to_ascii(n.strip().lower()) if isinstance(n, str) else ""
+    )
+    excluded_mask = tfi_key_raw.isin(TFI_NO_STOOQ)
+    n_excluded = excluded_mask.sum()
+    if n_excluded:
+        log.info("Excluding %d subfunds from TFIs not on stooq: %s",
+                 n_excluded,
+                 ", ".join(df.loc[excluded_mask, "tfi_name"].unique()))
+        df = df[~excluded_mask].copy()
+
     # Derive brand token from the official KNF company name
     df["knf_tfi_key"] = df["tfi_name"].apply(tfi_brand_token)
     # Residual product name (brand + legal stripped)
@@ -264,7 +319,7 @@ def load_knf_summary(service) -> pd.DataFrame:
         lambda r: residual_name(str(r["name"]), r["knf_tfi_key"]), axis=1
     )
 
-    log.info("KNF summary loaded: %d records", len(df))
+    log.info("KNF summary loaded: %d records (after TFI exclusions)", len(df))
     log.info("  Distinct TFI brand tokens: %d", df["knf_tfi_key"].nunique())
     log.info("  Sample TFI tokens: %s",
              ", ".join(sorted(df["knf_tfi_key"].dropna().unique())[:15]))
