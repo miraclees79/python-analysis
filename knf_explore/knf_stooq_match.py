@@ -318,7 +318,7 @@ TFI_IN_SCOPE: set[str] = {
     "goldman sachs tfi s.a.",
     "investors tfi s.a.",
     "pko tfi s.a.",
-    "pzu tfi s.a.",       # covers both PZU and inPZU product lines
+    "tfi pzu s.a.",       # covers both PZU and inPZU product lines
     "quercus tfi s.a.",
     "skarbiec tfi s.a.",
     "uniqa tfi s.a.",
