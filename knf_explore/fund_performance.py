@@ -133,11 +133,7 @@ def download_csv_from_drive(service, folder_id: str, filename: str) -> pd.DataFr
     while not done:
         _, done = downloader.next_chunk()
     buf.seek(0)
-    try:
-        return pd.read_csv(buf, sep=";", encoding="utf-8")
-    except Exception:
-        buf.seek(0)
-        return pd.read_csv(buf, encoding="utf-8")
+    return pd.read_csv(buf, sep=None, engine="python", encoding="utf-8")
 
 
 def upload_csv_to_drive(service, folder_id: str, local_path: str):
