@@ -73,7 +73,7 @@ jobs:
           STOOQ_MAX_RETRIES: "3"
           STOOQ_BACKOFF:     "2.0"
         run: |
-          python knf_explore/fund_performance.py
+          python knf_explore/fund_performance_new.py
 
       - name: Upload results as workflow artefact
         if: always()
