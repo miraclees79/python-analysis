@@ -1350,7 +1350,8 @@ def walk_forward(
     sl_grid     = [0.05, 0.08, 0.10, 0.15],
     mom_lookback_grid = [126, 252],    
     objective = "calmar",
-    n_jobs=1
+    n_jobs=1,
+    entry_gate_series=None,   # NEW — pd.Series of 0/1, applied as entry gate
     
 ):
 
@@ -2361,3 +2362,37 @@ def run_regime_decomposition(close, high, low,
         print(f"\nTransition matrix:\n{trans.to_string()}")
 
     return results
+
+
+    def _backtest_with_gate(prices, params, gate, objective):
+    """
+    Run single-combo backtest on prices with optional entry gate.
+    gate: pd.Series (0/1) or None. If provided, new entries are blocked
+    on days when gate==0. Existing positions are not forced out (Option B).
+    """
+    # Generate raw signal from strategy engine (existing call)
+    sig_raw = generate_signal(prices, **params)   # existing function
+
+    if gate is not None:
+        sig = _apply_entry_gate(sig_raw, gate)
+    else:
+        sig = sig_raw
+
+    return compute_objective(prices, sig, objective)
+
+
+def _apply_entry_gate(sig_raw, gate):
+    """Option B entry gate: block new entries when gate==0, hold existing."""
+    sig = sig_raw.copy()
+    in_position = False
+    for date in sig.index:
+        if sig_raw[date] == 0:
+            in_position = False
+            sig[date] = 0
+        elif (not in_position) and gate[date] == 0:
+            # New entry attempt blocked
+            sig[date] = 0
+        else:
+            in_position = True
+            sig[date] = sig_raw[date]
+    return sig
