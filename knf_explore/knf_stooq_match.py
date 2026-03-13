@@ -249,6 +249,7 @@ TFI_BRAND_OVERRIDES: dict[str, str] = {
 }
 
 
+
 def tfi_brand_token(company_name: str) -> str:
     """
     Derive a short brand token from a KNF company name.
@@ -293,20 +294,28 @@ def residual_name(name_without_prefix: str, brand_token: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
-# TFIs whose funds are on KNF but not on stooq — excluded from matching.
-# Key: to_ascii(tfi_name.strip().lower())
+# In-scope TFIs — only funds managed by these TFIs are matched.
+# Keys: to_ascii(tfi_name.strip().lower()) as returned by the KNF API.
+# Include all known spelling variants for the same manager.
 # ---------------------------------------------------------------------------
 
-TFI_NO_STOOQ: set[str] = {
-    "pfr tfi s.a.",
-    "mtfi s.a.",
-    "velofunds tfi s.a.",
+TFI_IN_SCOPE: set[str] = {
+    "tfi allianz polska s.a.",
+    "generali investments tfi s.a.",
+    "goldman sachs tfi s.a.",
+    "investors tfi s.a.",
+    "pko tfi s.a.",
+    "pzu tfi s.a.",       # covers both PZU and inPZU product lines
+    "quercus tfi s.a.",
+    "skarbiec tfi s.a.",
+    "uniqa tfi s.a.",
+    "vig/c-quadrat tfi s.a.",
 }
 
 # ---------------------------------------------------------------------------
 # KNF categories excluded from matching — funds in these categories are not
 # on stooq regardless of TFI (e.g. PPK workplace pension products).
-# Values match the "category" column in knf_summary.csv (substring match).
+# Values match the "category" column in knf_summary.csv (startswith check).
 # ---------------------------------------------------------------------------
 
 CATEGORY_NO_STOOQ_PREFIXES: tuple[str, ...] = (
@@ -329,17 +338,26 @@ def load_knf_summary(service) -> pd.DataFrame:
             "Re-run knf_explore.py to regenerate it with TFI data."
         )
 
-    # Exclude TFIs whose data is not on stooq
     tfi_key_raw = df["tfi_name"].apply(
         lambda n: to_ascii(n.strip().lower()) if isinstance(n, str) else ""
     )
-    excluded_mask = tfi_key_raw.isin(TFI_NO_STOOQ)
-    n_excluded = excluded_mask.sum()
-    if n_excluded:
-        log.info("Excluding %d subfunds from TFIs not on stooq: %s",
-                 n_excluded,
-                 ", ".join(df.loc[excluded_mask, "tfi_name"].unique()))
-        df = df[~excluded_mask].copy()
+
+    # Restrict to in-scope TFIs
+    scope_mask = tfi_key_raw.isin(TFI_IN_SCOPE)
+    n_out = (~scope_mask).sum()
+    log.info("Scope filter: keeping %d subfunds from %d in-scope TFIs, "
+             "dropping %d from other TFIs",
+             scope_mask.sum(),
+             df.loc[scope_mask, "tfi_name"].nunique(),
+             n_out)
+    df = df[scope_mask].copy()
+
+    # Warn if any expected TFI matched nothing — likely a key spelling mismatch
+    found_keys = set(tfi_key_raw[scope_mask].unique())
+    missing_keys = TFI_IN_SCOPE - found_keys
+    if missing_keys:
+        log.warning("TFI_IN_SCOPE keys with no matching rows in knf_summary.csv "
+                    "(possible spelling mismatch): %s", ", ".join(sorted(missing_keys)))
 
     # Exclude categories not on stooq (PPK workplace pension products etc.)
     if "category" in df.columns:
