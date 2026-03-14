@@ -116,7 +116,7 @@ jobs:
       - name: Parse signal action
         id: parse
         run: |
-          SNAPSHOT="${{ github.workspace }}/multiasset_freeze_0_1/outputs/multiasset_signal_snapshot.json"
+          SNAPSHOT="${{ github.workspace }}/multiasset_freeze_0_3/outputs/multiasset_signal_snapshot.json"
 
           if [ ! -f "$SNAPSHOT" ]; then
             echo "ERROR: multiasset_signal_snapshot.json not found at $SNAPSHOT"
@@ -199,7 +199,7 @@ jobs:
           ]
 
           for filename, mimetype in FILES:
-              path = Path("multiasset_freeze_0_1/outputs") / filename
+              path = Path("multiasset_freeze_0_3/outputs") / filename
               if not path.exists():
                   print(f"SKIP (not found): {filename}", flush=True)
                   continue
@@ -244,7 +244,7 @@ jobs:
         run: |
           {
             echo 'STATUS_TEXT<<ENDOFSTATUSTEXT'
-            cat multiasset_freeze_0_1/outputs/multiasset_signal_status.txt
+            cat multiasset_freeze_0_3/outputs/multiasset_signal_status.txt
             echo
             echo ENDOFSTATUSTEXT
           } >> "$GITHUB_ENV"
@@ -270,7 +270,7 @@ jobs:
           cc:             ${{ secrets.NOTIFY_EMAIL_CC }}
           from:           "Multi-Asset Strategy <${{ secrets.GMAIL_USER }}>"
           body:           ${{ env.STATUS_TEXT }}
-          attachments:    multiasset_freeze_0_1/outputs/multiasset_equity_chart.png
+          attachments:    multiasset_freeze_0_3/outputs/multiasset_equity_chart.png
           ignore_cert:    false
           convert_markdown: false
           priority:       normal
@@ -285,11 +285,11 @@ jobs:
         with:
           name: multiasset-outputs-${{ github.run_id }}
           path: |
-            multiasset_freeze_0_1/outputs/multiasset_signal_status.txt
-            multiasset_freeze_0_1/outputs/multiasset_signal_log.csv
-            multiasset_freeze_0_1/outputs/multiasset_equity_chart.png
-            multiasset_freeze_0_1/outputs/multiasset_signal_snapshot.json
-            multiasset_freeze_0_1/MultiassetDailyRun.log
+            multiasset_freeze_0_3/outputs/multiasset_signal_status.txt
+            multiasset_freeze_0_3/outputs/multiasset_signal_log.csv
+            multiasset_freeze_0_3/outputs/multiasset_equity_chart.png
+            multiasset_freeze_0_3/outputs/multiasset_signal_snapshot.json
+            multiasset_freeze_0_3/MultiassetDailyRun.log
           retention-days: 30
 
       # ------------------------------------------------------------------
@@ -299,10 +299,10 @@ jobs:
         run: |
           MISSING=0
           for f in \
-            multiasset_freeze_0_1/outputs/multiasset_signal_snapshot.json \
-            multiasset_freeze_0_1/outputs/multiasset_signal_status.txt \
-            multiasset_freeze_0_1/outputs/multiasset_signal_log.csv \
-            multiasset_freeze_0_1/outputs/multiasset_equity_chart.png; do
+            multiasset_freeze_0_3/outputs/multiasset_signal_snapshot.json \
+            multiasset_freeze_0_3/outputs/multiasset_signal_status.txt \
+            multiasset_freeze_0_3/outputs/multiasset_signal_log.csv \
+            multiasset_freeze_0_3/outputs/multiasset_equity_chart.png; do
             if [ ! -f "$f" ]; then
               echo "MISSING: $f"
               MISSING=$((MISSING + 1))
