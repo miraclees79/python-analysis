@@ -1,41 +1,26 @@
 """
-multiasset_runfile.py
-=====================
-Multi-asset pension fund strategy — WIG equity + TBSP bond + MMF.
+multiasset_daily_runfile.py
+===========================
+Daily runner for the multi-asset pension fund strategy (WIG + TBSP + MMF).
 
-Sequential optimisation in four phases:
-  Phase 1 — Download WIG (equity proxy), TBSP (bond proxy), MMF data.
-  Phase 2 — Walk-forward optimisation of the WIG signal.
-  Phase 3 — Walk-forward optimisation of the TBSP signal (MA-only, no breakout).
-  Phase 4 — Walk-forward optimisation of the both-signals-on allocation weights
-            followed by combined portfolio simulation with reallocation gate 
-  Phase 5 -  reporting
-  Phase 6 - plots
-  Phase 7 - single asset strategy robustness tests
-  Phase 8 - multi asset allocation robustness test
+Runs Phases 1–5 only (data download, per-asset walk-forward, allocation
+walk-forward, reporting).  Robustness phases (7 & 8) are disabled to
+keep the GitHub Actions run within the 6-hour job timeout on a 2-core
+runner.  Full robustness can be triggered by running
+multiasset_runfile.py manually or via workflow_dispatch on the full
+workflow.
 
-Each phase reuses machinery from strategy_test_library unchanged.
-Phase 4–5 use the new multiasset_library.
+After Phase 5, calls multiasset_daily_output.build_daily_outputs() to
+produce the four daily artefacts:
+  outputs/multiasset_signal_status.txt
+  outputs/multiasset_signal_log.csv
+  outputs/multiasset_equity_chart.png
+  outputs/multiasset_signal_snapshot.json
 
-DESIGN NOTES
-------------
-- WIG signal : breakout + MA/momentum filter — same framework as WIG20TR,
-               re-optimised on the WIG index (longer history since 1991).
-- TBSP signal: MA crossover only.  Breakout disabled by setting Y_grid=[0.001]
-               (price is always above a near-zero trough threshold).
-               No breakout means the entry condition collapses to: filter ON.
-               Exit: filter turns off OR absolute stop triggered.
-               Trailing stop X kept in grid — it still provides a drawdown cap.
-- MMF        : money-market fund (code 2720.n on stooq) used as:
-                 (a) cash return when signals are off
-                 (b) residual allocation when signals are on but < 100% invested
-- Both-on weights: grid-searched each training window; 45 combinations at 10%
-                   steps.  MMF absorbs the remainder (equity + bond <= 100%).
-- Reallocation gate: 10-day cooldown (primary) + annual cap of 12 (safety).
-- OOS start constrained by TBSP history (available from end-2006 on stooq).
-  Practical OOS start with 8+2 windows: end-2014.
+These are then uploaded to Google Drive by the GitHub Actions workflow.
 
-ADJUSTABLE SETTINGS — see "USER SETTINGS" block below.
+Based on multiasset_freeze_0_3/multiasset_runfile.py.
+All parameter settings are identical to the frozen v0.3 configuration.
 """
 
 import os
@@ -64,32 +49,23 @@ from multiasset_library import (
     build_signal_series,
     allocation_walk_forward,
     print_multiasset_report,
-    allocation_weight_robustness,
-    print_allocation_robustness_report,
     build_spread_prefilter,
     build_yield_price_proxy,
     build_yield_momentum_prefilter,
 )
 
-from mc_robustness import (
-    run_monte_carlo_robustness,
-    analyze_robustness,
-    extract_windows_from_wf_results,
-    extract_best_params_from_wf_results,
-    run_block_bootstrap_robustness,
-    analyze_bootstrap,
-    BOND_THRESHOLDS_MC,
-    BOND_THRESHOLDS_BOOTSTRAP,
-    EQUITY_THRESHOLDS_MC,
-    EQUITY_THRESHOLDS_BOOTSTRAP,
-)
+
+
+
+
+from multiasset_daily_output import build_daily_outputs
 
 
 # ============================================================
 # LOGGING SETUP
 # ============================================================
 
-LOG_FILE = "MultiassetRun.log"
+LOG_FILE = "MultiassetDailyRun.log"
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
 root_logger = logging.getLogger()
@@ -109,7 +85,7 @@ console_handler.setFormatter(
 root_logger.addHandler(console_handler)
 
 logging.info("=" * 80)
-logging.info("MULTI-ASSET RUNFILE START: %s", dt.datetime.now())
+logging.info("MULTI-ASSET DAILY RUNFILE START: %s", dt.datetime.now())
 logging.info("=" * 80)
 
 
@@ -200,16 +176,18 @@ TV_YLD      = [0.08, 0.10, 0.12]               # unchanged
 SL_YLD      = [0.05, 0.08, 0.10, 0.15]         # 4-5x wider than TBSP SL_BD
 
 
-# Monte Carlo robustness checks 
-RUN_MONTE_CARLO_PARAM_SINGLE = True # MC parameter robustness for single asset strategies
-ITERATIONS_MC_PARAM_SINGLE = 1000 # 1000 is the true test variant, 10 for smoke test
 
-RUN_BLOCK_BOOTSTRAP_SINGLE = False # Run bootstrap robustness test for single asset strategies
-ITERATIONS_BOOTSTRAP_SINGLE = 500 # 500 is the true test variant, 10 for smoke test
-# ATTENTION - # ~3-6h on 12-core machine — run overnight
 
-RUN_ROBUSTNESS_ALLOCATION_WEIGHT = True # Run deterministic perturbations on allocation weights
+# Robustness phases are OFF for daily run
+RUN_MONTE_CARLO_PARAM_SINGLE      = False
+RUN_BLOCK_BOOTSTRAP_SINGLE        = False
+RUN_ROBUSTNESS_ALLOCATION_WEIGHT  = False
 
+BOUNDARY_EXITS = {"CARRY", "SAMPLE_END"}
+
+# Output directory
+OUTPUT_DIR = "outputs"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # --- Bond Spread pre-filter mode ---
 # True  = Option A: hard gate — pre-filter breach forces immediate exit
@@ -620,260 +598,51 @@ print_multiasset_report(
 )
 
 
-# ============================================================
-# PHASE 6 — PLOTS
-# ============================================================
-
-logging.info("=" * 80)
-logging.info("PHASE 6: PLOTTING")
-logging.info("=" * 80)
-
-fig, axes = plt.subplots(3, 1, figsize=(14, 16))
-
-# --- Equity curves ---
-ax = axes[0]
-portfolio_equity.plot(ax=ax, label="Portfolio",      color="steelblue",  linewidth=2)
-bh_equity_eq.plot(   ax=ax, label="B&H WIG",        color="darkorange",  linewidth=1, linestyle="--")
-bh_equity_bd.plot(   ax=ax, label="B&H TBSP",       color="seagreen",    linewidth=1, linestyle="--")
-ax.set_title("Portfolio vs Buy & Hold  (OOS equity curves, normalised to 1.0)")
-ax.set_ylabel("Equity (normalised)")
-ax.legend()
-ax.grid(True, alpha=0.3)
-
-# --- Drawdown ---
-ax = axes[1]
-dd_port = portfolio_equity / portfolio_equity.cummax() - 1
-dd_eq   = bh_equity_eq    / bh_equity_eq.cummax()    - 1
-dd_bd   = bh_equity_bd    / bh_equity_bd.cummax()    - 1
-dd_port.plot(ax=ax, label="Portfolio",  color="steelblue",  linewidth=1.5)
-dd_eq.plot(  ax=ax, label="B&H WIG",   color="darkorange",  linewidth=1, linestyle="--", alpha=0.7)
-dd_bd.plot(  ax=ax, label="B&H TBSP",  color="seagreen",    linewidth=1, linestyle="--", alpha=0.7)
-ax.set_title("Drawdown")
-ax.set_ylabel("Drawdown")
-ax.legend()
-ax.grid(True, alpha=0.3)
-
-# --- Signal and allocation state ---
-ax = axes[2]
-sig_eq_oos.plot(ax=ax, label="Equity signal", color="darkorange", linewidth=0.8, alpha=0.7)
-sig_bd_oos.plot(ax=ax, label="Bond signal",   color="seagreen",   linewidth=0.8, alpha=0.7)
-
-# Mark reallocation dates
-if reallocation_log:
-    realloc_dates = [r["Date"] for r in reallocation_log]
-    ax.vlines(realloc_dates, ymin=0, ymax=1.05,
-              color="grey", linewidth=0.5, alpha=0.5, label="Reallocation")
-
-ax.set_title("Asset Signals and Reallocation Events")
-ax.set_ylabel("Signal (0=off, 1=on)")
-ax.set_ylim(-0.05, 1.15)
-ax.legend()
-ax.grid(True, alpha=0.3)
-
-plt.tight_layout()
-plot_path = "multiasset_equity.png"
-plt.savefig(plot_path, dpi=150)
-plt.close()
-logging.info("Plot saved to %s", plot_path)
-
-
-
 
 # ============================================================
-# PHASE 7 — LEVEL 1 ROBUSTNESS: Monte Carlo perturbation of paramenters in single asset strategies
+# PHASE 6 — DAILY OUTPUT (signal, log, chart, snapshot)
 # ============================================================
-logging.info("=" * 80)
-logging.info("PHASE 7: SINGLE ASSET STRATEGIES ROBUSTNESS L1 (parameters perturbation AND/OR bootstrap history)")
-logging.info("=" * 80)
-
-
-if RUN_MONTE_CARLO_PARAM_SINGLE:
-    logging.info("=" * 80)
-    logging.info("Monte Carlo robustness check calculation for single asset strategies")
-    logging.info("=" * 80)
-    
- 
-
-    
-    logging.info("=" * 80)
-    logging.info("Equity component - WIG")
-    logging.info("=" * 80)
-
-    # Extract from existing wf_results DataFrame
-    windows_eq     = extract_windows_from_wf_results(wf_results_eq, train_years=8)
-    best_params_eq = extract_best_params_from_wf_results(wf_results_eq)
-
-    # Run
-    mc_results_eq = run_monte_carlo_robustness(
-        best_params   = best_params_eq,
-        windows       = windows_eq,
-        df            = WIG,
-        cash_df       = MMF,
-        vol_window    = VOL_WINDOW,
-        selected_mode = POSITION_MODE,
-        funds_df      = None,        # or FUNDS if fund filter enabled
-        n_samples     = ITERATIONS_MC_PARAM_SINGLE,
-        n_jobs        = N_JOBS,
-        perturb_pct   = 0.20,
-        seed          = 42,
-        price_col     = "Zamkniecie"
-    )
-
-    # Report
-    baseline_eq = compute_metrics(wf_equity_eq)
-    analyze_robustness(mc_results_eq, baseline_eq,thresholds=EQUITY_THRESHOLDS_MC)
-
-
-    logging.info("=" * 80)
-    logging.info("Bond component - TBSP")
-    logging.info("=" * 80)
-
-    # Extract from existing wf_results DataFrame
-    windows_bd     = extract_windows_from_wf_results(wf_results_bd, train_years=8)
-    best_params_bd = extract_best_params_from_wf_results(wf_results_bd)
-
-    # Run
-    mc_results_bd= run_monte_carlo_robustness(
-        best_params   = best_params_bd,
-        windows       = windows_bd,
-        df            = TBSP,
-        cash_df       = MMF,
-        vol_window    = VOL_WINDOW,
-        selected_mode = POSITION_MODE,
-        funds_df      = None,        # or FUNDS if fund filter enabled
-        n_samples     = ITERATIONS_MC_PARAM_SINGLE,
-        n_jobs        = N_JOBS,
-        perturb_pct   = 0.20,
-        seed          = 42,
-        price_col     = "Zamkniecie"
-    )
-
-    # Report
-    baseline_bd = compute_metrics(wf_equity_bd)
-    analyze_robustness(mc_results_bd, baseline_bd,thresholds=BOND_THRESHOLDS_MC)
-
-else:
-    logging.info("=" * 80)
-    logging.info("Monte Carlo robustness check calculation for single asset strategies skipped by user choice")
-    logging.info("=" * 80)
-
-
-
-
-# -------------------------------------------------------
-# PHASE 7 LEVEL 1 Part 2 - Block Bootstrap Robustness Check for single asset strategies
-# -------------------------------------------------------
-if RUN_BLOCK_BOOTSTRAP_SINGLE:
-    logging.info("=" * 80)
-    logging.info("Block bootstrap robustness check for single asset strategies")
-    logging.info("=" * 80)
-
-    logging.info("=" * 80)
-    logging.info("Equity component - WIG")
-    logging.info("=" * 80)
-
-
-    bb_results_eq = run_block_bootstrap_robustness(
-        df               = WIG,
-        cash_df          = MMF,
-        price_col        = "Zamkniecie",
-        cash_price_col   = "Zamkniecie",
-        n_samples        = ITERATIONS_BOOTSTRAP_SINGLE,
-        block_size       = 250,
-        # --- wf_kwargs: mirrors the walk_forward call above ---
-        train_years              = TRAIN_YEARS_EQ,
-        test_years               = TEST_YEARS_EQ,
-        vol_window               = VOL_WINDOW,
-        funds_df                 = None,
-        fund_params_grid         = None,
-        selected_mode            = POSITION_MODE,
-        filter_modes_override    = FORCE_FILTER_MODE_EQ,
-        X_grid                = X_GRID_EQ,
-        Y_grid                = Y_GRID_EQ,
-        fast_grid             = FAST_EQ,
-        slow_grid             = SLOW_EQ,
-        tv_grid               = TV_EQ,
-        sl_grid               = SL_EQ,
-        mom_lookback_grid     = MOM_LB_EQ,   # fix — currently missing from call
-    )
-
-    baseline_eq = compute_metrics(wf_equity_eq)
-    analyze_bootstrap(bb_results_eq, baseline_eq, thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
-
-    logging.info("=" * 80)
-    logging.info("Bond component - TBSP")
-    logging.info("=" * 80)
-
-
-    bb_results_bd = run_block_bootstrap_robustness(
-        df               = TBSP,
-        cash_df          = MMF,
-        price_col        = "Zamkniecie",
-        cash_price_col   = "Zamkniecie",
-        n_samples        = ITERATIONS_BOOTSTRAP_SINGLE,
-        block_size       = 250,
-        # --- wf_kwargs: mirrors the walk_forward call above ---
-        train_years              = TRAIN_YEARS_BD,
-        test_years               = TEST_YEARS_BD,
-        vol_window               = VOL_WINDOW,
-        funds_df                 = None,
-        fund_params_grid         = None,
-        selected_mode            = POSITION_MODE,
-        filter_modes_override    = FORCE_FILTER_MODE_BD,
-        X_grid                = X_GRID_BD,
-        Y_grid                = Y_GRID_BD,
-        fast_grid             = FAST_BD,
-        slow_grid             = SLOW_BD,
-        tv_grid               = TV_BD,
-        sl_grid               = SL_BD,
-        mom_lookback_grid     = [252],                  # not used (filter_mode=ma)
-        
-    )
-
-    baseline_bd = compute_metrics(wf_equity_bd)
-    analyze_bootstrap(bb_results_bd, baseline_bd,thresholds=BOND_THRESHOLDS_BOOTSTRAP)
-
-else:
-    logging.info("=" * 80)
-    logging.info("Block bootstrap robustness check skipped by user choice")
-    logging.info("=" * 80)
-
-
-
-
-
-
-# ============================================================
-# PHASE 8 — LEVEL 2 ROBUSTNESS: ALLOCATION WEIGHT PERTURBATION
-# ============================================================
-logging.info("=" * 80)
-logging.info("PHASE 8: ALLOCATION WEIGHT ROBUSTNESS  (Level 2 — equity weight perturbation)")
-logging.info("=" * 80)
-
-
-if RUN_ROBUSTNESS_ALLOCATION_WEIGHT:
-
-    robustness_df = allocation_weight_robustness(
-        alloc_results_df = alloc_results_df,
-        equity_returns   = ret_eq,
-        bond_returns     = ret_bd,
-        mmf_returns      = ret_mmf,
-        sig_equity_oos   = sig_eq_oos,
-        sig_bond_oos     = sig_bd_oos,
-        baseline_metrics = portfolio_metrics,
-        perturb_steps    = [-0.2, -0.1, 0.0, 0.1, 0.2],
-        cooldown_days    = COOLDOWN_DAYS,
-        annual_cap       = ANNUAL_CAP,
-    )
-
-    print_allocation_robustness_report(robustness_df)
-
-else:
-    logging.info("=" * 80)
-    logging.info("Allocation weight robustness check - equity weight perturbation skipped by user choice")
-    logging.info("=" * 80)
-
 
 logging.info("=" * 80)
-logging.info("MULTI-ASSET RUNFILE COMPLETE: %s", dt.datetime.now())
+logging.info("PHASE 6: DAILY OUTPUT")
+logging.info("=" * 80)
+
+result = build_daily_outputs(
+    wf_equity_eq      = wf_equity_eq,
+    wf_trades_eq      = wf_trades_eq,
+    wf_results_eq     = wf_results_eq,
+    wf_equity_bd      = wf_equity_bd,
+    wf_trades_bd      = wf_trades_bd,
+    wf_results_bd     = wf_results_bd,
+    portfolio_equity  = portfolio_equity,
+    portfolio_metrics = portfolio_metrics,
+    weights_series    = weights_series,
+    reallocation_log  = reallocation_log,
+    bh_eq_equity      = bh_equity_eq,
+    bh_eq_metrics     = bh_metrics_eq,
+    bh_bd_equity      = bh_equity_bd,
+    bh_bd_metrics     = bh_metrics_bd,
+    WIG               = WIG,
+    TBSP              = TBSP,
+    sig_eq_oos        = sig_eq_oos,
+    sig_bd_oos        = sig_bd_oos,
+    output_dir        = OUTPUT_DIR,
+    # Drive credentials: passed via env vars by GitHub Actions workflow.
+    # build_daily_outputs will pre-fetch multiasset_signal_log.csv from
+    # Drive before writing today's row (ensures correct ENTER/EXIT/HOLD
+    # determination on a fresh, stateless runner).
+    gdrive_folder_id   = os.getenv("GDRIVE_FOLDER_ID"),
+    gdrive_credentials = "/tmp/credentials.json"
+    if os.path.exists("/tmp/credentials.json") else None,
+)
+
+logging.info(
+    "Daily output complete — action=%s  eq=%s  bd=%s",
+    result["action"],
+    result["signal_equity"],
+    result["signal_bond"],
+)
+
+logging.info("=" * 80)
+logging.info("MULTI-ASSET DAILY RUNFILE COMPLETE: %s", dt.datetime.now())
 logging.info("=" * 80)
