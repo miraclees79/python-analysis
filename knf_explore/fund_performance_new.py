@@ -438,7 +438,9 @@ def compute_relative_metrics(
     te_daily  = residuals.std()
     alpha_ann = float(np.exp(alpha_daily * TDAYS) - 1)
     te_ann    = float(te_daily * np.sqrt(TDAYS))
-    ir        = alpha_ann / te_ann if te_ann > 0 else float("nan")
+    sign = 1 if alpha_ann >= 0 else -1
+    # Israelsen Information ratio
+    ir   = sign * abs(alpha_ann) / te_ann if te_ann > 0 else float("nan")
 
     return dict(
         alpha          = round(alpha_ann, 4),
