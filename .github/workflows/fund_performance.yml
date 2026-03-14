@@ -90,7 +90,7 @@ jobs:
           KNF_API_BACKOFF:   "2.0"
           MIN_CATEGORY_PEERS: "3"
         run: |
-          python knf_explore/fund_performance.py
+          python knf_explore/fund_performance_new.py
 
       - name: Upload results as workflow artefact
         if: always()
