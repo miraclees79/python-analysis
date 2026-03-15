@@ -1,0 +1,72 @@
+
+=== Journal Entry 2026-03-15T22:00:00.000000+00:00 ===
+2026-03-15-multiasset-window-sensitivity-v04-docs.txt
+[Multi-asset pension fund strategy development session — walk-forward window sensitivity study and freeze of multiasset v0.4 (9+1 windows). Full robustness run (bootstrap n=500) started at session end, ETA ~11-12 hours.
+
+SESSION CONTENTS:
+
+(1) CONTEXT RECAP
+Prior state reviewed: multiasset_freeze_0_3 frozen at 8+2 windows, documentation at v3 (MultiAsset_Strategy_Documentation_v3.docx). Key open items identified: walk-forward window sensitivity study (priority 4 in backlog), 8+1 MC FRAGILE verdict from March 14 run, documentation update needed.
+
+(2) WALK-FORWARD WINDOW SENSITIVITY STUDY — FULL RESULTS
+Five configurations tested on the full multi-asset pipeline (equity WIG, bond TBSP, allocation). MC robustness n=1000 run for each. All runs on 12-core machine.
+
+EQUITY SIGNAL STANDALONE (WIG):
+- 6+1: OOS 1997, CAGR 10.03%, Sharpe 0.75, MaxDD -26.34%, CalMAR 0.38, 47 trades. MC FRAGILE (p05 MaxDD -35.9% breaches -35% threshold, P(CAGR worse) 88%).
+- 7+1: OOS 1998, CAGR 11.10%, Sharpe 0.86, MaxDD -21.50%, CalMAR 0.52, 42 trades. MC ROBUST (all pass, P(CAGR worse) 81.7%, P(Sharpe worse) 72.5%).
+- 8+1: OOS 1999, CAGR 11.15%, Sharpe 0.89, MaxDD -25.10%, CalMAR 0.44, 37 trades. MC FRAGILE (P(CAGR worse) 94%, P(Sharpe worse) 90.8% — baseline top-decile outlier).
+- 8+2 (frozen): OOS 1999, CAGR 9.25%, Sharpe 0.73, MaxDD -30.44%, CalMAR 0.30, 37 trades. MC ROBUST.
+- 9+1: OOS 2000, CAGR 10.48%, Sharpe 0.88, MaxDD -28.15%, CalMAR 0.37, 34 trades. MC ROBUST (all pass, P(CAGR worse) 70.0%, P(Sharpe worse) 78.1%).
+
+BOND SIGNAL STANDALONE (TBSP):
+- 6+1: OOS 2012, CAGR 3.92%, Sharpe 1.46, MaxDD -7.21%, CalMAR 0.54, 4 closed trades. MC ROBUST.
+- 7+1: OOS 2013, CAGR 3.81%, Sharpe 1.52, MaxDD -7.21%, CalMAR 0.53, 4 closed trades. MC FRAGILE (p05 MaxDD -11.5% breaches -10% threshold).
+- 8+1: OOS 2014, CAGR 3.85%, Sharpe 1.56, MaxDD -5.13%, CalMAR 0.75, 1 closed trade. MC ROBUST.
+- 8+2 (frozen): OOS 2014, CAGR 4.01%, Sharpe 1.63, MaxDD -5.20%, CalMAR 0.77, 1 closed trade. MC ROBUST.
+- 9+1: OOS 2015, CAGR 3.67%, Sharpe 1.49, MaxDD -7.21%, CalMAR 0.51, 2 closed trades. MC ROBUST.
+
+PORTFOLIO COMBINED:
+- 6+1: OOS 2012-2026, CAGR 6.59%, Sharpe 0.66, MaxDD -20.85%, CalMAR 0.32, 26 reallocations. Alloc PLATEAU (0.906).
+- 7+1: OOS 2013-2026, CAGR 6.73%, Sharpe 0.68, MaxDD -18.85%, CalMAR 0.36, 24 reallocations. Alloc PLATEAU (0.906).
+- 8+1: OOS 2014-2026, CAGR 11.79%, Sharpe 1.00, MaxDD -17.89%, CalMAR 0.66, 21 reallocations. Alloc PLATEAU (0.931).
+- 8+2 (frozen): OOS 2014-2026, CAGR 9.65%, Sharpe 0.88, MaxDD -17.96%, CalMAR 0.54, 17 reallocations. Alloc PLATEAU (0.920).
+- 9+1: OOS 2015-2026, CAGR 11.77%, Sharpe 1.08, MaxDD -17.08%, CalMAR 0.69, 12 reallocations. Alloc PLATEAU (1.029).
+
+Key observations:
+- The 6+1/7+1 portfolio CAGR discontinuity (~6.6-6.7% vs ~11.8%) is structural: earlier OOS starts catch the difficult 2013-2015 period with bond-dominated allocation and choppy equity signal. Not apples-to-apples comparison due to differing OOS start dates.
+- The 8+1 equity FRAGILE result is specific to its parameter set on the 1999-2026 OOS — the 8+1 equity baseline sits at the 94th percentile of its parameter neighbourhood. The 8+2 frozen configuration does not have this problem (uses 2-year test windows which average out single-year parameter luck).
+- The 9+1 allocation robustness min CalMAR ratio of 1.029 is the only configuration where reducing equity weight improves CalMAR — indicating the bond component adds genuine portfolio-level value. This is also the first configuration with non-trivial bond allocation in recent windows (90/10 equity/bond in 2023-2024, 70/30 equity/MMF in 2024-2026).
+
+(3) CONFIGURATION SELECTION: 9+1 CHOSEN
+Rationale: only configuration with both WIG and TBSP MC ROBUST simultaneously. Best portfolio Sharpe (1.08) and CalMAR (0.69). Lowest MaxDD (-17.08%) and fewest reallocations (12, ~1.1/year). Equity MC P(CAGR worse) 70% — not an outlier. Bond component allocated non-trivially in most recent windows.
+
+Known limitation noted: 9+1 common OOS starts 2015-12-29, missing the 2015 TBSP churn episode visible in 8+1 and shorter configs. The 9+1 portfolio-level OOS does not stress-test this period.
+
+(4) VERSION FREEZE
+User to implement manually:
+- multiasset_freeze_0_4 directory committed to GitHub with TRAIN_YEARS=9, TEST_YEARS=1.
+- multiasset_daily_runfile.py updated to 9+1 window configuration.
+
+(5) DOCUMENTATION UPDATE — MultiAsset_Strategy_Documentation_v4.docx
+Created from scratch as a new docx using docx-js. Covers all 11 sections:
+- Section 1: Overview with updated version table (v0.1 WIG20TR through multiasset v0.4).
+- Section 2: Data (OOS period updated to 2015-12-29 per 9+1 config).
+- Section 3: Architecture (allocation states updated with 9+1 signal frequency figures).
+- Section 4: Walk-forward parameters (9+1 configuration, updated per-window weight table showing bond allocation in windows 9 and 10).
+- Section 5: Pre-filters (spread and yield, unchanged).
+- Section 6: Walk-forward window sensitivity (NEW) — full 5-configuration sensitivity table for equity standalone, bond standalone, and portfolio combined. Selection rationale documented. OOS period discontinuity caveat included.
+- Section 7: OOS performance (9+1 figures — portfolio CAGR 11.77%, Sharpe 1.08, MaxDD -17.08%, CalMAR 0.69; equity standalone CAGR 10.48%; bond standalone CAGR 3.67%; updated reallocation log with 12 events).
+- Section 8: Robustness (MC ROBUST verdicts for both signals documented with full distribution tables; bootstrap PENDING notice for 9+1; 8+2 bootstrap results preserved for reference in Section 8.5; allocation weight robustness PLATEAU 1.029 documented).
+- Section 9: Known limitations (added: 2015 OOS gap for 9+1, bootstrap pending, TBSP bootstrap -10% threshold review trigger updated to 2 closed trades).
+- Section 10: Infrastructure (freeze location updated to multiasset_freeze_0_4).
+- Section 11: Roadmap (bootstrap 9+1 now priority 1; other items renumbered).
+File: MultiAsset_Strategy_Documentation_v4.docx. Validated (906 paragraphs, all OOXML checks passed).
+
+(6) BOOTSTRAP RUN STARTED
+Full robustness bootstrap (n=500, block=250 days) started for 9+1 configuration on 12-core machine at end of session. Expected runtime ~11-12 hours (WIG bootstrap ~5-6h, TBSP bootstrap ~30 min, sequential). Results to be added to Section 8.3 of documentation in next session.
+
+NEXT SESSION:
+- Review bootstrap results (WIG and TBSP verdicts under 9+1).
+- Update Section 8.3 of documentation with bootstrap results.
+- If both ROBUST: strategy validation complete, proceed to roadmap item 2 (TBSP signal alternatives / USE_YIELD_SIGNAL=True evaluation).
+- If WIG FRAGILE: assess whether structural artefact (as per prior TBSP FRAGILE analysis) or genuine concern requiring window reconsideration.]
