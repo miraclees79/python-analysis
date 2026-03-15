@@ -125,7 +125,7 @@ POSITION_MODE = "full"
 
 # --- Walk-forward window lengths (years) ---
 TRAIN_YEARS_EQ = 8     # equity signal training window
-TEST_YEARS_EQ  = 1.5     # equity signal test window
+TEST_YEARS_EQ  = 1     # equity signal test window
 TRAIN_YEARS_BD = 8     # bond signal training window
 TEST_YEARS_BD  = 1     # bond signal test window
 

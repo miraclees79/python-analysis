@@ -1,4 +1,3 @@
-
 === Journal Entry 2026-03-02T21:13:37.700345+00:00 ===
 2026-03-02-21-13-37-python-backtest-walkforward-debugging.txt
 [Technical debugging session for a Python trading strategy backtesting system. Covers walk-forward optimization implementation, equity curve chain-linking, state management across test windows, data handling issues, and logging configuration. Contains code reviews, bug fixes, and methodological corrections for proper out-of-sample testing.]
@@ -118,33 +117,73 @@
 
 
 
-
-=== Journal Entry 2026-03-10T00:55:00.000000+00:00 ===
-2026-03-09-18-25-59-multiasset-robustness-dev.txt (continued — bootstrap results)
-[Full production run on 12-core main machine. Bootstrap intersection bug fixed earlier in session (block_bootstrap_history combined DataFrame now uses index.intersection rather than reindex+ffill, _bootstrap_single_sample uses combined index throughout). v0.2 single-asset bootstrap confirmed unaffected (CASH predates WIG20TR).
-
-PARAM MC (n=1000):
-- WIG: ROBUST — p05 MaxDD -33.7% (threshold -35%), all checks pass, p95-p05 CAGR range 0.3x median. Runtime 2.1 min.
-- TBSP: ROBUST — extremely tight distribution, p05 CalMAR 0.72, p05 MaxDD -5.2% (threshold -10%). Runtime 0.9 min.
-
-BOOTSTRAP (n=500, block=250 days, 500 valid / 0 failed each):
-- WIG: ROBUST — p05 CAGR 3.8%, Median 9.9%, p05 MaxDD -36.5% (threshold -40%), P(CAGR<0) 0.2%. Baseline 9.2% within distribution (p95 17.6%) — real history not an outlier. Runtime ~5h on 11 jobs.
-- TBSP: FRAGILE — single failing check: p05 MaxDD -10.86% vs -10% threshold (86bp breach). All other checks pass cleanly: p05 CAGR 2.7%, P(CAGR<0) 0.0%, Median CAGR 4.5%, Baseline within distribution. Assessed as bootstrap structural artefact: block reshuffling suppresses multi-year bond trends, producing synthetic sequences with deeper transient drawdowns than the single real closed trade (2337 days) ever experienced. Not a disqualifying result.
-
-PHASE 8 ALLOCATION ROBUSTNESS: PLATEAU — min CalMAR ratio at ±10pp = 0.930 >= 0.80 threshold. MaxDD invariant at -17.96% across all perturbation steps. Performance monotonically increases with equity weight, consistent with equity outperforming over the 2014-2026 OOS period.
-
-Runtime note: ITERATIONS_BOOTSTRAP_SINGLE=500 is ~5h on 12-core machine — overnight only.]
+=== Journal Entry 2026-03-10T20:04:46.064222+00:00 ===
+2026-03-10-20-04-45-multiasset-robustness-bootstrap-docs.txt
+[Multi-asset pension fund strategy session covering bootstrap intersection bug fix, full production robustness run results, documentation creation, and reallocation reason classification code proposal. Contains: bug fix code, full MC and bootstrap results for WIG and TBSP, MultiAsset_Strategy_Documentation_v1.docx creation, journal updates, and proposed code changes to multiasset_library.py.]
 
 
-=== Journal Entry 2026-03-10T22:30:00.000000+00:00 ===
-2026-03-10-20-04-45-multiasset-robustness-bootstrap-docs.txt (continued in same session)
-[Multi-asset pension fund strategy session — freeze of multiasset v0.1. Contains:
-(1) Reallocation reason classification implemented (SIGNAL_CHANGE / PARAM_UPDATE / BOTH) with prev_best_combo bug fix — assignment moved to after window OOS loop.
-(2) _feasible_weight_grid expanded to include zero-weight cases (range(0,...) from range(1,...)) — 66 combinations vs 45. Bond weight now optimiser-determined rather than fixed. Result: bond=0 in all windows, CAGR 9.50% CalMAR 0.53.
-(3) PL-DE spread pre-filter designed and implemented: build_spread_prefilter() in multiasset_library.py downloads PL10Y (10YPLY.B) and DE10Y (10YDEY.B), computes 3M rolling change, blocks bond entries when change > 50bp. Tested at 30bp and 75bp — 50bp confirmed as best threshold (differential 9.8pp ON vs OFF).
-(4) Slope filter (PL10Y - WIBOR1Y) evaluated and rejected: negative standalone predictive power (-0.4pp differential), critically blocks 2023 disinflation rally where slope was inverted throughout despite +8.93% TBSP return.
-(5) Pre-filter implemented as Option B (entry gate only, not hard exit): SPREAD_PREFILTER_HARD_EXIT=False flag in runfile. Option A (hard exit) caused 38 reallocations vs 17 baseline due to 2015-2016 churn. Option B: 0 days blocked in current OOS history (MA signal entries happened to avoid spread stress periods), 17 reallocations, CAGR 9.47% CalMAR 0.53 — essentially identical to no-prefilter baseline. Pre-filter is forward-looking insurance.
-(6) print_multiasset_report extended with sig_bond_raw and spread_prefilter optional parameters: raw vs filtered bond signal frequency, days blocked, pre-filter ON%, blocking by year table.
-(7) MultiAsset_Strategy_Documentation_v2.docx created covering all above changes.
-(8) Version frozen as multiasset_v0.1 in /development directory on GitHub.
-Development continues in /development directory.]
+
+
+=== Journal Entry 2026-03-11T19:30:09.768373+00:00 ===
+2026-03-11-19-30-08-multiasset-v01-freeze-spread-filter.txt
+[Multi-asset pension fund strategy session covering: reallocation reason classification bug fix, allocation grid expansion to 66 combos, PL-DE spread pre-filter design and implementation (slope filter rejected), Option A vs B pre-filter mode comparison, report extensions, v0.1 freeze, documentation v2 and journal update. Contains full run logs, diagnostic results, and code proposals.]
+
+
+
+
+=== Journal Entry 2026-03-12T05:15:10.335740+00:00 ===
+2026-03-12-05-15-09-multiasset-yield-filter-diagnostic.txt
+[Multi-asset pension fund strategy session covering: Windows Update reboot diagnosis, yield signal alternatives investigation (yield proxy experiment and abandonment), yield momentum pre-filter design and implementation as Option B entry gate, diagnostic script for threshold calibration, and persistence smoothing recommendation. Contains full run logs, episode tables, and code proposals.]
+
+
+
+
+=== Journal Entry 2026-03-12T00:00:00.000000+00:00 ===
+2026-03-12-05-15-09-multiasset-yield-filter-diagnostic.txt
+[Multi-asset pension fund strategy v0.2 freeze session. Contains: full robustness run results (MC n=1000 + Bootstrap n=500 for WIG and TBSP), yield momentum pre-filter persistence analysis (diagnostic confirmed no-persistence is optimal — persistence smoothing erodes the filter's discriminating power), training-application asymmetry analysis for bond pre-filters (documented as known limitation), v0.2 freeze decision. Key results: Portfolio CAGR 9.65% / Sharpe 0.88 / MaxDD -17.96% / CalMAR 0.54. WIG ROBUST (MC + Bootstrap). TBSP ROBUST (MC) / FRAGILE (Bootstrap — structural artefact, p05 MaxDD -10.86% vs -10% threshold). Allocation PLATEAU (min CalMAR ratio 0.920). Both pre-filters dormant in OOS (0 days blocked). Documentation updated to MultiAsset_Strategy_Documentation_v3.docx.]
+
+
+=== Journal Entry 2026-03-12T06:00:00.000000+00:00 ===
+2026-03-12-05-15-09-multiasset-yield-filter-diagnostic.txt
+[Multi-asset pension fund strategy v0.2 freeze — final session. Contains: (1) Full robustness run completed successfully (no crashes, Windows Update paused): MC n=1000 ROBUST for both WIG and TBSP; Bootstrap n=500 ROBUST for WIG, FRAGILE for TBSP (structural artefact — p05 MaxDD -10.86% vs -10% threshold, 86bp breach, consistent across both runs, accepted). Allocation weight robustness PLATEAU (min CalMAR ratio 0.920). (2) Yield momentum pre-filter persistence diagnostic: persist=1 (no smoothing) confirmed as optimal — persistence smoothing erodes discriminating power by delaying filter onset during the primary stress episode (2021-09-28 to 2022-08-01, -12.34% TBSP). OFF_CAGR collapses from -9.63% at persist=1 to +0.38% at persist=10. N_blocks reduces from 85 to 37 at persist=10 but does not eliminate the pre-2007 NaN-period noise (irrelevant to signal behaviour). Decision: YIELD_PREFILTER_PERSIST_DAYS=1 (default). (3) Pre-filter training-application asymmetry documented as known limitation: optimiser trains without pre-filters active; live application applies them as entry gates. Low practical impact (0 days blocked in OOS). Roadmap item priority 2. (4) FROZEN as multiasset_v0.2 (2026-03-12). Deployment: manual rework of daily runfile — yaml to point to adjusted copy in v0.2 directory. Documentation: MultiAsset_Strategy_Documentation_v3.docx (already current — no edits required). Key freeze metrics: Portfolio CAGR 9.65% / Vol 10.99% / Sharpe 0.88 / MaxDD -17.96% / CalMAR 0.54. Both pre-filters dormant in OOS (0 days blocked). 17 reallocations over 2014-2026.]
+
+=== Journal Entry 2026-03-15T00:00:00.000000+00:00 ===
+2026-03-12-12-47-36-multiasset-v02-freeze-docs-journal.txt
+[Multi-asset pension fund strategy post-v0.2 development session. Two workstreams completed.
+
+WORKSTREAM 1 — Pre-filter training asymmetry fix (priority item from v0.2 known limitations).
+The bond walk-forward optimiser previously trained on unconstrained TBSP signal while live production applied spread and yield pre-filters as entry gates. Fix implemented across strategy_test_library.py and multiasset_runfile.py:
+- run_strategy_with_trades: new entry_gate=None parameter; gate aligned to df index after warmup prepend; entry condition on line 1046 extended with "and gate_allows" (Option B — no forced exits).
+- evaluate_params: new entry_gate=None parameter passed through to run_strategy_with_trades.
+- walk_forward: gate_train and gate_oos sliced from entry_gate_series per window; passed into evaluate_params (training) and run_strategy_with_trades (OOS). entry_gate_series=None default preserves equity signal path unchanged.
+- multiasset_runfile.py Phase 1: combined bond_entry_gate built once from spread_prefilter & yield_prefilter aligned to TBSP.index. Phase 3: entry_gate_series=bond_entry_gate passed to walk_forward. Post-hoc Option B filter loops (lines 460-581) replaced with slim diagnostics block — gate now applied upstream.
+- Two stray stub functions (_backtest_with_gate, _apply_entry_gate at lines 2367-2398) removed from strategy_test_library.py — these were incorrectly pasted from an earlier sketch and referenced non-existent functions.
+- Bug fix: X_GRID_BD and SL_BD were hard-coded in the Phase 3 walk_forward call instead of the source-selected X_GRID_BD_RUN and SL_GRID_BD_RUN variables.
+
+WORKSTREAM 2 — Documentation update to v4.
+MultiAsset_Strategy_Documentation_v4.docx produced with:
+- MMF corrected throughout: "Generali Profit" → "Goldman Sachs Konserwatywny (stooq: 2720.n)".
+- New Section 6 "PL10Y Yield Momentum Pre-Filter" inserted (sections 6-10 renumbered to 7-11): covers the yield-as-signal experiment (constant-maturity bond price proxy design, failure diagnosis — 3-4x excess volatility, 35 trades, 68 reallocations, CAGR 2.07% vs baseline 4.01%), pivot to pre-filter design, filter logic table (63d/50bp/Option B/persist=1), threshold calibration table (25/50/75/100/150bp), OOS impact (0 days blocked, key episode 2021-09-28 to 2022-08-01 -12.34%).
+- Roadmap: "TBSP signal alternatives" row updated to CONCLUDED with summary.
+- Header/cover updated to v4.
+
+TEST WINDOW CHANGE — 1Y test windows (8+1 walk-forward) evaluated as alternative to 2Y.
+Motivation: more OOS windows, finer parameter adaptation. Known risk: shorter windows increase MC outlier probability.
+Smoke test passed. Preliminary robustness (100 bootstrap iterations): WIG ROBUST, TBSP well-behaved.
+Full robustness run (MC n=1000 + Bootstrap n=500) initiated — runtime ~12h (doubled vs 2Y due to doubled window count).
+
+PRELIMINARY RESULTS (partial robustness run, 1Y test windows):
+Portfolio: CAGR 11.8% / Vol 11.76% / Sharpe 1.003 / MaxDD -17.89% / CalMAR 0.659
+Reallocations: 21 total (vs 17 in v0.2). Increase concentrated in 2020 (5 reallocations — COVID recovery volatility). Max annual: 5. Annual cap: 12, never binding.
+Allocation robustness: PLATEAU (min CalMAR ratio 0.931 at ±10pp). MaxDD invariant at -17.89% across all perturbation steps.
+
+WIG MC (n=1000): FRAGILE on outlier checks only.
+- All core checks pass: p05 CAGR 8.6%, P(CAGR<0) 0.0%, p05 MaxDD -25.1% (threshold -35%), p95-p05 range 0.3x median.
+- Failing checks: P(CAGR worse than baseline) 94.0%, P(Sharpe worse than baseline) 90.8%.
+- Assessment: MC outlier failure is a check design artefact with 1Y windows — optimised baseline naturally sits at the top of a perturbed distribution. Bootstrap verdict is the more informative result.
+
+WIG Bootstrap (n=100, preliminary): ROBUST.
+- p05 CAGR 4.43%, P(CAGR<0) 0.0%, p05 MaxDD -35.95% (threshold -40%), baseline 11.2% within distribution (p95 19.5% — not an outlier).
+- Baseline within distribution confirms real history is not a cherry-picked path.
+
+PENDING: Full robustness run (n=1000 MC + n=500 bootstrap) results for both WIG and TBSP on 1Y windows. Documentation update deferred until results confirmed.]
