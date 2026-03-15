@@ -102,7 +102,7 @@ chosen_mode = "full"
 VOL_WINDOW = 20
 FORCE_FILTER_MODE = ["ma","mom"]
 # options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
-RUN_MONTE_CARLO = True # MC parameter robustness
+RUN_MONTE_CARLO = False # MC parameter robustness
 RUN_BLOCK_BOOTSTRAP = False # Run bootstrap robustness test
 
 # OBJECTIVE FUNCTION
@@ -129,13 +129,9 @@ logging.info("=" * 80)
 
 # Create a temporary file inside the temp directory # Filepath for CSV
 # WIG20TR - target
-
-# MWIG40TR - new tgt
-
 csv_filename_w20tr = os.path.join(tmp_dir, "w20tr.csv")
 
-#download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr)
-download_csv('https://stooq.pl/q/d/l/?s=mwig40tr&i=d', csv_filename_w20tr)
+download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr)
 INDEX_W20 = load_csv(csv_filename_w20tr)
 
 df = INDEX_W20
@@ -677,8 +673,5 @@ if wf_equity is not None and not wf_equity.empty:
     ax.grid(True, alpha=0.3)
     ax.legend()
     plt.tight_layout()
-    plot_path = "single_asset_equity.png"
-    plt.savefig(plot_path, dpi=150)
-    plt.close()
-    logging.info("Plot saved to %s", plot_path)
+    plt.show()
     logging.info("RUN END")
