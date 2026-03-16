@@ -728,7 +728,7 @@ def print_decision_table(results, incumbent_row):
 #   1000 — full production run (~3h on 12-core machine)
 #   100  — quick indicative run (~45min)
 #   10   — smoke test to verify the script runs end-to-end (~8min)
-N_MC = 10
+N_MC = 1000
 
 # Set to False to skip MC entirely and collect OOS walk-forward metrics only.
 # Useful for a fast first pass or when MC results are already known.
