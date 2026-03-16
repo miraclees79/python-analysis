@@ -2066,8 +2066,9 @@ def print_backtest_report(metrics,
         logging.info("\n%s", trades_fmt.to_string(index=False))
 
     # Open position summary — only if there is a CARRY record
-    if not carry_trades.empty:
-        last_carry = carry_trades.iloc[-1]
+    # Open position summary — only if there is a CARRY record
+    if not trades.empty and trades.iloc[-1]["Exit Reason"] == "CARRY":
+        last_carry = trades.iloc[-1]
         logging.info(
             "Open position at report date: entry %s at %.2f, "
             "current value %.2f, unrealised return %.1f%%",
