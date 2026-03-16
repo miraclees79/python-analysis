@@ -201,11 +201,6 @@ download_csv(
 
 CASH = load_csv(csv_filename_cash)
 
-logging.info("=" * 80)
-logging.info("EQUITY MODEL WALK-FORWARD  (, train=%dy test=%dy)",
-             TRAIN_YEARS_EQ, TEST_YEARS_EQ)
-logging.info("=" * 80)
-
 
 
 
