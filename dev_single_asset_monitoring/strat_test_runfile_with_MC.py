@@ -315,15 +315,15 @@ else:
 #============================
 
 #===========GRIDS============
-    # Define search grids once — passed to both the loop and neighbour_mean
-    # so they are guaranteed to stay in sync
-    X_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
-    Y_grid = [0.02, 0.03, 0.05, 0.07, 0.10]
-    fast_grid   = [50, 75, 100]
-    slow_grid = [150, 200, 250 ]
-    tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
-    sl_grid     = [0.05, 0.08, 0.10, 0.15]
-    mom_lookback_grid = [126, 252]           # [126, 252]    # ADD
+# Define search grids once — passed to both the loop and neighbour_mean
+# so they are guaranteed to stay in sync
+X_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
+Y_grid = [0.02, 0.03, 0.05, 0.07, 0.10]
+fast_grid   = [50, 75, 100]
+slow_grid = [150, 200, 250 ]
+tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
+sl_grid     = [0.05, 0.08, 0.10, 0.15]
+mom_lookback_grid = [126, 252]           # [126, 252]    # ADD
     
 #============================
 
