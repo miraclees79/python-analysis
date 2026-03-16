@@ -20,7 +20,8 @@ produce the four daily artefacts:
 These are then uploaded to Google Drive by the GitHub Actions workflow.
 
 Based on multiasset_freeze_0_3/multiasset_runfile.py.
-All parameter settings are identical to the frozen v0.3 configuration.
+All parameter settings are identical to the frozen v0.4 configuration.
+9+1 years
 """
 
 import os
