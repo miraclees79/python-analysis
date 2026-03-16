@@ -138,49 +138,49 @@ logging.info("=" * 80)
 INDEX_CHOICE = "MWIG40TR"
 
 csv_filename_index = os.path.join(tmp_dir, "target_index.csv")
-if INDEX_CHOICE="WIG20TR"
+if INDEX_CHOICE="WIG20TR":
     download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_index)
     logging.info("=" * 80)
     logging.info("EQUITY MODEL WALK-FORWARD  (WIG20TR, train=%dy test=%dy)",
              TRAIN_YEARS_EQ, TEST_YEARS_EQ)
     logging.info("=" * 80)
-elif INDEX_CHOICE="MWIG40TR"
+elif INDEX_CHOICE="MWIG40TR":
     download_csv('https://stooq.pl/q/d/l/?s=mwig40tr&i=d', csv_filename_index)
     logging.info("=" * 80)
     logging.info("EQUITY MODEL WALK-FORWARD  (MWIG40TR, train=%dy test=%dy)",
              TRAIN_YEARS_EQ, TEST_YEARS_EQ)
     logging.info("=" * 80)
-elif INDEX_CHOICE="SWIG80TR"
+elif INDEX_CHOICE="SWIG80TR":
     download_csv('https://stooq.pl/q/d/l/?s=swig80tr&i=d', csv_filename_index)
     logging.info("=" * 80)
     logging.info("EQUITY MODEL WALK-FORWARD  (SWIG80TR, train=%dy test=%dy)",
              TRAIN_YEARS_EQ, TEST_YEARS_EQ)
     logging.info("=" * 80)
-elif INDEX_CHOICE="STOXX EU 600"
+elif INDEX_CHOICE="STOXX EU 600":
     download_csv('https://stooq.pl/q/d/l/?s=fy.f&i=d', csv_filename_index)
     logging.info("=" * 80)
     logging.info("EQUITY MODEL WALK-FORWARD  (STOXX EU 600, train=%dy test=%dy)",
              TRAIN_YEARS_EQ, TEST_YEARS_EQ)
     logging.info("=" * 80)
-elif INDEX_CHOICE="NASDAQ 100"
+elif INDEX_CHOICE="NASDAQ 100":
     download_csv('https://stooq.pl/q/d/l/?s=^ndq&i=d', csv_filename_index)
     logging.info("=" * 80)
     logging.info("EQUITY MODEL WALK-FORWARD  (Nasdaq 100, train=%dy test=%dy)",
              TRAIN_YEARS_EQ, TEST_YEARS_EQ)
     logging.info("=" * 80)
-elif INDEX_CHOICE="SP500"
+elif INDEX_CHOICE="SP500":
     download_csv('https://stooq.pl/q/d/l/?s=^spx&i=d', csv_filename_index)
     logging.info("=" * 80)
     logging.info("EQUITY MODEL WALK-FORWARD  (SP 500, train=%dy test=%dy)",
              TRAIN_YEARS_EQ, TEST_YEARS_EQ)
     logging.info("=" * 80)
-elif INDEX_CHOICE="Nikkei 225"
+elif INDEX_CHOICE="Nikkei 225":
     download_csv('https://stooq.pl/q/d/l/?s=^nkx&i=d', csv_filename_index)
     logging.info("=" * 80)
     logging.info("EQUITY MODEL WALK-FORWARD  (Nikkei 500, train=%dy test=%dy)",
              TRAIN_YEARS_EQ, TEST_YEARS_EQ)
     logging.info("=" * 80)
-else
+else:
     logging.info("=" * 80)
     logging.info("UNDEFINED INDEX SELECTED - ENDING RUN"  
     logging.info("=" * 80)
