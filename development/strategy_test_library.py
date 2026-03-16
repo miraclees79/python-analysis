@@ -2003,7 +2003,7 @@ def print_backtest_report(metrics,
     # --- show per-window params if available, else single best_params ---
     if wf_results is not None and not wf_results.empty:
         cols = ["TrainStart", "TestStart", "filter_mode",
-                "X", "Y", "fast", "slow", "target_vol", "stop_loss"]
+                "X", "Y", "fast", "slow", "target_vol", "stop_loss", "mom_lookback"]
         # Only show fund_params if fund filter was ever selected
         if "fund_params" in wf_results.columns and \
            wf_results["filter_mode"].eq("fund").any():
