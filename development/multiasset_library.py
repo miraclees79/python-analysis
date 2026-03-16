@@ -332,6 +332,15 @@ def optimise_both_on_weights(
             score = m["Sharpe"]
         elif objective == "sortino":
             score = m["Sortino"]
+        elif objective == "calmar_sortino":
+            if m["CalMAR"] is None or m["Sortino"] is None:
+                return None
+            score = 0.5 * m["CalMAR"] + 0.5 * m["Sortino"]
+        elif objective == "calmar_sharpe":
+            if m["CalMAR"] is None or m["Sharpe"] is None:
+                return None
+            score = 0.5 * m["CalMAR"] + 0.5 * m["Sharpe"]
+
         else:
             raise ValueError(f"Unknown objective: {objective!r}")
 
