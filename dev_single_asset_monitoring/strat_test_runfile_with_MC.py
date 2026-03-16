@@ -673,10 +673,17 @@ if wf_equity is not None and not wf_equity.empty:
         (bh_equity.index >= wf_equity.index.min()) &
         (bh_equity.index <= wf_equity.index.max())
     ]
-    ax.plot(bh_equity_aligned.index, bh_equity_aligned.values,
-            label='Buy & Hold WIG20TR', color='grey',
-            linewidth=1.5, linestyle='--')
-
+    
+    ax.plot(
+    bh_equity_aligned.index,
+    bh_equity_aligned.values,
+    label=f"Buy & Hold {INDEX_CHOICE}",
+    color='grey',
+    linewidth=1.5,
+    linestyle='--'
+    )
+    
+    
     # Shade OOS windows for orientation
     for _, row in wf_results.iterrows():
         ax.axvspan(row["TestStart"], row["TestEnd"], color='grey', alpha=0.07)
