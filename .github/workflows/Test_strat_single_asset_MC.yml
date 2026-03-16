@@ -40,7 +40,7 @@ jobs:
       #    FOLDER_NAME: ${{ secrets.FOLDER_NAME }} 
           
         run: |
-          python strategy_freeze_0_2/strat_test_runfile_with_MC.py
+          python dev_single_asset_monitoring/strat_test_runfile_with_MC.py
       
 
       
