@@ -30,7 +30,7 @@
 # Optional:
 #   NOTIFY_EMAIL_CC           — CC address (leave unset to skip)
 
-name: Daily Strategy Signal
+name: Daily Strategy Signal WIG20TR
 
 on:
   schedule:
