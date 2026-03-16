@@ -182,7 +182,7 @@ elif INDEX_CHOICE=="Nikkei 225":
     logging.info("=" * 80)
 else:
     logging.info("=" * 80)
-    logging.info("UNDEFINED INDEX SELECTED - ENDING RUN"  
+    logging.info("UNDEFINED INDEX SELECTED - ENDING RUN")  
     logging.info("=" * 80)
     sys.exit
 
