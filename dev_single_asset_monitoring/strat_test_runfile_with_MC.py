@@ -135,7 +135,7 @@ logging.info("=" * 80)
 
 # Universe to be investigated: MWIG40TR, SWIG80TR, Stoxx Europe 600 - Eurex (FY.F), Nasdaq Composite - U.S. (^NDQ), S&P 500 - U.S. (^SPX), Nikkei 225 - Japan (^NKX)
 
-INDEX_CHOICE = "MWIG40TR"
+INDEX_CHOICE = "STOXX EU 600"
 
 csv_filename_index = os.path.join(tmp_dir, "target_index.csv")
 if INDEX_CHOICE=="WIG20TR":
@@ -149,16 +149,18 @@ elif INDEX_CHOICE=="SWIG80TR":
 
 elif INDEX_CHOICE=="STOXX EU 600":
     download_csv('https://stooq.pl/q/d/l/?s=fy.f&i=d', csv_filename_index)
+    FORCE_FILTER_MODE =  ["ma","mom"]
 
 elif INDEX_CHOICE=="NASDAQ 100":
     download_csv('https://stooq.pl/q/d/l/?s=^ndq&i=d', csv_filename_index)
-
+    FORCE_FILTER_MODE =  ["ma","mom"]
+    
 elif INDEX_CHOICE=="SP500":
     download_csv('https://stooq.pl/q/d/l/?s=^spx&i=d', csv_filename_index)
-
+    FORCE_FILTER_MODE =  ["ma","mom"]
 elif INDEX_CHOICE=="Nikkei 225":
     download_csv('https://stooq.pl/q/d/l/?s=^nkx&i=d', csv_filename_index)
-
+    FORCE_FILTER_MODE =  ["ma","mom"]
 
 else:
     logging.info("=" * 80)
