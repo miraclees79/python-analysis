@@ -102,8 +102,11 @@ chosen_mode = "full"
 VOL_WINDOW = 20
 FORCE_FILTER_MODE = ["ma","mom"]
 # options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
-RUN_MONTE_CARLO = True # MC parameter robustness
+RUN_MONTE_CARLO = False # MC parameter robustness
 RUN_BLOCK_BOOTSTRAP = False # Run bootstrap robustness test
+TRAIN_YEARS_EQ = 8
+TEST_YEARS_EQ = 2
+
 
 # OBJECTIVE FUNCTION
 OBJECTIVE = "calmar"   # or "calmar", "sharpe", "sortino", "calmar_sortino", "calmar_sharpe"
@@ -128,17 +131,64 @@ logging.info("=" * 80)
 
 
 # Create a temporary file inside the temp directory # Filepath for CSV
-# WIG20TR - target
+# WIG20TR - done
 
-# MWIG40TR - new tgt
+# Universe to be investigated: MWIG40TR, SWIG80TR, Stoxx Europe 600 - Eurex (FY.F), Nasdaq Composite - U.S. (^NDQ), S&P 500 - U.S. (^SPX), Nikkei 225 - Japan (^NKX)
 
-csv_filename_w20tr = os.path.join(tmp_dir, "w20tr.csv")
+INDEX_CHOICE = "MWIG40TR"
 
-#download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr)
-download_csv('https://stooq.pl/q/d/l/?s=mwig40tr&i=d', csv_filename_w20tr)
-INDEX_W20 = load_csv(csv_filename_w20tr)
+csv_filename_index = os.path.join(tmp_dir, "target_index.csv")
+if INDEX_CHOICE="WIG20TR"
+    download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_index)
+    logging.info("=" * 80)
+    logging.info("EQUITY MODEL WALK-FORWARD  (WIG20TR, train=%dy test=%dy)",
+             TRAIN_YEARS_EQ, TEST_YEARS_EQ)
+    logging.info("=" * 80)
+elif INDEX_CHOICE="MWIG40TR"
+    download_csv('https://stooq.pl/q/d/l/?s=mwig40tr&i=d', csv_filename_index)
+    logging.info("=" * 80)
+    logging.info("EQUITY MODEL WALK-FORWARD  (MWIG40TR, train=%dy test=%dy)",
+             TRAIN_YEARS_EQ, TEST_YEARS_EQ)
+    logging.info("=" * 80)
+elif INDEX_CHOICE="SWIG80TR"
+    download_csv('https://stooq.pl/q/d/l/?s=swig80tr&i=d', csv_filename_index)
+    logging.info("=" * 80)
+    logging.info("EQUITY MODEL WALK-FORWARD  (SWIG80TR, train=%dy test=%dy)",
+             TRAIN_YEARS_EQ, TEST_YEARS_EQ)
+    logging.info("=" * 80)
+elif INDEX_CHOICE="STOXX EU 600"
+    download_csv('https://stooq.pl/q/d/l/?s=fy.f&i=d', csv_filename_index)
+    logging.info("=" * 80)
+    logging.info("EQUITY MODEL WALK-FORWARD  (STOXX EU 600, train=%dy test=%dy)",
+             TRAIN_YEARS_EQ, TEST_YEARS_EQ)
+    logging.info("=" * 80)
+elif INDEX_CHOICE="NASDAQ 100"
+    download_csv('https://stooq.pl/q/d/l/?s=^ndq&i=d', csv_filename_index)
+    logging.info("=" * 80)
+    logging.info("EQUITY MODEL WALK-FORWARD  (Nasdaq 100, train=%dy test=%dy)",
+             TRAIN_YEARS_EQ, TEST_YEARS_EQ)
+    logging.info("=" * 80)
+elif INDEX_CHOICE="SP500"
+    download_csv('https://stooq.pl/q/d/l/?s=^spx&i=d', csv_filename_index)
+    logging.info("=" * 80)
+    logging.info("EQUITY MODEL WALK-FORWARD  (SP 500, train=%dy test=%dy)",
+             TRAIN_YEARS_EQ, TEST_YEARS_EQ)
+    logging.info("=" * 80)
+elif INDEX_CHOICE="Nikkei 225"
+    download_csv('https://stooq.pl/q/d/l/?s=^nkx&i=d', csv_filename_index)
+    logging.info("=" * 80)
+    logging.info("EQUITY MODEL WALK-FORWARD  (Nikkei 500, train=%dy test=%dy)",
+             TRAIN_YEARS_EQ, TEST_YEARS_EQ)
+    logging.info("=" * 80)
+else
+    logging.info("=" * 80)
+    logging.info("UNDEFINED INDEX SELECTED - ENDING RUN"  
+    logging.info("=" * 80)
+    sys.exit
 
-df = INDEX_W20
+TARGET_INDEX = load_csv(csv_filename_index)
+
+df = TARGET_INDEX
 
 # CASH series - Goldman Sachs Konserwatywny
 csv_filename_cash = os.path.join(tmp_dir, "GS_konserw2720.csv")
@@ -150,6 +200,11 @@ download_csv(
 )
 
 CASH = load_csv(csv_filename_cash)
+
+logging.info("=" * 80)
+logging.info("EQUITY MODEL WALK-FORWARD  (, train=%dy test=%dy)",
+             TRAIN_YEARS_EQ, TEST_YEARS_EQ)
+logging.info("=" * 80)
 
 
 
@@ -288,7 +343,7 @@ else:
     slow_grid = [150, 200, 250 ]
     tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
     sl_grid     = [0.05, 0.08, 0.10, 0.15]
-    mom_lookback_grid = [252]           # [126, 252]    # ADD
+    mom_lookback_grid = [126, 252]           # [126, 252]    # ADD
     
 #============================
 
@@ -336,7 +391,6 @@ if USE_SHORTER_SAMPLE:
 # ============================
 
 
-
 # -------- Walk Forward --------
 
 logging.info("=" * 80)
@@ -364,8 +418,8 @@ logging.info(
 wf_equity, wf_results, wf_trades = walk_forward(
     df,
     cash_df=CASH,
-    train_years=8,
-    test_years=2,
+    train_years=TRAIN_YEARS_EQ, 
+    test_years=TEST_YEARS_EQ,
     selected_mode=chosen_mode,
     vol_window=VOL_WINDOW,
     funds_df=FUNDS, #DIAG RUN - None             if not using fund filter  FUNDS if using fund filter
