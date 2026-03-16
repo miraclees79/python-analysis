@@ -102,7 +102,7 @@ chosen_mode = "full"
 VOL_WINDOW = 20
 FORCE_FILTER_MODE = ["ma","mom"]
 # options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
-RUN_MONTE_CARLO = False # MC parameter robustness
+RUN_MONTE_CARLO = True # MC parameter robustness
 RUN_BLOCK_BOOTSTRAP = False # Run bootstrap robustness test
 TRAIN_YEARS_EQ = 8
 TEST_YEARS_EQ = 2
