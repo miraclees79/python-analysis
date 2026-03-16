@@ -100,7 +100,7 @@ USER_AGENTS = [
 chosen_mode = "full"
 # options: "vol_entry", "vol_dynamic", "full"
 VOL_WINDOW = 20
-FORCE_FILTER_MODE = ["ma","mom"]
+FORCE_FILTER_MODE = None # ["ma","mom"]
 # options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
 RUN_MONTE_CARLO = True # MC parameter robustness
 RUN_BLOCK_BOOTSTRAP = False # Run bootstrap robustness test
