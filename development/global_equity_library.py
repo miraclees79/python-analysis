@@ -78,11 +78,11 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from strategy_test_library import compute_metrics
-    
-
-
-from multiasset_library import build_signal_series
+from strategy_test_library import (
+    compute_metrics,
+    )
+from multiasset_library import (build_signal_series,
+                                )
 
 # ============================================================
 # CONSTANTS
@@ -578,14 +578,31 @@ def optimise_asset_weights(
     n = len(asset_keys)
     combos = generate_weight_grid(n, step)
 
-    # Align all series to a common index (intersection of available dates)
+    # Align all return series to their shared date range.
+    # Intersect return indices only — do NOT intersect with signal indices.
+    # Signal series are walk-forward OOS signals and may be absent for early
+    # training windows where OOS has not yet started.  Missing signal days
+    # are treated as signal=1 (always invested) for in-sample optimisation.
     common_idx = mmf_returns.index
     for key in asset_keys:
         common_idx = common_idx.intersection(returns_dict[key].index)
-        common_idx = common_idx.intersection(signals_dict[key].index)
+
+    if len(common_idx) < 252:
+        logging.warning(
+            "optimise_asset_weights: common index only %d days (< 252) — "
+            "returning zero weights.", len(common_idx),
+        )
+        return {k: 0.0 for k in asset_keys}, -np.inf
 
     r = {k: returns_dict[k].reindex(common_idx).fillna(0.0) for k in asset_keys}
-    s = {k: signals_dict[k].reindex(common_idx).fillna(0.0) for k in asset_keys}
+    # Use provided signal where available; default to 1 (always invested)
+    s = {}
+    for key in asset_keys:
+        sig = signals_dict.get(key)
+        if sig is not None and len(sig) > 0:
+            s[key] = sig.reindex(common_idx, method="ffill").fillna(1.0)
+        else:
+            s[key] = pd.Series(1.0, index=common_idx)
     mmf_r = mmf_returns.reindex(common_idx).fillna(0.0)
 
     best_weights = {k: 0.0 for k in asset_keys}
@@ -603,6 +620,9 @@ def optimise_asset_weights(
             port_r = port_r + w[key] * (
                 sig_day * r[key] + (1 - sig_day) * mmf_r
             )
+
+        if port_r.empty:
+            continue
 
         equity = (1 + port_r).cumprod()
         equity = equity / equity.iloc[0]
@@ -823,7 +843,11 @@ def allocation_walk_forward_n(
 
         is_returns = {k: _is(returns_dict[k], train_end) for k in asset_keys}
         is_mmf     = _is(mmf_returns, train_end)
-        is_signals = {k: _is(signals_full_dict[k], train_end) for k in asset_keys}
+        # Pass empty signals dict so optimise_asset_weights defaults to
+        # always-invested (signal=1) for all assets during in-sample
+        # weight optimisation.  Walk-forward OOS signals only exist from
+        # the first OOS date and are not available here.
+        is_signals = {}
 
         # Require minimum in-sample length
         min_is_len = min(len(s) for s in is_returns.values())
@@ -860,11 +884,23 @@ def allocation_walk_forward_n(
             ]
 
         oos_sigs    = {k: _oos(signals_oos_dict[k]) for k in asset_keys}
+
+        # Reference index for OOS: use the signal series of the first asset
+        # (all signal series are clipped to the same window in _oos above).
+        # If the first asset's signal is empty this window has no OOS data — skip.
+        ref_oos_idx = oos_sigs[asset_keys[0]].index
+        if ref_oos_idx.empty:
+            logging.warning(
+                "Skipping OOS window %s-%s: no signal data for reference asset.",
+                test_start.date(), test_end.date(),
+            )
+            continue
+
         oos_returns = {
-            k: returns_dict[k].reindex(oos_sigs[asset_keys[0]].index, method="ffill").fillna(0.0)
+            k: returns_dict[k].reindex(ref_oos_idx, method="ffill").fillna(0.0)
             for k in asset_keys
         }
-        oos_mmf     = mmf_returns.reindex(oos_sigs[asset_keys[0]].index, method="ffill").fillna(0.0)
+        oos_mmf     = mmf_returns.reindex(ref_oos_idx, method="ffill").fillna(0.0)
 
         window_equity_vals = []
 
