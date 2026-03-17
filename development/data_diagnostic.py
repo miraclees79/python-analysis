@@ -132,7 +132,7 @@ SWIG80TR = _stooq("swig80tr", "SWIG80TR")
 
 # ── Stooq: Foreign equity indices ────────────────────────────────────────────
 SPX     = _stooq("^spx",  "SP500")
-NKX     = _stooq("nkx",   "Nikkei225")
+NKX     = _stooq("^nkx",   "Nikkei225")
 
 # ── Stooq: TBSP + MMF ────────────────────────────────────────────────────────
 TBSP    = _stooq("^tbsp",  "TBSP")
