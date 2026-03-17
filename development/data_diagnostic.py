@@ -20,8 +20,8 @@ What this script validates
   1. All stooq tickers download successfully and have data back to >= 1990
      (or the earliest available date).
   2. STOXX 600 (yfinance) — actual available history start date.
-  3. URTH / MSCI World (yfinance) — available history start date.
-     Reports whether a longer-history proxy is available on stooq.
+  3. MSCI World combined series — loaded from Google Drive
+     (built once by wsj_msci_world.py; Drive path identical to other outputs).
   4. All FX series (USDPLN, EURPLN, JPYPLN) download from stooq.
   5. The MWIG40TR + SWIG80TR 50:50 blend constructs without gaps.
   6. PLN-adjusted returns (both hedged and unhedged) are computed for
@@ -52,21 +52,18 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from strategy_test_library import download_csv, load_csv
 from global_equity_library import (
     download_yfinance,
-    yfinance_to_stooq,
     build_return_series,
     build_blend,
-    build_price_df_from_returns,
     CLOSE_COL,
     DATA_START,
     FX_TICKERS,
-    YFINANCE_TICKERS,
 )
-from wsj_msci_world import (
-    download_wsj_msci_world,
-    load_wsj_manual_csv,
-    stitch_msci_world,
-    load_combined_csv,
-)
+from wsj_msci_world import (load_combined_from_drive,
+                            build_and_upload,
+                            COMBINED_DRIVE_FILENAME,
+                            CREDENTIALS_PATH,
+                            WSJ_DRIVE_FILENAME,
+                            )
 
 # ============================================================
 # LOGGING
@@ -94,6 +91,10 @@ logging.info("=" * 80)
 # ============================================================
 # USER SETTINGS
 # ============================================================
+
+# Google Drive folder ID — same folder used by all other strategy scripts.
+# Env var GDRIVE_FOLDER_ID takes precedence over this hardcoded value.
+GDRIVE_FOLDER_ID_DEFAULT = ""   # <- paste your folder ID here
 
 # Diagnostic-only FX switch: plot both hedged and unhedged for comparison
 SHOW_BOTH_FX = True
@@ -138,7 +139,7 @@ SWIG80TR = _stooq("swig80tr", "SWIG80TR")
 
 # ── Stooq: Foreign equity indices ────────────────────────────────────────────
 SPX     = _stooq("^spx",  "SP500")
-NKX     = _stooq("nkx",   "Nikkei225")
+NKX     = _stooq("^nkx",   "Nikkei225")
 
 # ── Stooq: TBSP + MMF ────────────────────────────────────────────────────────
 TBSP    = _stooq("^tbsp",  "TBSP")
@@ -160,35 +161,56 @@ if STOXX600 is not None:
 else:
     logging.error("FAIL: STOXX600 — yfinance download returned None.")
 
-# ── yfinance: MSCI World proxy (URTH ETF) ────────────────────────────────────
-URTH = download_yfinance("URTH", start=DATA_START)
-if URTH is not None:
-    logging.info(
-        "OK  : %-14s  %5d rows  %s to %s",
-        "URTH(yf)", len(URTH),
-        URTH.index.min().date(), URTH.index.max().date(),
-    )
-else:
-    logging.warning("WARN: URTH not available. Trying iShares IWDA.L as fallback.")
-    URTH = download_yfinance("IWDA.L", start=DATA_START)
-    if URTH is not None:
-        logging.info(
-            "OK  : %-14s  %5d rows  %s to %s",
-            "IWDA.L(yf)", len(URTH),
-            URTH.index.min().date(), URTH.index.max().date(),
-        )
-    else:
-        logging.error("FAIL: Both URTH and IWDA.L unavailable.")
+# ── MSCI World combined series — load from Google Drive ──────────────────────
+# Built once by wsj_msci_world.py (WSJ raw history + URTH extension).
+# The diagnostic rebuilts the file (coud be changed to only read the pre-built file)
+folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip() or GDRIVE_FOLDER_ID_DEFAULT.strip()
 
-# ── stooq: MSCI World check (stooq may carry ^MSCIW or similar) ───────────────
-MSCIW_STOOQ = _stooq("^msciw", "MSCIW_stooq")
-if MSCIW_STOOQ is not None:
-    logging.info("NOTE: MSCI World index found on stooq — longer history available.")
+result = build_and_upload()
+
+if result is not None:
+        print(
+            f"\nCombined MSCI World series ready.\n"
+            f"  {len(result)} trading days\n"
+            f"  {result.index.min().date()} to {result.index.max().date()}\n"
+            f"  Uploaded to Drive as: {COMBINED_DRIVE_FILENAME}\n"
+            f"  Local copy:           "
+            f"{os.path.join(tempfile.gettempdir(), COMBINED_DRIVE_FILENAME)}\n"
+        )
 else:
-    logging.info(
-        "NOTE: MSCI World not found on stooq (^msciw). "
-        "URTH/IWDA.L will be used for Mode B (msci_world)."
+        print(
+            "\nBuild failed.  Check wsj_msci_world.log for details.\n\n"
+            "Likely causes:\n"
+            "  1. GDRIVE_FOLDER_ID not set -- edit USER SETTINGS above\n"
+            f"  2. credentials.json missing at {CREDENTIALS_PATH}\n"
+            f"  3. WSJ CSV not uploaded -- upload '{WSJ_DRIVE_FILENAME}' to Drive\n"
+            "  4. yfinance not installed -- pip install yfinance\n"
+        )
+
+URTH = None
+if not folder_id:
+    logging.warning(
+        "WARN: GDRIVE_FOLDER_ID not set — MSCI World series will be missing.\n"
+        "  Set GDRIVE_FOLDER_ID_DEFAULT in USER SETTINGS or the env var, then re-run.\n"
+        "  Build the combined file first with:  python wsj_msci_world.py"
     )
+else:
+    try:
+        URTH = load_combined_from_drive(folder_id=folder_id)
+        if URTH is not None:
+            logging.info(
+                "OK  : %-14s  %5d rows  %s to %s",
+                "MSCI_World", len(URTH),
+                URTH.index.min().date(), URTH.index.max().date(),
+            )
+        else:
+            logging.warning(
+                "WARN: msci_world_combined.csv not found in Drive folder %s.\n"
+                "  Run wsj_msci_world.py to build it, then retry.",
+                folder_id,
+            )
+    except Exception as exc:
+        logging.error("FAIL: MSCI World Drive load — %s", exc)
 
 # ============================================================
 # PHASE 2 — SERIES SUMMARY

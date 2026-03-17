@@ -1,179 +1,298 @@
 """
 wsj_msci_world.py
 =================
-Downloads and processes MSCI World index historical price data from the
-Wall Street Journal (WSJ) market data page, index code 990100.
+Builds and maintains the combined MSCI World price series used by the
+global equity framework (Mode B -- msci_world portfolio).
 
-URL: https://www.wsj.com/market-data/quotes/index/XX/990100/historical-prices
+DATA CHAIN
+----------
+  Base series -- WSJ MSCI World (USD):
+    Downloaded manually from:
+      https://www.wsj.com/market-data/quotes/index/XX/990100/historical-prices
+    Saved to Google Drive.  This script reads it from there.
+    Provides history back to approximately 2010.
 
-PURPOSE
--------
-The WSJ carries MSCI World (price-only, USD) data back to around 2010.
-This module provides a longer pre-2012 history that supplements the
-yfinance URTH ETF series (available only from 2012) for the msci_world
-portfolio mode.
+  Extension -- URTH ETF (iShares MSCI World, USD):
+    Downloaded from Yahoo Finance via yfinance.
+    Used ONLY to extend the base series forward from its last date.
+    No level rescaling, no overlap ratio, no multiplier.
 
-The combined series is:
-  1990–[wsj_end]  : WSJ MSCI World price index (USD, price return only)
-  [urth_start]+   : yfinance URTH ETF (USD, total return, includes dividends)
+EXTENSION METHOD
+----------------
+  The WSJ base series is the authoritative source for all dates it covers.
+  URTH is used exclusively to add new trading days after the base series
+  ends, using a pure return chain:
 
-Because WSJ provides price-only and URTH is total-return (includes dividends),
-the two series are chain-linked at the overlap date using a scalar multiplier
-so that they form a continuous relative return series. Absolute level is
-normalised to 100 at the splice point. The slight return difference in the
-overlap (dividends) is documented in the log but not corrected — it is
-considered immaterial for a trend-following signal which cares about
-direction, not absolute level.
+    last_base_price = base_series.iloc[-1]
+    urth_returns    = URTH[CLOSE_COL].pct_change()  (days after base end only)
+    extension       = last_base_price * (1 + urth_returns).cumprod()
+    combined        = concat(base_series, extension)
 
-TWO DATA ACCESS PATHS
----------------------
-Path A — Automatic download (WSJ API):
-  WSJ serves historical data via a paginated JSON API. The scraper
-  iterates through pages (each returning up to 12 months of data)
-  until the requested start date is reached or no more data is found.
-  Endpoint: https://www.wsj.com/market-data/quotes/index/XX/990100/historical-prices
-  with countback / startDate / endDate query parameters.
+  This means:
+  - The base series levels are preserved exactly, with no rescaling.
+  - The extension inherits the same level as the last base observation.
+  - Any level difference between WSJ and URTH (e.g. from dividends or
+    index vs ETF tracking) is irrelevant -- only URTH daily returns are
+    used, not its absolute level.
 
-  NOTE: WSJ uses anti-scraping measures (JS challenge, cookies, rate limits).
-  The automated path uses a session with browser-like headers and short
-  delays. It may fail if WSJ updates its protection. In that case use Path B.
+TWO PIPELINE MODES
+------------------
+  First build:
+    WSJ CSV (Drive) --> parse --> extend with URTH --> save combined (Drive)
 
-Path B — Manual CSV load (robust fallback):
-  The user downloads the CSV manually from the WSJ historical-prices page
-  (click "Download" button on the page) and saves it to a known path.
-  This module loads and normalises that CSV.
+  Subsequent updates (daily runner):
+    Combined CSV (Drive) --> extend with URTH --> save combined (Drive)
+    The WSJ raw CSV is not re-read; the combined CSV is the new base.
 
-  WSJ CSV format (as of 2024):
-    Date,Open,High,Low,Close,Volume
-    12/31/24,3745.52,3748.10,3730.22,3741.88,0
-  Dates are in MM/DD/YY or MM/DD/YYYY format, comma-separated.
+HOW TO RUN FROM IDE
+-------------------
+  1. Set GDRIVE_FOLDER_ID in USER SETTINGS below (or set the env var).
+  2. Ensure credentials.json is in your system temp directory.
+  3. Upload your WSJ CSV to Drive with filename WSJ_DRIVE_FILENAME.
+  4. Run:  python wsj_msci_world.py
 
-OUTPUTS
--------
-  wsj_msci_world_raw.csv     — raw data as downloaded/parsed, stooq format
-  msci_world_combined.csv    — stitched WSJ + URTH series, stooq format
+OUTPUTS (Google Drive)
+----------------------
+  msci_world_combined.csv  --  stooq-format, columns:
+                               Data (index, YYYY-MM-DD), Zamkniecie,
+                               Najwyzszy, Najnizszy
+                               Normalised to 100.0 on the first date.
 
-Both CSVs use the stooq column convention (Data, Zamkniecie) and are
-suitable for direct use with load_csv() from strategy_test_library.
+IMPORTABLE API
+--------------
+  build_and_upload()           Full pipeline (first build or update).
+  extend_with_urth(base, urth) Extend base series using URTH daily returns.
+  load_combined_from_drive()   Load pre-built combined CSV from Drive.
+  load_wsj_manual_csv(source)  Parse WSJ CSV (path, bytes, or file-like).
 
-USAGE
------
-  # Automatic download attempt:
-  from wsj_msci_world import download_wsj_msci_world, stitch_msci_world
-  wsj_df = download_wsj_msci_world(start="1990-01-01", output_csv="wsj_msci_world_raw.csv")
-
-  # Manual CSV path (preferred for reliability):
-  wsj_df = load_wsj_manual_csv("path/to/wsj_download.csv")
-
-  # Stitch with URTH:
-  combined = stitch_msci_world(wsj_df, urth_df, output_csv="msci_world_combined.csv")
+CREDENTIALS
+-----------
+  os.path.join(tempfile.gettempdir(), "credentials.json")
+  Same service account JSON used by all other strategy scripts.
+  Same GDRIVE_FOLDER_ID env var / Drive folder.
 """
 
 import io
-import os
-import time
-import random
 import logging
+import os
+import sys
+import tempfile
 import datetime as dt
 
 import numpy as np
 import pandas as pd
-import requests
+from pathlib import Path
 
-# ============================================================
-# CONSTANTS
-# ============================================================
+# Google Drive (required)
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build as _gdrive_build
+    from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
+    _GDRIVE_AVAILABLE = True
+except ImportError:
+    _GDRIVE_AVAILABLE = False
 
-CLOSE_COL   = "Zamkniecie"
-DATA_START  = "1990-01-01"
-
-WSJ_BASE_URL = (
-    "https://www.wsj.com/market-data/quotes/index/XX/990100/historical-prices"
-)
-
-# WSJ JSON API endpoint — returns paginated JSON with daily OHLC.
-# Parameters: startDate=YYYY-MM-DD, endDate=YYYY-MM-DD, num=<rows>
-WSJ_API_URL = (
-    "https://markets.wsj.com/market-data/quotes/"
-    "historical/USINDICES?ticker=990100"
-    "&countryCode=US&duration={duration}&startDate={start}&endDate={end}"
-    "&pageSize=9999&pageNumber=1"
-)
-
-# Alternative endpoint observed in WSJ network traffic (as of 2024)
-WSJ_API_URL_V2 = (
-    "https://api.wsj.net/api/dylan/markets/v2/quotes/historical"
-    "?ticker=XX%2F990100&countryCode=XX&startDate={start}&endDate={end}"
-    "&type=Index&id=990100&country=XX&exchange=XX&journal=M"
-)
-
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) "
-    "Gecko/20100101 Firefox/125.0",
-]
-
-MAX_RETRIES = 3
-RETRY_DELAY = 2.0      # seconds, doubles on each retry
-REQUEST_DELAY = 1.5    # seconds between page requests (polite rate limit)
+# yfinance (required for extension)
+try:
+    import yfinance as yf
+    _YFINANCE_AVAILABLE = True
+except ImportError:
+    _YFINANCE_AVAILABLE = False
 
 
 # ============================================================
-# PATH B — MANUAL CSV LOAD
+# USER SETTINGS  <- edit when running from IDE
 # ============================================================
 
-def load_wsj_manual_csv(filepath: str) -> pd.DataFrame | None:
+# Google Drive folder ID -- same folder used by all other strategy scripts.
+# Env var GDRIVE_FOLDER_ID takes precedence over this hardcoded value.
+GDRIVE_FOLDER_ID_DEFAULT = ""   # <- paste your folder ID here
+
+# Filename of the WSJ CSV you uploaded to Google Drive
+WSJ_DRIVE_FILENAME = "msci_world_wsj_raw.csv"
+
+# Output filename in Google Drive (read and written by this script)
+COMBINED_DRIVE_FILENAME = "msci_world_combined.csv"
+
+# yfinance ticker for MSCI World ETF extension
+# URTH  = iShares MSCI World ETF (USD, from 2012)
+# IWDA.L= iShares MSCI World UCITS ETF (USD, LSE-listed, from 2009)
+URTH_TICKER          = "URTH"
+URTH_FALLBACK_TICKER = "IWDA.L"
+
+# Data floor -- all series clipped to this date
+DATA_START = "1990-01-01"
+
+# stooq close column name used throughout the framework
+CLOSE_COL = "Zamkniecie"
+
+# Credentials file path (same convention as all other strategy scripts)
+CREDENTIALS_PATH = os.path.join(tempfile.gettempdir(), "credentials.json")
+
+# Log file (written when the script runs as __main__)
+LOG_FILE = "wsj_msci_world.log"
+
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+def _setup_logging() -> None:
+    """Configure logging to console + file (only when run as __main__)."""
+    root = logging.getLogger()
+    if root.handlers:
+        return  # already configured by a caller runfile
+    root.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setFormatter(fmt)
+    root.addHandler(ch)
+    fh = logging.FileHandler(LOG_FILE, mode="w", encoding="utf-8")
+    fh.setFormatter(fmt)
+    root.addHandler(fh)
+
+
+# ============================================================
+# GOOGLE DRIVE HELPERS
+# ============================================================
+
+def _get_folder_id() -> str:
+    """Return GDRIVE_FOLDER_ID from env var or USER SETTINGS fallback."""
+    folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip()
+    if not folder_id:
+        folder_id = GDRIVE_FOLDER_ID_DEFAULT.strip()
+    if not folder_id:
+        raise ValueError(
+            "GDRIVE_FOLDER_ID is not set.\n"
+            "  Option A: set GDRIVE_FOLDER_ID_DEFAULT in USER SETTINGS "
+            "in wsj_msci_world.py\n"
+            "  Option B: set the environment variable GDRIVE_FOLDER_ID "
+            "before running"
+        )
+    return folder_id
+
+
+def _get_drive_service():
+    """Build an authenticated Google Drive service from credentials.json."""
+    if not _GDRIVE_AVAILABLE:
+        raise ImportError(
+            "google-api-python-client / google-auth not installed.\n"
+            "  pip install google-api-python-client google-auth"
+        )
+    if not os.path.exists(CREDENTIALS_PATH):
+        raise FileNotFoundError(
+            f"credentials.json not found at: {CREDENTIALS_PATH}\n"
+            "  Place the service account JSON at that path and retry."
+        )
+    creds = service_account.Credentials.from_service_account_file(
+        CREDENTIALS_PATH,
+        scopes=["https://www.googleapis.com/auth/drive"],
+    )
+    return _gdrive_build("drive", "v3", credentials=creds)
+
+
+def _find_file_id(service, folder_id: str, filename: str):
+    """Return the Drive file ID for `filename` in `folder_id`, or None."""
+    q = (
+        f"name='{filename}' "
+        f"and '{folder_id}' in parents "
+        f"and trashed=false"
+    )
+    results = service.files().list(q=q, fields="files(id,name)").execute()
+    files   = results.get("files", [])
+    return files[0]["id"] if files else None
+
+
+def _download_bytes_from_drive(service, file_id: str) -> bytes:
+    """Download a Drive file by ID and return its raw bytes."""
+    request    = service.files().get_media(fileId=file_id)
+    buf        = io.BytesIO()
+    downloader = MediaIoBaseDownload(buf, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    return buf.getvalue()
+
+
+def _upload_to_drive(
+    service,
+    folder_id: str,
+    local_path: str,
+    filename:   str,
+    mimetype:   str = "text/csv",
+) -> str:
+    """Upload a local file to Drive, updating in-place if it exists."""
+    existing_id = _find_file_id(service, folder_id, filename)
+    media       = MediaFileUpload(local_path, mimetype=mimetype, resumable=True)
+    if existing_id:
+        service.files().update(fileId=existing_id, media_body=media).execute()
+        logging.info("Drive UPDATED : %s  (id=%s)", filename, existing_id)
+        return existing_id
+    else:
+        metadata = {"name": filename, "parents": [folder_id]}
+        result   = service.files().create(
+            body=metadata, media_body=media, fields="id"
+        ).execute()
+        fid = result["id"]
+        logging.info("Drive CREATED : %s  (id=%s)", filename, fid)
+        return fid
+
+
+# ============================================================
+# WSJ CSV PARSING
+# ============================================================
+
+def load_wsj_manual_csv(source) -> pd.DataFrame | None:
     """
-    Load and normalise a manually downloaded WSJ historical prices CSV.
+    Parse a WSJ historical-prices CSV into a stooq-format DataFrame.
 
-    WSJ CSV download format (as of 2025):
-      - Comma-separated
-      - Header row: Date,Open,High,Low,Close,Volume  (exact names may vary)
-      - Date format: MM/DD/YY or MM/DD/YYYY (e.g. "01/15/10" or "01/15/2010")
-      - No currency symbol; prices are plain floats
-      - Volume is typically 0 for indices
+    Accepts a file path (str/Path), raw bytes, or any file-like object,
+    so it can be called directly with Drive-downloaded bytes.
 
-    Normalised output: stooq-format DataFrame with DatetimeIndex named 'Data'
-    and column 'Zamkniecie' (plus Najwyzszy, Najnizszy for high/low).
-
-    Parameters
-    ----------
-    filepath : str  — path to the manually saved WSJ CSV file
+    WSJ CSV format (as of 2025):
+      Date,Open,High,Low,Close,Volume
+      01/15/25,3741.00,3748.10,3730.22,3741.88,0
+    Dates: MM/DD/YY or MM/DD/YYYY.
+    Prices may use commas as thousands separators.
 
     Returns
     -------
-    pd.DataFrame | None
+    pd.DataFrame | None  -- stooq-format with CLOSE_COL, Najwyzszy, Najnizszy
     """
-    if not os.path.exists(filepath):
-        logging.error(
-            "load_wsj_manual_csv: file not found: %s\n"
-            "  Download the CSV manually from:\n"
-            "  %s\n"
-            "  Click the 'Download' button and save the file.",
-            filepath, WSJ_BASE_URL,
-        )
-        return None
+    # Read raw bytes from path, bytes, or file-like
+    if isinstance(source, (str, Path)):
+        path = Path(source)
+        if not path.exists():
+            logging.error("load_wsj_manual_csv: file not found: %s", path)
+            return None
+        raw_bytes = path.read_bytes()
+    elif isinstance(source, bytes):
+        raw_bytes = source
+    else:
+        raw_bytes = source.read()
 
-    logging.info("load_wsj_manual_csv: reading %s ...", filepath)
-
-    # Try reading with different encodings — WSJ sometimes uses UTF-8-BOM
+    # Decode with fallback encodings (WSJ sometimes writes UTF-8-BOM)
     for encoding in ("utf-8-sig", "utf-8", "latin-1"):
         try:
-            raw = pd.read_csv(filepath, encoding=encoding, thousands=",")
+            raw = pd.read_csv(
+                io.BytesIO(raw_bytes),
+                encoding=encoding,
+                thousands=",",
+                skipinitialspace=True,
+            )
             break
         except Exception:
             continue
     else:
-        logging.error("load_wsj_manual_csv: could not read %s.", filepath)
+        logging.error("load_wsj_manual_csv: could not decode CSV content.")
         return None
 
-    logging.info("  Raw columns: %s", list(raw.columns))
-    logging.info("  Raw shape:   %s", raw.shape)
+    logging.info(
+        "load_wsj_manual_csv: raw shape=%s  columns=%s",
+        raw.shape, list(raw.columns),
+    )
 
-    # Normalise column names — WSJ uses various capitalisations
+    # Normalise column names
     col_map = {}
     for col in raw.columns:
         c = col.strip().lower()
@@ -185,639 +304,515 @@ def load_wsj_manual_csv(filepath: str) -> pd.DataFrame | None:
             col_map[col] = "High"
         elif c in ("low", "lo"):
             col_map[col] = "Low"
-        elif c in ("close", "price", "last"):
+        elif c in ("close", "price", "last", "adj close"):
             col_map[col] = "Close"
-
     raw = raw.rename(columns=col_map)
 
     if "Date" not in raw.columns:
         logging.error(
-            "load_wsj_manual_csv: no date column found. "
-            "Columns present: %s", list(raw.columns)
+            "load_wsj_manual_csv: no date column found. Columns: %s",
+            list(raw.columns),
         )
         return None
-
     if "Close" not in raw.columns:
         logging.error(
-            "load_wsj_manual_csv: no close/price column found. "
-            "Columns present: %s", list(raw.columns)
+            "load_wsj_manual_csv: no close column found. Columns: %s",
+            list(raw.columns),
         )
         return None
 
-    # Parse dates — WSJ uses MM/DD/YY and MM/DD/YYYY
-    # format="mixed" handles both gracefully in pandas >= 2.0;
-    # dayfirst=False ensures MM/DD/YY is parsed correctly (not DD/MM/YY)
-    raw["Date"] = pd.to_datetime(raw["Date"], format="mixed", dayfirst=False, errors="coerce")
+    # Parse dates -- handles MM/DD/YY and MM/DD/YYYY
+    raw["Date"] = pd.to_datetime(
+        raw["Date"].astype(str).str.strip(),
+        format="mixed",
+        dayfirst=False,
+        errors="coerce",
+    )
     raw = raw.dropna(subset=["Date"])
 
-    # Build stooq-format output
-    out = pd.DataFrame(index=raw["Date"])
+    if raw.empty:
+        logging.error("load_wsj_manual_csv: no valid dates after parsing.")
+        return None
+
+    # Build stooq-format DataFrame
+    out = pd.DataFrame(index=raw["Date"].values)
+    out.index      = pd.to_datetime(out.index).tz_localize(None)
     out.index.name = "Data"
-    out.index = pd.to_datetime(out.index).tz_localize(None)
 
-    out[CLOSE_COL] = pd.to_numeric(raw["Close"].values, errors="coerce")
-
-    if "High" in raw.columns:
-        out["Najwyzszy"] = pd.to_numeric(raw["High"].values, errors="coerce")
-    else:
-        out["Najwyzszy"] = out[CLOSE_COL]
-
-    if "Low" in raw.columns:
-        out["Najnizszy"] = pd.to_numeric(raw["Low"].values, errors="coerce")
-    else:
-        out["Najnizszy"] = out[CLOSE_COL]
-
-    out = out.dropna(subset=[CLOSE_COL]).sort_index()
-    out = out.loc[out.index >= pd.Timestamp(DATA_START)]
-    out = out[~out.index.duplicated(keep="last")]
-
-    logging.info(
-        "load_wsj_manual_csv: loaded %d rows  %s to %s",
-        len(out), out.index.min().date(), out.index.max().date(),
+    out[CLOSE_COL]   = pd.to_numeric(raw["Close"].values,  errors="coerce")
+    out["Najwyzszy"] = (
+        pd.to_numeric(raw["High"].values, errors="coerce")
+        if "High" in raw.columns else out[CLOSE_COL]
     )
-    return out
-
-
-# ============================================================
-# PATH A — AUTOMATIC DOWNLOAD (WSJ JSON API)
-# ============================================================
-
-def _make_session() -> requests.Session:
-    """Build a requests.Session with browser-like headers."""
-    s = requests.Session()
-    s.headers.update({
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Referer": "https://www.wsj.com/",
-        "Origin": "https://www.wsj.com",
-        "Connection": "keep-alive",
-    })
-    return s
-
-
-def _fetch_wsj_page_v2(
-    session: requests.Session,
-    start: str,
-    end: str,
-) -> list[dict] | None:
-    """
-    Fetch one page of WSJ MSCI World data via the v2 API.
-
-    Returns a list of row dicts with keys: date, open, high, low, close.
-    Returns None on failure.
-
-    This endpoint is observed in WSJ browser network traffic as of 2024–2025.
-    WSJ may change it without notice — the scraper should fail gracefully
-    and instruct the user to use the manual CSV path.
-    """
-    url = WSJ_API_URL_V2.format(start=start, end=end)
-    delay = RETRY_DELAY
-
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            resp = session.get(url, timeout=15)
-
-            if resp.status_code == 200:
-                try:
-                    data = resp.json()
-                except ValueError:
-                    logging.warning(
-                        "WSJ API: non-JSON response (attempt %d). "
-                        "Content starts: %s",
-                        attempt, resp.text[:200],
-                    )
-                    time.sleep(delay)
-                    delay *= 2
-                    continue
-
-                # Navigate the JSON structure — WSJ wraps data in nested dicts
-                # Observed structure: data["data"]["instrumentTimeSeries"][0]["priceTimeSeries"]
-                rows = _extract_rows_from_json(data)
-                if rows is not None:
-                    return rows
-
-                logging.warning(
-                    "WSJ API: unexpected JSON structure (attempt %d). "
-                    "Keys at root: %s",
-                    attempt, list(data.keys()) if isinstance(data, dict) else type(data),
-                )
-
-            elif resp.status_code == 403:
-                logging.warning(
-                    "WSJ API: 403 Forbidden — anti-scraping protection active. "
-                    "Use the manual CSV download path instead."
-                )
-                return None  # Non-retryable
-
-            elif resp.status_code == 429:
-                logging.warning("WSJ API: rate limited (429). Waiting before retry.")
-                time.sleep(delay * 3)
-                delay *= 2
-                continue
-
-            else:
-                logging.warning(
-                    "WSJ API: HTTP %d (attempt %d)", resp.status_code, attempt
-                )
-
-        except requests.exceptions.Timeout:
-            logging.warning("WSJ API: timeout (attempt %d)", attempt)
-        except requests.exceptions.RequestException as exc:
-            logging.warning("WSJ API: request error %s (attempt %d)", exc, attempt)
-
-        if attempt < MAX_RETRIES:
-            time.sleep(delay)
-            delay *= 2
-
-    logging.error("WSJ API: all %d attempts failed for %s to %s.", MAX_RETRIES, start, end)
-    return None
-
-
-def _extract_rows_from_json(data: dict) -> list[dict] | None:
-    """
-    Navigate WSJ JSON response structure to extract OHLC rows.
-
-    WSJ has changed its JSON structure multiple times. This function
-    tries several known structures and returns the first that works.
-
-    Returns list of dicts with keys: date (str YYYY-MM-DD), close (float),
-    open (float), high (float), low (float). Returns None if no known
-    structure matches.
-    """
-    if not isinstance(data, dict):
-        return None
-
-    # --- Structure 1: data["data"]["instrumentTimeSeries"][0]["priceTimeSeries"] ---
-    try:
-        ts = data["data"]["instrumentTimeSeries"][0]["priceTimeSeries"]
-        rows = []
-        for entry in ts:
-            date_ms = entry.get("dateTime") or entry.get("date")
-            if date_ms is None:
-                continue
-            # dateTime may be milliseconds epoch or ISO string
-            if isinstance(date_ms, (int, float)):
-                date_str = pd.Timestamp(date_ms, unit="ms").strftime("%Y-%m-%d")
-            else:
-                date_str = str(date_ms)[:10]  # take YYYY-MM-DD prefix
-            close = entry.get("value") or entry.get("close") or entry.get("price")
-            if close is None:
-                continue
-            rows.append({
-                "date":  date_str,
-                "close": float(close),
-                "open":  float(entry.get("open",  close)),
-                "high":  float(entry.get("high",  close)),
-                "low":   float(entry.get("low",   close)),
-            })
-        if rows:
-            return rows
-    except (KeyError, IndexError, TypeError):
-        pass
-
-    # --- Structure 2: data["PricePeriods"] (older WSJ API) ---
-    try:
-        periods = data["PricePeriods"]
-        rows = []
-        for p in periods:
-            rows.append({
-                "date":  str(p.get("Date", p.get("date", "")))[:10],
-                "close": float(p.get("Price", p.get("Close", p.get("close", 0)))),
-                "open":  float(p.get("Open",  p.get("open",  0))),
-                "high":  float(p.get("High",  p.get("high",  0))),
-                "low":   float(p.get("Low",   p.get("low",   0))),
-            })
-        if rows:
-            return rows
-    except (KeyError, TypeError):
-        pass
-
-    # --- Structure 3: flat list of OHLC dicts ---
-    try:
-        if isinstance(data, list) and len(data) > 0 and "close" in data[0]:
-            rows = []
-            for p in data:
-                rows.append({
-                    "date":  str(p.get("date", p.get("Date", "")))[:10],
-                    "close": float(p.get("close", p.get("Close", 0))),
-                    "open":  float(p.get("open",  p.get("Open",  0))),
-                    "high":  float(p.get("high",  p.get("High",  0))),
-                    "low":   float(p.get("low",   p.get("Low",   0))),
-                })
-            if rows:
-                return rows
-    except (KeyError, TypeError):
-        pass
-
-    return None
-
-
-def download_wsj_msci_world(
-    start: str = DATA_START,
-    end:   str | None = None,
-    output_csv: str | None = "wsj_msci_world_raw.csv",
-) -> pd.DataFrame | None:
-    """
-    Download MSCI World historical price data from WSJ.
-
-    Fetches data from the WSJ API in annual chunks from `start` to `end`,
-    building a complete daily price series. Saves the result to `output_csv`
-    in stooq format if specified.
-
-    IMPORTANT: WSJ uses anti-scraping protection. If this function returns
-    None or logs 403/non-JSON errors, switch to the manual CSV path:
-      1. Visit: https://www.wsj.com/market-data/quotes/index/XX/990100/historical-prices
-      2. Set the date range and click "Download"
-      3. Save the file and pass the path to load_wsj_manual_csv()
-
-    Parameters
-    ----------
-    start      : str       — start date "YYYY-MM-DD" (default DATA_START)
-    end        : str|None  — end date "YYYY-MM-DD" (default: today)
-    output_csv : str|None  — if set, saves raw result to this path
-
-    Returns
-    -------
-    pd.DataFrame | None  — stooq-format DataFrame or None on failure
-    """
-    if end is None:
-        end = dt.date.today().strftime("%Y-%m-%d")
-
-    logging.info(
-        "download_wsj_msci_world: requesting %s to %s ...", start, end
+    out["Najnizszy"] = (
+        pd.to_numeric(raw["Low"].values, errors="coerce")
+        if "Low" in raw.columns else out[CLOSE_COL]
     )
 
-    session = _make_session()
-
-    # Fetch in annual chunks to reduce per-request size and respect rate limits
-    all_rows: list[dict] = []
-    current_start = pd.Timestamp(start)
-    end_ts        = pd.Timestamp(end)
-
-    while current_start <= end_ts:
-        chunk_end = min(
-            current_start + pd.DateOffset(years=1) - pd.DateOffset(days=1),
-            end_ts,
-        )
-        start_str = current_start.strftime("%Y-%m-%d")
-        end_str   = chunk_end.strftime("%Y-%m-%d")
-
-        logging.info("  Fetching chunk: %s to %s ...", start_str, end_str)
-        rows = _fetch_wsj_page_v2(session, start_str, end_str)
-
-        if rows is None:
-            logging.error(
-                "  WSJ API failed for chunk %s–%s. "
-                "Switching to manual CSV path is recommended.",
-                start_str, end_str,
-            )
-            # Return whatever we have so far (partial), or None if nothing
-            if not all_rows:
-                return None
-            logging.warning(
-                "  Returning partial data (%d rows) up to last successful chunk.",
-                len(all_rows),
-            )
-            break
-
-        all_rows.extend(rows)
-        logging.info("  Chunk returned %d rows (cumulative: %d)", len(rows), len(all_rows))
-
-        current_start = chunk_end + pd.DateOffset(days=1)
-        time.sleep(REQUEST_DELAY + random.uniform(0, 0.5))
-
-    if not all_rows:
-        logging.error("download_wsj_msci_world: no data retrieved.")
-        return None
-
-    df = _rows_to_stooq_df(all_rows)
-
-    if df is None or df.empty:
-        logging.error("download_wsj_msci_world: failed to build DataFrame from rows.")
-        return None
-
-    if output_csv:
-        _save_stooq_csv(df, output_csv)
-
-    logging.info(
-        "download_wsj_msci_world: %d rows  %s to %s",
-        len(df), df.index.min().date(), df.index.max().date(),
-    )
-    return df
-
-
-# ============================================================
-# INTERNAL HELPERS
-# ============================================================
-
-def _rows_to_stooq_df(rows: list[dict]) -> pd.DataFrame | None:
-    """Convert a list of OHLC row dicts to a stooq-format DataFrame."""
-    if not rows:
-        return None
-
-    raw = pd.DataFrame(rows)
-
-    raw["date"] = pd.to_datetime(raw["date"], errors="coerce")
-    raw = raw.dropna(subset=["date"])
-    raw = raw.sort_values("date").drop_duplicates("date", keep="last")
-
-    out = pd.DataFrame(index=raw["date"])
-    out.index.name  = "Data"
-    out.index       = pd.to_datetime(out.index).tz_localize(None)
-    out[CLOSE_COL]  = pd.to_numeric(raw["close"].values, errors="coerce")
-    out["Najwyzszy"] = pd.to_numeric(raw["high"].values,  errors="coerce")
-    out["Najnizszy"] = pd.to_numeric(raw["low"].values,   errors="coerce")
-
-    # Fallback: if high/low are zero or NaN, use close
+    # Replace zero/negative high/low with close
     out["Najwyzszy"] = out["Najwyzszy"].where(out["Najwyzszy"] > 0, out[CLOSE_COL])
     out["Najnizszy"] = out["Najnizszy"].where(out["Najnizszy"] > 0, out[CLOSE_COL])
 
-    out = out.dropna(subset=[CLOSE_COL])
-    out = out.loc[out.index >= pd.Timestamp(DATA_START)]
-
-    return out
-
-
-def _save_stooq_csv(df: pd.DataFrame, path: str) -> None:
-    """Save a stooq-format DataFrame to CSV."""
-    out = df.copy()
-    out.index.name = "Data"
-    out.to_csv(path, date_format="%Y-%m-%d")
-    logging.info("Saved: %s  (%d rows)", path, len(df))
-
-
-# ============================================================
-# STITCH WSJ + URTH
-# ============================================================
-
-def stitch_msci_world(
-    wsj_df:     pd.DataFrame,
-    urth_df:    pd.DataFrame,
-    output_csv: str | None = "msci_world_combined.csv",
-) -> pd.DataFrame | None:
-    """
-    Stitch WSJ MSCI World (price-return, USD) and URTH (total-return, USD)
-    into a single continuous price series in stooq format.
-
-    Method
-    ------
-    1. Find the overlap period between the two series.
-    2. Compute a scalar multiplier = mean(wsj_close / urth_close) over the
-       overlap window (minimum 5 trading days required).
-    3. Rescale WSJ data by the multiplier so levels match at the splice.
-    4. Use WSJ for dates before the URTH start; use URTH for dates from
-       the URTH start onwards.
-    5. Normalise the combined series to start at 100 on the first date.
-
-    The splice introduces a small level discontinuity (the dividend wedge
-    between price-return WSJ and total-return URTH over the overlap). This
-    is logged but not corrected — it is immaterial for trend signals.
-
-    Parameters
-    ----------
-    wsj_df     : pd.DataFrame  — stooq-format, WSJ MSCI World (USD)
-    urth_df    : pd.DataFrame  — stooq-format, yfinance URTH ETF (USD)
-    output_csv : str | None    — if set, saves combined series to this path
-
-    Returns
-    -------
-    pd.DataFrame | None  — combined stooq-format series, or None on failure
-    """
-    if wsj_df is None or wsj_df.empty:
-        logging.error("stitch_msci_world: wsj_df is None or empty.")
-        return None
-    if urth_df is None or urth_df.empty:
-        logging.error("stitch_msci_world: urth_df is None or empty.")
-        return None
-
-    wsj_close  = wsj_df[CLOSE_COL].dropna().sort_index()
-    urth_close = urth_df[CLOSE_COL].dropna().sort_index()
-
-    urth_start = urth_close.index.min()
-    wsj_end    = wsj_close.index.max()
-
-    # --- Find overlap ---
-    overlap_start = max(wsj_close.index.min(), urth_start)
-    overlap_end   = min(wsj_end, urth_close.index.max())
-
-    if overlap_start > overlap_end:
-        logging.warning(
-            "stitch_msci_world: no overlap between WSJ (%s–%s) "
-            "and URTH (%s–%s). Concatenating without rescaling.",
-            wsj_close.index.min().date(), wsj_end.date(),
-            urth_start.date(), urth_close.index.max().date(),
-        )
-        multiplier = 1.0
-    else:
-        overlap_wsj  = wsj_close.loc[overlap_start:overlap_end]
-        overlap_urth = urth_close.reindex(overlap_wsj.index, method="ffill")
-
-        # Filter to days where both have valid prices
-        mask         = overlap_urth.notna() & overlap_wsj.notna() & (overlap_urth > 0)
-        overlap_wsj  = overlap_wsj[mask]
-        overlap_urth = overlap_urth[mask]
-
-        if len(overlap_wsj) < 5:
-            logging.warning(
-                "stitch_msci_world: overlap too short (%d days). "
-                "Using last WSJ / first URTH prices for splice.",
-                len(overlap_wsj),
-            )
-            # Use the last WSJ price vs first URTH price
-            multiplier = wsj_close.iloc[-1] / urth_close.iloc[0]
-        else:
-            # Scale factor: WSJ levels / URTH levels, averaged over overlap
-            ratios     = overlap_wsj.values / overlap_urth.values
-            multiplier = float(np.median(ratios))
-            logging.info(
-                "Splice: overlap=%d days  (%s to %s)  "
-                "multiplier=%.6f  (WSJ/URTH ratio: median=%.6f  "
-                "min=%.6f  max=%.6f)",
-                len(overlap_wsj),
-                overlap_start.date(), overlap_end.date(),
-                multiplier,
-                multiplier,
-                float(ratios.min()),
-                float(ratios.max()),
-            )
-            # Warn if the ratio is unstable (suggests series mismatch)
-            cv = float(np.std(ratios) / np.mean(ratios))
-            if cv > 0.05:
-                logging.warning(
-                    "Splice: ratio coefficient of variation = %.2f%% > 5%%. "
-                    "WSJ and URTH may not track the same index closely. "
-                    "Review the overlap period manually.",
-                    cv * 100,
-                )
-
-    # --- Build combined series ---
-    # Pre-splice: WSJ prices rescaled by multiplier (so URTH levels = WSJ scaled)
-    # Post-splice: URTH prices as-is
-    #
-    # We splice AT urth_start: use WSJ for everything strictly before urth_start,
-    # then URTH from urth_start onwards.
-
-    wsj_pre  = wsj_close.loc[wsj_close.index < urth_start] * (1.0 / multiplier)
-    combined = pd.concat([wsj_pre, urth_close]).sort_index()
-    combined = combined[~combined.index.duplicated(keep="last")]
-
-    # Normalise to 100 at first date
-    combined = combined / combined.iloc[0] * 100.0
-    combined = combined.dropna()
-
-    # Build stooq-format output — high/low set to close (no intraday for stitched series)
-    out = pd.DataFrame({
-        CLOSE_COL:   combined,
-        "Najwyzszy": combined,
-        "Najnizszy": combined,
-    })
-    out.index.name = "Data"
-
-    if output_csv:
-        _save_stooq_csv(out, output_csv)
+    out = (
+        out.dropna(subset=[CLOSE_COL])
+           .sort_index()
+           .loc[lambda df: df.index >= pd.Timestamp(DATA_START)]
+    )
+    out = out[~out.index.duplicated(keep="last")]
 
     logging.info(
-        "stitch_msci_world: combined series  %d rows  %s to %s  "
-        "splice at %s",
+        "load_wsj_manual_csv: %d rows  %s to %s  close range [%.2f, %.2f]",
         len(out),
         out.index.min().date(), out.index.max().date(),
-        urth_start.date(),
+        out[CLOSE_COL].min(), out[CLOSE_COL].max(),
     )
     return out
 
 
 # ============================================================
-# CONVENIENCE: LOAD COMBINED FROM SAVED CSV
+# URTH DOWNLOAD
 # ============================================================
 
-def load_combined_csv(filepath: str) -> pd.DataFrame | None:
+def _download_urth() -> pd.DataFrame | None:
     """
-    Load a previously saved combined MSCI World CSV (stooq format).
+    Download URTH (or IWDA.L as fallback) from Yahoo Finance.
+    Returns stooq-format DataFrame or None.
+    """
+    if not _YFINANCE_AVAILABLE:
+        logging.error("yfinance not installed.  pip install yfinance")
+        return None
 
-    This is the recommended path for daily runners — build the combined
-    series once, save it, and load from the saved file on subsequent runs.
+    for ticker in (URTH_TICKER, URTH_FALLBACK_TICKER):
+        logging.info("Downloading %s from yfinance ...", ticker)
+        try:
+            raw = yf.download(
+                ticker,
+                start=DATA_START,
+                auto_adjust=True,
+                progress=False,
+                actions=False,
+            )
+        except Exception as exc:
+            logging.warning("yfinance error for %s: %s", ticker, exc)
+            continue
+
+        if raw is None or raw.empty:
+            logging.warning("yfinance returned empty data for %s.", ticker)
+            continue
+
+        # Flatten MultiIndex (yfinance >= 0.2)
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw = raw.droplevel(level=1, axis=1)
+
+        close_cands = [c for c in raw.columns if c.lower() == "close"]
+        if not close_cands:
+            logging.warning("No 'Close' column in yfinance data for %s.", ticker)
+            continue
+
+        high_cands = [c for c in raw.columns if c.lower() == "high"]
+        low_cands  = [c for c in raw.columns if c.lower() == "low"]
+
+        out = pd.DataFrame(index=raw.index)
+        out.index      = pd.to_datetime(out.index).tz_localize(None)
+        out.index.name = "Data"
+        out[CLOSE_COL]   = raw[close_cands[0]]
+        out["Najwyzszy"] = raw[high_cands[0]] if high_cands else out[CLOSE_COL]
+        out["Najnizszy"] = raw[low_cands[0]]  if low_cands  else out[CLOSE_COL]
+
+        out = (
+            out.dropna(subset=[CLOSE_COL])
+               .sort_index()
+               .loc[lambda df: df.index >= pd.Timestamp(DATA_START)]
+        )
+
+        logging.info(
+            "%s: %d rows  %s to %s",
+            ticker, len(out),
+            out.index.min().date(), out.index.max().date(),
+        )
+        return out
+
+    logging.error(
+        "Could not download MSCI World proxy from yfinance "
+        "(tried %s and %s).", URTH_TICKER, URTH_FALLBACK_TICKER,
+    )
+    return None
+
+
+# ============================================================
+# EXTENSION  (replaces the old stitch/multiplier logic)
+# ============================================================
+
+def extend_with_urth(
+    base_df:  pd.DataFrame,
+    urth_df:  pd.DataFrame,
+) -> pd.DataFrame | None:
+    """
+    Extend a base price series forward using URTH daily returns.
+
+    The base series (WSJ raw data, or a previously combined series) is
+    kept exactly as-is.  URTH is used only to add trading days that fall
+    strictly after the last date in the base series.
+
+    Extension method
+    ----------------
+    Let T  = last date in base_df (the 'anchor' date).
+    Let P_T = base_df[CLOSE_COL].iloc[-1]  (anchor price level).
+
+    For each URTH trading date t > T:
+        urth_ret_t  = (URTH_close_t / URTH_close_{t-1}) - 1
+        P_t         = P_{t-1} * (1 + urth_ret_t)
+
+    where P_{T} = P_T (the base anchor level).
+
+    No overlap analysis, no level ratio, no multiplier.  The extension
+    inherits the base level exactly.  Any difference between the WSJ
+    price-return index and URTH's total-return NAV is irrelevant because
+    only URTH's *daily percentage changes* are used, not its level.
+
+    If URTH has no dates after the base series end, the base series is
+    returned unchanged (it is already up to date).
 
     Parameters
     ----------
-    filepath : str  — path to msci_world_combined.csv
+    base_df  : pd.DataFrame  -- stooq-format base series (authoritative)
+    urth_df  : pd.DataFrame  -- stooq-format URTH data (extension source)
 
     Returns
     -------
-    pd.DataFrame | None
+    pd.DataFrame | None  -- combined stooq-format series, or None on error
     """
-    if not os.path.exists(filepath):
-        logging.error("load_combined_csv: file not found: %s", filepath)
+    if base_df is None or base_df.empty:
+        logging.error("extend_with_urth: base_df is None or empty.")
+        return None
+    if urth_df is None or urth_df.empty:
+        logging.error("extend_with_urth: urth_df is None or empty.")
         return None
 
+    base_close = base_df[CLOSE_COL].dropna().sort_index()
+    urth_close = urth_df[CLOSE_COL].dropna().sort_index()
+
+    anchor_date  = base_close.index.max()
+    anchor_price = float(base_close.iloc[-1])
+
+    # URTH dates strictly after the anchor date
+    urth_new = urth_close.loc[urth_close.index > anchor_date]
+
+    if urth_new.empty:
+        logging.info(
+            "extend_with_urth: base series already up to date "
+            "(last date %s, URTH last date %s).  No extension needed.",
+            anchor_date.date(), urth_close.index.max().date(),
+        )
+        return _to_stooq_df(base_close)
+
+    # We need the URTH close on the anchor date (or the last available
+    # date before it) to compute the first extension return correctly.
+    # pct_change() on the URTH slice will produce NaN on the first new
+    # row unless we include one preceding URTH observation as the base.
+    #
+    # Strategy: take URTH from (anchor_date - buffer) onwards, compute
+    # pct_change(), then keep only dates > anchor_date.
+    urth_with_anchor = urth_close.loc[
+        urth_close.index >= anchor_date
+    ]
+
+    if urth_with_anchor.empty:
+        # No URTH data at or after anchor -- nothing to extend with
+        logging.warning(
+            "extend_with_urth: URTH has no data at or after anchor date %s.",
+            anchor_date.date(),
+        )
+        return _to_stooq_df(base_close)
+
+    # Compute URTH daily returns over the slice that starts at anchor_date.
+    # The first return (anchor_date itself) becomes NaN from pct_change --
+    # that is intentional: we don't overwrite the anchor, we extend from it.
+    urth_rets = urth_with_anchor.pct_change()
+
+    # Keep only the returns for dates strictly after anchor
+    urth_rets_new = urth_rets.loc[urth_rets.index > anchor_date].dropna()
+
+    if urth_rets_new.empty:
+        logging.info(
+            "extend_with_urth: no new URTH return dates after %s.",
+            anchor_date.date(),
+        )
+        return _to_stooq_df(base_close)
+
+    # Chain-link: each new price = previous price * (1 + daily_return)
+    # Starting anchor is the last base price.
+    extension_prices = anchor_price * (1 + urth_rets_new).cumprod()
+
+    # Combine base with extension
+    combined = pd.concat([base_close, extension_prices]).sort_index()
+    combined = combined[~combined.index.duplicated(keep="last")]
+
+    n_new = len(urth_rets_new)
+    logging.info(
+        "extend_with_urth: base %d rows (%s to %s)  +  %d new rows "
+        "(%s to %s)  =  %d total",
+        len(base_close),
+        base_close.index.min().date(), anchor_date.date(),
+        n_new,
+        urth_rets_new.index.min().date(),
+        urth_rets_new.index.max().date(),
+        len(combined),
+    )
+
+    return _to_stooq_df(combined)
+
+
+def _to_stooq_df(close_series: pd.Series) -> pd.DataFrame:
+    """
+    Wrap a close price Series in a stooq-format DataFrame.
+    High and low are set equal to close (no intraday data for this series).
+    """
+    out = pd.DataFrame({
+        CLOSE_COL:   close_series,
+        "Najwyzszy": close_series,
+        "Najnizszy": close_series,
+    })
+    out.index.name = "Data"
+    return out
+
+
+# ============================================================
+# DRIVE I/O -- COMBINED CSV
+# ============================================================
+
+def load_combined_from_drive(
+    service=None,
+    folder_id: str | None = None,
+    filename:  str = COMBINED_DRIVE_FILENAME,
+) -> pd.DataFrame | None:
+    """
+    Download the pre-built combined MSCI World CSV from Google Drive.
+
+    Called by the runfile and diagnostic on every run after the combined
+    series has been built at least once.
+
+    Parameters
+    ----------
+    service   : Drive service object (None = build from credentials)
+    folder_id : str | None  (None = from USER SETTINGS / env var)
+    filename  : str
+
+    Returns
+    -------
+    pd.DataFrame | None  -- stooq-format combined series
+    """
+    if service is None:
+        service = _get_drive_service()
+    if folder_id is None:
+        folder_id = _get_folder_id()
+
+    file_id = _find_file_id(service, folder_id, filename)
+    if file_id is None:
+        logging.warning(
+            "load_combined_from_drive: '%s' not found in Drive folder %s.",
+            filename, folder_id,
+        )
+        return None
+
+    raw_bytes = _download_bytes_from_drive(service, file_id)
+    logging.info(
+        "load_combined_from_drive: downloaded '%s'  (%d bytes).",
+        filename, len(raw_bytes),
+    )
+
     try:
-        df = pd.read_csv(filepath, parse_dates=["Data"], index_col="Data")
+        df = pd.read_csv(
+            io.BytesIO(raw_bytes),
+            parse_dates=["Data"],
+            index_col="Data",
+        )
         df.index = pd.to_datetime(df.index).tz_localize(None)
         df = df.sort_index().dropna(subset=[CLOSE_COL])
         df = df.loc[df.index >= pd.Timestamp(DATA_START)]
         logging.info(
-            "load_combined_csv: %d rows  %s to %s",
+            "load_combined_from_drive: %d rows  %s to %s",
             len(df), df.index.min().date(), df.index.max().date(),
         )
         return df
     except Exception as exc:
-        logging.error("load_combined_csv: error reading %s: %s", filepath, exc)
+        logging.error("load_combined_from_drive: parse error -- %s", exc)
         return None
 
 
+def _download_wsj_csv_from_drive(
+    service,
+    folder_id: str,
+    filename:  str = WSJ_DRIVE_FILENAME,
+) -> bytes | None:
+    """Download the raw WSJ CSV bytes from Drive.  Returns None if absent."""
+    file_id = _find_file_id(service, folder_id, filename)
+    if file_id is None:
+        logging.error(
+            "WSJ CSV '%s' not found in Drive folder %s.\n"
+            "  Download from: "
+            "https://www.wsj.com/market-data/quotes/index/XX/990100/historical-prices\n"
+            "  Upload to Drive with filename: %s",
+            filename, folder_id, filename,
+        )
+        return None
+    raw = _download_bytes_from_drive(service, file_id)
+    logging.info(
+        "_download_wsj_csv_from_drive: '%s'  (%d bytes)", filename, len(raw)
+    )
+    return raw
+
+
 # ============================================================
-# CLI ENTRY POINT
+# MAIN PIPELINE
+# ============================================================
+
+def build_and_upload(
+    folder_id:         str | None = None,
+    wsj_filename:      str = WSJ_DRIVE_FILENAME,
+    combined_filename: str = COMBINED_DRIVE_FILENAME,
+) -> pd.DataFrame | None:
+    """
+    Full pipeline -- builds or updates the combined MSCI World series.
+
+    Two modes, selected automatically:
+
+    First build (combined CSV does not yet exist on Drive):
+      1. Download WSJ raw CSV from Drive
+      2. Parse it into base series
+      3. Download URTH from yfinance
+      4. Extend base series with URTH daily returns (dates after WSJ end)
+      5. Save combined CSV to Drive
+
+    Update (combined CSV already exists on Drive):
+      1. Download combined CSV from Drive (this is now the base)
+      2. Download URTH from yfinance
+      3. Extend combined series with URTH daily returns (new dates only)
+      4. Save updated combined CSV back to Drive
+
+    In both modes, WSJ data is never modified or rescaled.  Only URTH
+    daily percentage returns are applied to extend the series forward.
+
+    Parameters
+    ----------
+    folder_id         : str | None  (None = from USER SETTINGS / env var)
+    wsj_filename      : str  -- Drive filename for the WSJ raw CSV
+    combined_filename : str  -- Drive filename for the output combined CSV
+
+    Returns
+    -------
+    pd.DataFrame | None  -- the combined stooq-format series
+    """
+    if folder_id is None:
+        folder_id = _get_folder_id()
+
+    logging.info("=" * 70)
+    logging.info("WSJ MSCI WORLD  --  BUILD & UPLOAD")
+    logging.info("  Drive folder : %s", folder_id)
+    logging.info("  WSJ source   : %s", wsj_filename)
+    logging.info("  Output file  : %s", combined_filename)
+    logging.info("  Credentials  : %s", CREDENTIALS_PATH)
+    logging.info("=" * 70)
+
+    # Authenticate
+    try:
+        service = _get_drive_service()
+    except Exception as exc:
+        logging.error("Drive authentication failed: %s", exc)
+        return None
+
+    # Determine base series: prefer combined (update mode) over WSJ raw (first build)
+    base_df  = None
+    mode_str = "unknown"
+
+    combined_existing = load_combined_from_drive(service, folder_id, combined_filename)
+    if combined_existing is not None:
+        base_df  = combined_existing
+        mode_str = "UPDATE  (base = existing combined CSV)"
+        logging.info(
+            "Mode: %s  last date = %s",
+            mode_str, base_df.index.max().date(),
+        )
+    else:
+        # No combined yet -- build from WSJ raw
+        logging.info("Mode: FIRST BUILD  (combined CSV not found on Drive)")
+        wsj_bytes = _download_wsj_csv_from_drive(service, folder_id, wsj_filename)
+        if wsj_bytes is None:
+            return None
+        base_df = load_wsj_manual_csv(wsj_bytes)
+        if base_df is None:
+            logging.error("Failed to parse WSJ CSV.")
+            return None
+        mode_str = "FIRST BUILD  (base = WSJ raw CSV)"
+        logging.info(
+            "WSJ base: %d rows  %s to %s",
+            len(base_df),
+            base_df.index.min().date(), base_df.index.max().date(),
+        )
+
+    # Download URTH for extension
+    urth_df = _download_urth()
+    if urth_df is None:
+        logging.error("Failed to download URTH from yfinance.")
+        return None
+
+    # Extend base with URTH
+    combined = extend_with_urth(base_df, urth_df)
+    if combined is None:
+        logging.error("Extension failed.")
+        return None
+
+    # Save locally then upload to Drive
+    tmp_path = os.path.join(tempfile.gettempdir(), combined_filename)
+    combined.to_csv(tmp_path, date_format="%Y-%m-%d")
+    logging.info("Local copy saved: %s  (%d rows)", tmp_path, len(combined))
+
+    try:
+        _upload_to_drive(service, folder_id, tmp_path, combined_filename)
+    except Exception as exc:
+        logging.error("Drive upload failed: %s", exc)
+        logging.info("Combined CSV still available locally at: %s", tmp_path)
+
+    logging.info("=" * 70)
+    logging.info("BUILD & UPLOAD COMPLETE  [%s]", mode_str)
+    logging.info(
+        "  %d rows  %s to %s",
+        len(combined),
+        combined.index.min().date(), combined.index.max().date(),
+    )
+    logging.info("=" * 70)
+    return combined
+
+
+# ============================================================
+# ENTRY POINT
 # ============================================================
 
 if __name__ == "__main__":
-    """
-    Run as a script to build the combined MSCI World series.
+    _setup_logging()
 
-    Usage:
-      # Automatic download attempt (may be blocked by WSJ):
-      python wsj_msci_world.py
+    logging.info("wsj_msci_world.py  started  %s", dt.datetime.now())
+    logging.info("Credentials path : %s", CREDENTIALS_PATH)
+    logging.info("Credentials exist: %s", os.path.exists(CREDENTIALS_PATH))
 
-      # Manual CSV path (robust):
-      python wsj_msci_world.py --manual path/to/wsj_download.csv
+    result = build_and_upload()
 
-      # Specify start/end:
-      python wsj_msci_world.py --start 1990-01-01 --end 2012-12-31
-    """
-    import argparse
-    import sys
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler("wsj_msci_world.log", mode="w"),
-        ],
-    )
-
-    parser = argparse.ArgumentParser(description="Build MSCI World combined series.")
-    parser.add_argument("--manual",  default=None,       help="Path to manually saved WSJ CSV")
-    parser.add_argument("--start",   default=DATA_START, help="Start date YYYY-MM-DD")
-    parser.add_argument("--end",     default=None,       help="End date YYYY-MM-DD")
-    parser.add_argument("--urth",    default=None,       help="Path to saved URTH CSV (stooq format)")
-    parser.add_argument("--out-raw", default="wsj_msci_world_raw.csv")
-    parser.add_argument("--out-combined", default="msci_world_combined.csv")
-    args = parser.parse_args()
-
-    # ── Load or download WSJ data ──────────────────────────────────────────
-    if args.manual:
-        wsj_df = load_wsj_manual_csv(args.manual)
-    else:
-        wsj_df = download_wsj_msci_world(
-            start=args.start,
-            end=args.end,
-            output_csv=args.out_raw,
-        )
-
-    if wsj_df is None:
+    if result is not None:
         print(
-            "\nWSJ data not available. To use the manual path:\n"
-            "  1. Visit: https://www.wsj.com/market-data/quotes/index/XX/990100/historical-prices\n"
-            "  2. Set the date range to your desired start and today\n"
-            "  3. Click 'Download' and save the CSV file\n"
-            "  4. Run: python wsj_msci_world.py --manual path/to/file.csv\n"
+            f"\nCombined MSCI World series ready.\n"
+            f"  {len(result)} trading days\n"
+            f"  {result.index.min().date()} to {result.index.max().date()}\n"
+            f"  Uploaded to Drive as: {COMBINED_DRIVE_FILENAME}\n"
+            f"  Local copy:           "
+            f"{os.path.join(tempfile.gettempdir(), COMBINED_DRIVE_FILENAME)}\n"
         )
-        sys.exit(1)
-
-    # ── Load URTH (yfinance) ───────────────────────────────────────────────
-    if args.urth:
-        urth_df = load_combined_csv(args.urth)  # loads stooq format CSV
     else:
-        try:
-            import yfinance as yf
-            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-            from global_equity_library import download_yfinance
-            urth_df = download_yfinance("URTH")
-            if urth_df is None:
-                urth_df = download_yfinance("IWDA.L")
-        except ImportError:
-            print("yfinance not available. Install with: pip install yfinance")
-            urth_df = None
-
-    if urth_df is None:
         print(
-            "\nUnable to download URTH from yfinance.\n"
-            "Either install yfinance (pip install yfinance) or supply a\n"
-            "pre-saved URTH CSV with --urth path/to/urth.csv\n"
+            "\nBuild failed.  Check wsj_msci_world.log for details.\n\n"
+            "Likely causes:\n"
+            "  1. GDRIVE_FOLDER_ID not set -- edit USER SETTINGS above\n"
+            f"  2. credentials.json missing at {CREDENTIALS_PATH}\n"
+            f"  3. WSJ CSV not uploaded -- upload '{WSJ_DRIVE_FILENAME}' to Drive\n"
+            "  4. yfinance not installed -- pip install yfinance\n"
         )
         sys.exit(1)
-
-    # ── Stitch and save ────────────────────────────────────────────────────
-    combined = stitch_msci_world(wsj_df, urth_df, output_csv=args.out_combined)
-
-    if combined is None:
-        print("Failed to build combined series.")
-        sys.exit(1)
-
-    print(
-        f"\nCombined MSCI World series built successfully:\n"
-        f"  {len(combined)} trading days\n"
-        f"  {combined.index.min().date()} to {combined.index.max().date()}\n"
-        f"  Saved to: {args.out_combined}\n"
-    )

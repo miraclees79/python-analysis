@@ -518,7 +518,7 @@ for xxxx in range(min_index, max_index+1):
     if os.path.exists(csv_filename):
         os.remove(csv_filename)
     
-    delay = random.uniform(0.3, 1)
+    delay = random.uniform(0.3, 0.7)
 
     logging.info(f"Sleeping for {delay:.2f} seconds...")
     time.sleep(delay)

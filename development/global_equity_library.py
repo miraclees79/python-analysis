@@ -78,11 +78,11 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from strategy_test_library import (
-    compute_metrics,
-    build_signal_series,
-)
+from strategy_test_library import compute_metrics
+    
 
+
+from multiasset_library import build_signal_series
 
 # ============================================================
 # CONSTANTS
