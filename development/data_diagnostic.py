@@ -61,6 +61,12 @@ from global_equity_library import (
     FX_TICKERS,
     YFINANCE_TICKERS,
 )
+from wsj_msci_world import (
+    download_wsj_msci_world,
+    load_wsj_manual_csv,
+    stitch_msci_world,
+    load_combined_csv,
+)
 
 # ============================================================
 # LOGGING
@@ -132,7 +138,7 @@ SWIG80TR = _stooq("swig80tr", "SWIG80TR")
 
 # ── Stooq: Foreign equity indices ────────────────────────────────────────────
 SPX     = _stooq("^spx",  "SP500")
-NKX     = _stooq("^nkx",   "Nikkei225")
+NKX     = _stooq("nkx",   "Nikkei225")
 
 # ── Stooq: TBSP + MMF ────────────────────────────────────────────────────────
 TBSP    = _stooq("^tbsp",  "TBSP")
