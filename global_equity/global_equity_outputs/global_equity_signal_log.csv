@@ -1,0 +1,2 @@
+Date,Action,Mode,signal_WIG20TR,weight_WIG20TR,signal_PL_MID,weight_PL_MID,signal_MSCI_World,weight_MSCI_World,signal_TBSP,weight_TBSP,weight_mmf,portfolio_cagr,portfolio_sharpe,portfolio_maxdd
+2026-03-18,HOLD,msci_world,IN,0.0,OUT,0.0,IN,0.4,IN,0.0,0.6,0.0317303521728709,1.0235592520892518,-0.057286126298962015

@@ -80,8 +80,7 @@ import yfinance as yf
 
 from strategy_test_library import (
     compute_metrics,
-    
-)
+    )
 from multiasset_library import (
     build_signal_series,
 )

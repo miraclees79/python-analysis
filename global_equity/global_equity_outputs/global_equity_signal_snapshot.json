@@ -1,0 +1,28 @@
+{
+  "run_date": "2026-03-18",
+  "portfolio_mode": "msci_world",
+  "fx_hedged": true,
+  "signals": {
+    "WIG20TR": "IN",
+    "PL_MID": "OUT",
+    "MSCI_World": "IN",
+    "TBSP": "IN"
+  },
+  "weights": {
+    "WIG20TR": 0.0,
+    "PL_MID": 0.0,
+    "MSCI_World": 0.4,
+    "TBSP": 0.0,
+    "mmf": 0.6
+  },
+  "realloc_today": false,
+  "portfolio_level": 1.3862865158755064,
+  "portfolio_cagr": 0.0317303521728709,
+  "portfolio_sharpe": 1.0235592520892518,
+  "portfolio_maxdd": -0.057286126298962015,
+  "portfolio_calmar": 0.5538924382367574,
+  "oos_start": "2015-12-29",
+  "oos_end": "2026-03-17",
+  "n_reallocations": 13,
+  "action": "HOLD"
+}

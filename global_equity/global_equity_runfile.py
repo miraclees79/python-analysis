@@ -74,7 +74,9 @@ from strategy_test_library import (
     print_backtest_report,
     
 )
-
+from multiasset_library import (
+    build_signal_series,
+)
 from global_equity_library import (
     download_yfinance,
     build_return_series,
@@ -85,9 +87,7 @@ from global_equity_library import (
     CLOSE_COL,
     DATA_START,
 )
-from multiasset_library import (
-    build_signal_series,
-)
+
 from wsj_msci_world import load_combined_from_drive
 from global_equity_daily_output import build_daily_outputs
 
@@ -287,7 +287,7 @@ if PORTFOLIO_MODE == "global_equity":
 
     WIG     = _stooq("wig",   "WIG")       # Polish broad market, 1991+
     SPX     = _stooq("^spx",  "SP500")     # S&P 500
-    NKX     = _stooq("nkx",   "Nikkei225")
+    NKX     = _stooq("^nkx",   "Nikkei225")
 
     logging.info("Downloading STOXX 600 from yfinance ...")
     STOXX600 = download_yfinance("^STOXX", start=DATA_START)
