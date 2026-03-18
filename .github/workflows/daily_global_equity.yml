@@ -277,5 +277,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: global-equity-run-log
-          path: global_equity/GlobalEquityDailyRun.log
+          path: |
+            global_equity_outputs/global_equity_signal_status.txt
+            global_equity_outputs/global_equity_signal_log.csv
+            global_equity_outputs/global_equity_chart.png
           retention-days: 14
+
+
+                # ------------------------------------------------------------------
+      # 12. Credentials cleanup
+      # ------------------------------------------------------------------
+      - name: Remove credentials file
+        if: always()
+        run: rm -f /tmp/credentials.json
