@@ -84,6 +84,7 @@ from global_equity_library import (
     print_global_equity_report,
     CLOSE_COL,
     DATA_START,
+    build_mmf_extended,
 )
 from multiasset_library import (
     build_signal_series,
@@ -128,7 +129,7 @@ logging.info("=" * 80)
 #
 # "msci_world"    : Mode B — WIG20TR + PL_MID + MSCI_World + TBSP + MMF
 #                   OOS start ~2019, 9+1 walk-forward, two Polish equities
-PORTFOLIO_MODE = "global_equity"   # <- "global_equity" or "msci_world"
+PORTFOLIO_MODE = "msci_world"   # <- "global_equity" or "msci_world"
 
 # ---------------------------------------------------------------------------
 # GOOGLE DRIVE (required for msci_world mode; ignored in global_equity mode)
@@ -219,6 +220,18 @@ SWIG_WEIGHT = 0.50   # weight of SWIG80TR in the PL_MID blend
 # ---------------------------------------------------------------------------
 OUTPUT_DIR = "global_equity_outputs"   # local directory for daily artefacts
 
+# ---------------------------------------------------------------------------
+# DATA FLOOR DATES
+# ---------------------------------------------------------------------------
+# WIG: daily continuous trading started 1994-10-03; earlier data has
+# multi-day gaps that add noise to the signal optimisation.
+# This floor is applied after download, overriding DATA_START for WIG.
+WIG_DATA_FLOOR = "1994-10-03"
+ 
+# MMF: extend backwards to this date using WIBOR 1M chain-link.
+# Must match WIG_DATA_FLOOR so that the cash series covers the same period.
+MMF_FLOOR = "1994-10-03"
+ 
 
 # ============================================================
 # VALIDATE MODE SETTING
@@ -276,6 +289,15 @@ def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | No
 TBSP = _stooq("^tbsp",   "TBSP")
 MMF  = _stooq("2720.n",  "MMF")
 
+# WIBOR 1M — used to extend MMF backwards to WIG_DATA_FLOOR
+WIBOR1M = _stooq("plopln1m", "WIBOR1M", mandatory=False)
+if WIBOR1M is None:
+    logging.warning(
+               "WIBOR1M (PLOPLN1M) not available — MMF will not be extended. "
+               "IS windows before %s will use ret_mmf=0 for cash returns.",
+               MMF_FLOOR,
+           )
+
 # --- FX rates (downloaded always; applied only when FX_HEDGED=False) ---
 USDPLN = _stooq("usdpln", "USDPLN")
 EURPLN = _stooq("eurpln", "EURPLN")
@@ -288,7 +310,17 @@ if PORTFOLIO_MODE == "global_equity":
     WIG     = _stooq("wig",   "WIG")       # Polish broad market, 1991+
     SPX     = _stooq("^spx",  "SP500")     # S&P 500
     NKX     = _stooq("^nkx",   "Nikkei225")
-
+    
+    # --- WIG floor (Mode A only) ---
+    # Clip WIG to daily-trading-only period; earlier data has multi-day gaps.
+    if PORTFOLIO_MODE == "global_equity" and WIG is not None:
+       wig_before = len(WIG)
+       WIG = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
+       logging.info(
+           "WIG clipped to %s: %d → %d rows",
+           WIG_DATA_FLOOR, wig_before, len(WIG),
+       )
+    
     logging.info("Downloading STOXX 600 from yfinance ...")
     STOXX600 = download_yfinance("^STOXX", start=DATA_START)
     if STOXX600 is None:
@@ -356,9 +388,23 @@ fx_usd = USDPLN[CLOSE_COL] if USDPLN is not None else None
 fx_eur = EURPLN[CLOSE_COL] if EURPLN is not None else None
 fx_jpy = JPYPLN[CLOSE_COL] if JPYPLN is not None else None
 
+
+# --- Extended MMF (both modes) ---
+# Chain-link WIBOR 1M backwards from first MMF observation.
+# Replaces MMF with the extended version for IS evaluation.
+if WIBOR1M is not None:
+    MMF_EXT = build_mmf_extended(MMF, WIBOR1M, floor_date=MMF_FLOOR)
+    logging.info(
+               "MMF extended: %s to %s (%d rows total, original from %s)",
+               MMF_EXT.index.min().date(), MMF_EXT.index.max().date(),
+               len(MMF_EXT), MMF.index.min().date(),
+           )
+else:
+    MMF_EXT = MMF   # no extension; fallback to original
+
 # --- Shared ---
 ret_tbsp = build_return_series(TBSP, hedged=True)   # PLN bond index — no FX
-ret_mmf  = build_return_series(MMF,  hedged=True)   # PLN money market — no FX
+ret_mmf  = build_return_series(MMF_EXT,  hedged=True)   # PLN money market — no FX
 
 logging.info(
     "TBSP: %d return days  %s to %s",
