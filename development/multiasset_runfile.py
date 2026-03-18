@@ -244,9 +244,9 @@ logging.info("=" * 80)
 
 tmp_dir = tempfile.mkdtemp()
 
-# --- Equity: WIG total return index ---
+# --- Equity: WIG total return index --- #test changed to wig20tr
 csv_wig  = os.path.join(tmp_dir, "wig.csv")
-download_csv("https://stooq.pl/q/d/l/?s=wig&i=d", csv_wig)
+download_csv("https://stooq.pl/q/d/l/?s=wig20tr&i=d", csv_wig)
 WIG = load_csv(csv_wig)
 if WIG is None:
     logging.error("Failed to load WIG data. Exiting.")
