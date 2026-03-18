@@ -128,7 +128,7 @@ logging.info("=" * 80)
 #
 # "msci_world"    : Mode B — WIG20TR + PL_MID + MSCI_World + TBSP + MMF
 #                   OOS start ~2019, 9+1 walk-forward, two Polish equities
-PORTFOLIO_MODE = "msci_world"   # <- "global_equity" or "msci_world"
+PORTFOLIO_MODE = "global_equity"   # <- "global_equity" or "msci_world"
 
 # ---------------------------------------------------------------------------
 # GOOGLE DRIVE (required for msci_world mode; ignored in global_equity mode)
