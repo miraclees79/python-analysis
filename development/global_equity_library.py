@@ -82,7 +82,8 @@ from strategy_test_library import (
     compute_metrics,
     
 )
-from multiasset_library import(build_signal_series)
+from multiasset_library import(build_signal_series,
+)
 
 # ============================================================
 # CONSTANTS
@@ -578,10 +579,29 @@ def optimise_asset_weights(
     n = len(asset_keys)
     combos = generate_weight_grid(n, step)
 
-    # Align return series to their shared date range (returns only, no signals).
-    common_idx = mmf_returns.index
-    for key in asset_keys:
-        common_idx = common_idx.intersection(returns_dict[key].index)
+    # Build common_idx from assets that have IS signal coverage only.
+    # Assets with no IS signal (empty signals_dict entry) are excluded from
+    # the intersection — they have zero signal on all days so they contribute
+    # nothing to IS evaluation, but their shorter return history would silently
+    # truncate the IS eval window and change the IS CalMAR scores.
+    # (e.g. PL_MID/MSCI data starts 2010 while WIG20TR/TBSP start 2005/2006;
+    #  including them in the intersection cuts 4 years of IS history including
+    #  the 2008-2009 crisis, which changes which assets appear favourable.)
+    keys_with_signal = [
+        k for k in asset_keys
+        if signals_dict.get(k) is not None and len(signals_dict[k]) > 0
+    ]
+    keys_no_signal = [k for k in asset_keys if k not in keys_with_signal]
+
+    if keys_with_signal:
+        common_idx = mmf_returns.index
+        for key in keys_with_signal:
+            common_idx = common_idx.intersection(returns_dict[key].index)
+    else:
+        # No signals at all — use full intersection as fallback
+        common_idx = mmf_returns.index
+        for key in asset_keys:
+            common_idx = common_idx.intersection(returns_dict[key].index)
 
     if len(common_idx) < 252:
         logging.warning(
@@ -591,33 +611,24 @@ def optimise_asset_weights(
         equal_w = round(1.0 / (n + 1), 2)
         return {k: equal_w for k in asset_keys}, -np.inf
 
-    # Restrict evaluation to the signal era.
-    # Signals only exist from each asset's first OOS date.  Pre-signal returns
-    # contain raw B&H history with large crashes that would make risky assets
-    # look worse than MMF even when their signal-gated performance is good.
-    signal_starts = []
-    for key in asset_keys:
-        sig = signals_dict.get(key)
-        if sig is not None and len(sig) > 0:
-            signal_starts.append(sig.index.min())
-
-    if signal_starts:
-        signal_era_start = min(signal_starts)
-        eval_idx = common_idx[common_idx >= signal_era_start]
-        if len(eval_idx) >= 252:
-            common_idx = eval_idx
-
+    # No signal era restriction needed: pre-signal days have signal=0 (fillna(0)),
+    # so those days earn MMF automatically — matching multiasset_library behaviour.
+    # Reindex ALL assets (including no-signal ones) to common_idx;
+    # no-signal assets will have signal=0 everywhere so their returns don't matter.
     r     = {k: returns_dict[k].reindex(common_idx).fillna(0.0) for k in asset_keys}
     mmf_r = mmf_returns.reindex(common_idx).fillna(0.0)
 
-    # Per-asset binary signal.  Default to 1 (always invested) before signal start.
+    # Per-asset binary signal.  Default to 0 (flat/out) before signal era starts,
+    # matching multiasset_library which uses fillna(0) for the IS optimiser.
+    # Signal=0 before the OOS start means those days earn MMF (not the asset),
+    # which correctly represents the pre-signal period where no position is held.
     s = {}
     for key in asset_keys:
         sig = signals_dict.get(key)
         if sig is not None and len(sig) > 0:
-            s[key] = sig.reindex(common_idx, method="ffill").fillna(1.0)
+            s[key] = sig.reindex(common_idx, method="ffill").fillna(0.0)
         else:
-            s[key] = pd.Series(1.0, index=common_idx)
+            s[key] = pd.Series(0.0, index=common_idx)
 
     # ── Portfolio return construction — mirrors optimise_both_on_weights exactly ──
     #
@@ -894,7 +905,7 @@ def allocation_walk_forward_n(
     current_weights  = {k: 0.0 for k in asset_keys}
     current_weights["mmf"] = 1.0
 
-    prev_best_weights = {k: 0.0 for k in asset_keys}
+    prev_best_weights = {k: 0.0 for k in asset_keys}  # all-zero = no carry-forward
 
     for _, row in wf_results_ref.iterrows():
         train_end  = pd.Timestamp(row["TestStart"])
@@ -932,6 +943,22 @@ def allocation_walk_forward_n(
             step          = step,
             objective     = objective,
         )
+
+        # If all combos were identical in IS (indiscriminate), best_weights will
+        # be all-zero (first combo in grid).  Carry forward previous window's
+        # weights in that case, rather than defaulting to 100% MMF.
+        # This happens in early windows where most asset signals haven't started.
+        total_risky = sum(best_weights.values())
+        if total_risky < step - 1e-9 and sum(prev_best_weights.values()) >= step - 1e-9:
+            logging.info(
+                "Window %s: IS optimisation indiscriminate (all-zero) — "
+                "carrying forward previous weights %s",
+                test_start.date(),
+                {k: f"{v:.0%}" for k, v in prev_best_weights.items()},
+            )
+            best_weights = dict(prev_best_weights)
+
+        prev_best_weights = dict(best_weights)
 
         alloc_results.append({
             "TrainEnd":   train_end.date(),
@@ -1037,7 +1064,6 @@ def allocation_walk_forward_n(
             window_equity = window_equity * oos_equity_slices[-1].iloc[-1]
 
         oos_equity_slices.append(window_equity)
-        prev_best_weights = best_weights
 
     if not oos_equity_slices:
         logging.warning("allocation_walk_forward_n produced no OOS slices.")
