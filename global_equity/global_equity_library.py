@@ -80,10 +80,10 @@ import yfinance as yf
 
 from strategy_test_library import (
     compute_metrics,
-    )
-from multiasset_library import (
-    build_signal_series,
+    
 )
+from multiasset_library import(build_signal_series,
+                               )
 
 # ============================================================
 # CONSTANTS
@@ -448,6 +448,181 @@ def build_price_df_from_returns(
 
 
 # ============================================================
+# MMF BACKWARD EXTENSION  (WIBOR1M chain-link)
+# ============================================================
+
+def build_mmf_extended(
+    mmf_df:      pd.DataFrame,
+    wibor1m_df:  pd.DataFrame,
+    floor_date:  str = "1994-10-03",
+) -> pd.DataFrame:
+    """
+    Extend the MMF (2720.n) price series backwards using WIBOR 1M.
+
+    The MMF fund (Goldman Sachs Konserwatywny) has NAV data from ~1999.
+    For IS windows starting before 1999 (e.g. Mode A / global_equity with
+    WIG data from 1994), the MMF series is used as the cash return when
+    a signal is OFF.  Without extension, those early days get ret_mmf=NaN,
+    which is treated as 0 (no cash return) in the allocation layer.
+
+    Extension method
+    ----------------
+    WIBOR 1M (PLOPLN1M on stooq) is a daily-published overnight-style
+    reference rate expressed as an annual percentage. Each day's accrual is:
+
+        daily_factor = (1 + wibor_rate / 100) ^ (1 / 252)
+
+    where 252 is the assumed number of business days per year.  This is
+    consistent with how money-market NAVs accrue — they compound the
+    overnight/short-term rate every business day.
+
+    The extension is chain-linked backwards from the first available MMF
+    observation: the synthetic level on day t < mmf_start is computed as:
+
+        price_t = price_mmf_start / product( daily_factor_{t+1..mmf_start} )
+
+    so the synthetic series joins seamlessly to the real series on the
+    first MMF date (same level, same return going forward).
+
+    WIBOR coverage
+    --------------
+    PLOPLN1M on stooq is available from approximately 1992.  Any gap days
+    within the WIBOR series are forward-filled (rate unchanged) before
+    computing daily accruals.
+
+    Floor date
+    ----------
+    floor_date clips the extended series at a hard lower bound. Default
+    is 1994-10-03, the date from which the WIG index has reliable daily
+    quotes.  Earlier WIG data has multi-day gaps that add noise; the WIG
+    data floor in the runfile should match this value.
+
+    Parameters
+    ----------
+    mmf_df     : pd.DataFrame  — stooq-format MMF DataFrame (2720.n)
+    wibor1m_df : pd.DataFrame  — stooq-format WIBOR 1M DataFrame (PLOPLN1M)
+    floor_date : str           — hard lower bound for the extended series
+                                 (ISO date string, default "1994-10-03")
+
+    Returns
+    -------
+    pd.DataFrame  — stooq-format DataFrame with CLOSE_COL, Najwyzszy,
+                    Najnizszy; index covers floor_date to latest MMF date.
+                    Real MMF data is preserved exactly from mmf_start onwards.
+
+    Notes
+    -----
+    - WIBOR 1M is an overnight-to-1-month interbank offer rate, not a
+      NAV-accrual rate.  It is used here as a proxy for the short-term PLN
+      cash return, which is the best available daily proxy for 1994-1999.
+    - The chain-link is backward only — the real MMF data is never modified.
+    - If WIBOR data does not cover the requested floor_date, the extension
+      starts from the earliest available WIBOR date.
+    """
+    floor_ts  = pd.Timestamp(floor_date)
+    mmf_close = mmf_df[CLOSE_COL].sort_index().dropna()
+    mmf_start = mmf_close.index.min()
+
+    # If MMF already covers the floor, no extension needed
+    if mmf_start <= floor_ts:
+        logging.info(
+            "build_mmf_extended: MMF starts %s, at or before floor %s — "
+            "no extension needed.", mmf_start.date(), floor_ts.date(),
+        )
+        out = mmf_df.copy()
+        out = out.loc[out.index >= floor_ts]
+        return out
+
+    # ── Prepare WIBOR series ───────────────────────────────────────────────
+    wibor_close = wibor1m_df[CLOSE_COL].sort_index().dropna()
+    # Clip WIBOR to the extension window [floor_date, mmf_start)
+    wibor_ext = wibor_close.loc[
+        (wibor_close.index >= floor_ts) & (wibor_close.index < mmf_start)
+    ]
+
+    if wibor_ext.empty:
+        logging.warning(
+            "build_mmf_extended: WIBOR 1M has no data between %s and %s — "
+            "cannot extend. Returning original MMF from its start date.",
+            floor_ts.date(), mmf_start.date(),
+        )
+        return mmf_df.loc[mmf_df.index >= floor_ts]
+
+    # Forward-fill any gaps within the WIBOR extension window
+    # (rate is published on business days; weekends/holidays carry last rate)
+    ext_idx = pd.bdate_range(start=floor_ts, end=mmf_start - pd.Timedelta(days=1))
+    wibor_ext_full = wibor_ext.reindex(ext_idx, method="ffill").bfill()
+
+    # ── Compute daily accrual factors ─────────────────────────────────────
+    # WIBOR is expressed as annual % (e.g. 25.0 = 25% per annum)
+    annual_rate   = wibor_ext_full / 100.0
+    daily_factors = (1.0 + annual_rate) ** (1.0 / 252)
+
+    # ── Chain-link backwards from first MMF observation ───────────────────
+    # cumulative product going FORWARD from floor → mmf_start gives the
+    # total growth factor over the extension window.
+    # To chain-link backwards: divide mmf_start price by the forward cumprod.
+    anchor_price = mmf_close.iloc[0]   # price on mmf_start date
+
+    # daily_factors is indexed floor → (mmf_start - 1 bday)
+    # cumprod going forward: at day t, cumprod(t) = product of factors[floor..t]
+    forward_cumprod = daily_factors.cumprod()
+
+    # Scale so that cumprod(mmf_start - 1 bday) × next_factor = anchor_price
+    # i.e. synthetic[mmf_start] would equal anchor_price
+    # synthetic[t] = anchor_price / (total_forward_cumprod / forward_cumprod[t])
+    total_forward   = forward_cumprod.iloc[-1] * daily_factors.iloc[-1]
+    # Actually simpler: work in returns space, then build price backwards
+    # Returns during extension: r_t = daily_factor_t - 1
+    ext_returns = daily_factors - 1.0
+
+    # Build the synthetic price series backwards from the anchor:
+    # price[mmf_start] = anchor_price (known)
+    # price[t-1] = price[t] / daily_factor[t]
+    # We have factors indexed [floor_date .. mmf_start-1], so reverse:
+    factors_reverse = daily_factors.iloc[::-1]          # mmf_start-1 down to floor
+    price_reverse   = pd.Series(index=factors_reverse.index, dtype=float)
+    prev_price      = anchor_price
+    for date in factors_reverse.index:
+        prev_price           = prev_price / daily_factors.loc[date]
+        price_reverse.loc[date] = prev_price
+
+    synthetic_prices = price_reverse.iloc[::-1]          # back to chronological
+
+    # ── Combine synthetic extension + real MMF ────────────────────────────
+    combined = pd.concat([synthetic_prices, mmf_close])
+    combined = combined.sort_index()
+    # Sanity: the join should be seamless — synthetic ends just before mmf_start
+    assert combined.index.min() >= floor_ts, "Combined series starts before floor"
+
+    # Build stooq-format output
+    out = pd.DataFrame(index=combined.index)
+    out[CLOSE_COL]   = combined
+    out["Najwyzszy"] = combined   # no intraday data
+    out["Najnizszy"] = combined
+    out.index.name   = "Data"
+
+    # Verify the seam: return at mmf_start should match the actual first MMF return
+    ext_rows  = out.loc[out.index < mmf_start]
+    real_rows = out.loc[out.index >= mmf_start]
+
+    logging.info(
+        "build_mmf_extended: synthetic extension %s to %s (%d days) "
+        "chain-linked to real MMF %s to %s (%d days).  "
+        "Anchor price=%.4f.  Extension start price=%.4f.",
+        ext_rows.index.min().date() if not ext_rows.empty else "n/a",
+        ext_rows.index.max().date() if not ext_rows.empty else "n/a",
+        len(ext_rows),
+        real_rows.index.min().date() if not real_rows.empty else "n/a",
+        real_rows.index.max().date() if not real_rows.empty else "n/a",
+        len(real_rows),
+        anchor_price,
+        out[CLOSE_COL].iloc[0],
+    )
+    return out
+
+
+# ============================================================
 # CALENDAR ALIGNMENT
 # ============================================================
 
@@ -579,10 +754,29 @@ def optimise_asset_weights(
     n = len(asset_keys)
     combos = generate_weight_grid(n, step)
 
-    # Align return series to their shared date range (returns only, no signals).
-    common_idx = mmf_returns.index
-    for key in asset_keys:
-        common_idx = common_idx.intersection(returns_dict[key].index)
+    # Build common_idx from assets that have IS signal coverage only.
+    # Assets with no IS signal (empty signals_dict entry) are excluded from
+    # the intersection — they have zero signal on all days so they contribute
+    # nothing to IS evaluation, but their shorter return history would silently
+    # truncate the IS eval window and change the IS CalMAR scores.
+    # (e.g. PL_MID/MSCI data starts 2010 while WIG20TR/TBSP start 2005/2006;
+    #  including them in the intersection cuts 4 years of IS history including
+    #  the 2008-2009 crisis, which changes which assets appear favourable.)
+    keys_with_signal = [
+        k for k in asset_keys
+        if signals_dict.get(k) is not None and len(signals_dict[k]) > 0
+    ]
+    keys_no_signal = [k for k in asset_keys if k not in keys_with_signal]
+
+    if keys_with_signal:
+        common_idx = mmf_returns.index
+        for key in keys_with_signal:
+            common_idx = common_idx.intersection(returns_dict[key].index)
+    else:
+        # No signals at all — use full intersection as fallback
+        common_idx = mmf_returns.index
+        for key in asset_keys:
+            common_idx = common_idx.intersection(returns_dict[key].index)
 
     if len(common_idx) < 252:
         logging.warning(
@@ -592,33 +786,24 @@ def optimise_asset_weights(
         equal_w = round(1.0 / (n + 1), 2)
         return {k: equal_w for k in asset_keys}, -np.inf
 
-    # Restrict evaluation to the signal era.
-    # Signals only exist from each asset's first OOS date.  Pre-signal returns
-    # contain raw B&H history with large crashes that would make risky assets
-    # look worse than MMF even when their signal-gated performance is good.
-    signal_starts = []
-    for key in asset_keys:
-        sig = signals_dict.get(key)
-        if sig is not None and len(sig) > 0:
-            signal_starts.append(sig.index.min())
-
-    if signal_starts:
-        signal_era_start = min(signal_starts)
-        eval_idx = common_idx[common_idx >= signal_era_start]
-        if len(eval_idx) >= 252:
-            common_idx = eval_idx
-
+    # No signal era restriction needed: pre-signal days have signal=0 (fillna(0)),
+    # so those days earn MMF automatically — matching multiasset_library behaviour.
+    # Reindex ALL assets (including no-signal ones) to common_idx;
+    # no-signal assets will have signal=0 everywhere so their returns don't matter.
     r     = {k: returns_dict[k].reindex(common_idx).fillna(0.0) for k in asset_keys}
     mmf_r = mmf_returns.reindex(common_idx).fillna(0.0)
 
-    # Per-asset binary signal.  Default to 1 (always invested) before signal start.
+    # Per-asset binary signal.  Default to 0 (flat/out) before signal era starts,
+    # matching multiasset_library which uses fillna(0) for the IS optimiser.
+    # Signal=0 before the OOS start means those days earn MMF (not the asset),
+    # which correctly represents the pre-signal period where no position is held.
     s = {}
     for key in asset_keys:
         sig = signals_dict.get(key)
         if sig is not None and len(sig) > 0:
-            s[key] = sig.reindex(common_idx, method="ffill").fillna(1.0)
+            s[key] = sig.reindex(common_idx, method="ffill").fillna(0.0)
         else:
-            s[key] = pd.Series(1.0, index=common_idx)
+            s[key] = pd.Series(0.0, index=common_idx)
 
     # ── Portfolio return construction — mirrors optimise_both_on_weights exactly ──
     #
@@ -773,30 +958,54 @@ def signals_to_target_weights_n(
     """
     Map per-asset binary signals + optimised weights to a target weight dict.
 
-    For each asset:
-      - signal=1: allocate best_weights[asset]
-      - signal=0: that allocation falls to MMF
+    Mirrors signals_to_target_weights from multiasset_library exactly,
+    generalised to N assets:
 
-    The MMF receives: 1 - sum(active_asset_weights).
+      n_on == 0  :  100% MMF
+      n_on == 1  :  100% the single on-asset  (not its partial weight)
+      n_on >= 2  :  best_weights split applied across all on-assets
+
+    This IS/OOS consistency is critical: the IS optimiser evaluates combos
+    using exactly this same 3-state logic, so the OOS simulation must use
+    the same rule to remain consistent with what was optimised.
 
     Parameters
     ----------
     signals      : dict[str, int]    — binary signal per asset (0 or 1)
     best_weights : dict[str, float]  — optimised weight per asset
+                                       (used only when n_on >= 2)
     mmf_key      : str               — key for MMF in returned dict
 
     Returns
     -------
     dict  — {asset_key: weight, ..., mmf_key: mmf_weight}
     """
-    target = {}
-    total_risky = 0.0
-    for key, sig in signals.items():
-        w = best_weights.get(key, 0.0) * float(sig)
-        target[key] = w
-        total_risky += w
+    asset_keys = list(signals.keys())
+    on_keys    = [k for k in asset_keys if signals.get(k, 0)]
+    n_on       = len(on_keys)
 
-    target[mmf_key] = max(0.0, 1.0 - total_risky)
+    target = {k: 0.0 for k in asset_keys}
+
+    if n_on == 0:
+        # All signals off — 100% MMF
+        target[mmf_key] = 1.0
+
+    elif n_on == 1:
+        # Exactly one signal on — 100% that asset, consistent with IS optimiser
+        target[on_keys[0]] = 1.0
+        target[mmf_key]    = 0.0
+
+    else:
+        # Multiple signals on — apply optimised weight split
+        # Each on-asset gets its best_weights allocation; off-assets get 0
+        # MMF absorbs: residual (1 - sum of on-asset weights) + off-asset weights
+        total_risky = 0.0
+        for key in on_keys:
+            w = best_weights.get(key, 0.0)
+            target[key]  = w
+            total_risky += w
+        target[mmf_key] = max(0.0, 1.0 - total_risky)
+
     return target
 
 
@@ -871,7 +1080,7 @@ def allocation_walk_forward_n(
     current_weights  = {k: 0.0 for k in asset_keys}
     current_weights["mmf"] = 1.0
 
-    prev_best_weights = {k: 0.0 for k in asset_keys}
+    prev_best_weights = {k: 0.0 for k in asset_keys}  # all-zero = no carry-forward
 
     for _, row in wf_results_ref.iterrows():
         train_end  = pd.Timestamp(row["TestStart"])
@@ -909,6 +1118,22 @@ def allocation_walk_forward_n(
             step          = step,
             objective     = objective,
         )
+
+        # If all combos were identical in IS (indiscriminate), best_weights will
+        # be all-zero (first combo in grid).  Carry forward previous window's
+        # weights in that case, rather than defaulting to 100% MMF.
+        # This happens in early windows where most asset signals haven't started.
+        total_risky = sum(best_weights.values())
+        if total_risky < step - 1e-9 and sum(prev_best_weights.values()) >= step - 1e-9:
+            logging.info(
+                "Window %s: IS optimisation indiscriminate (all-zero) — "
+                "carrying forward previous weights %s",
+                test_start.date(),
+                {k: f"{v:.0%}" for k, v in prev_best_weights.items()},
+            )
+            best_weights = dict(prev_best_weights)
+
+        prev_best_weights = dict(best_weights)
 
         alloc_results.append({
             "TrainEnd":   train_end.date(),
@@ -1014,7 +1239,6 @@ def allocation_walk_forward_n(
             window_equity = window_equity * oos_equity_slices[-1].iloc[-1]
 
         oos_equity_slices.append(window_equity)
-        prev_best_weights = best_weights
 
     if not oos_equity_slices:
         logging.warning("allocation_walk_forward_n produced no OOS slices.")

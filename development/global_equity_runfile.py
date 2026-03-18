@@ -72,8 +72,9 @@ from strategy_test_library import (
     compute_buy_and_hold,
     analyze_trades,
     print_backtest_report,
-    build_signal_series,
+    
 )
+from multiasset_library import build_signal_series
 
 from global_equity_library import (
     download_yfinance,
@@ -87,7 +88,15 @@ from global_equity_library import (
     DATA_START,
 )
 
-from wsj_msci_world import load_combined_from_drive
+from wsj_msci_world import (
+    load_combined_from_drive as load_MSCIWORLD_from_drive,
+    build_and_upload as build_MSCIWORLD,
+    COMBINED_DRIVE_FILENAME as MSCI_COMBINED_FILENAME)
+from stoxx600 import (
+    load_combined_from_drive as load_stoxx600_from_drive,
+    build_and_upload as build_stoxx600,
+    COMBINED_DRIVE_FILENAME as STOXX600_COMBINED_FILENAME,
+)
 from global_equity_daily_output import build_daily_outputs
 
 
@@ -127,7 +136,7 @@ logging.info("=" * 80)
 #
 # "msci_world"    : Mode B — WIG20TR + PL_MID + MSCI_World + TBSP + MMF
 #                   OOS start ~2019, 9+1 walk-forward, two Polish equities
-PORTFOLIO_MODE = "global_equity"   # <- "global_equity" or "msci_world"
+PORTFOLIO_MODE = "msci_world"   # <- "global_equity" or "msci_world"
 
 # ---------------------------------------------------------------------------
 # GOOGLE DRIVE (required for msci_world mode; ignored in global_equity mode)
@@ -308,16 +317,33 @@ if PORTFOLIO_MODE == "global_equity":
 
     WIG     = _stooq("wig",   "WIG")       # Polish broad market, 1991+
     SPX     = _stooq("^spx",  "SP500")     # S&P 500
-    NKX     = _stooq("nkx",   "Nikkei225")
+    NKX     = _stooq("^nkx",   "Nikkei225")
 
-    logging.info("Downloading STOXX 600 from yfinance ...")
-    STOXX600 = download_yfinance("^STOXX", start=DATA_START)
+    # STOXX 600: load from Drive (historical base + yfinance extension).
+    # build_stoxx600() auto-selects first-build vs update mode:
+    #   First build: reads stoxx600.csv from Drive, extends with yfinance
+    #   Update:      reads stoxx600_combined.csv from Drive, extends forward
+    _stoxx_folder = (
+        os.environ.get("GDRIVE_FOLDER_ID", "").strip()
+        or GDRIVE_FOLDER_ID_DEFAULT.strip()
+    )
+    if not _stoxx_folder:
+        logging.error(
+            "FAIL: GDRIVE_FOLDER_ID not set — cannot load STOXX 600. "
+            "Set GDRIVE_FOLDER_ID_DEFAULT or the env var."
+        )
+        sys.exit(1)
+    STOXX600 = build_stoxx600(folder_id=_stoxx_folder)
     if STOXX600 is None:
-        logging.error("FAIL: STOXX 600 — yfinance download returned None. Exiting.")
+        logging.error(
+            "FAIL: STOXX 600 build/update failed. "
+            "Ensure stoxx600.csv is uploaded to Drive folder %s.",
+            _stoxx_folder,
+        )
         sys.exit(1)
     logging.info(
         "OK  : %-14s  %5d rows  %s to %s",
-        "STOXX600(yf)", len(STOXX600),
+        "STOXX600", len(STOXX600),
         STOXX600.index.min().date(), STOXX600.index.max().date(),
     )
 
@@ -343,7 +369,7 @@ elif PORTFOLIO_MODE == "msci_world":
             "  Build the combined file first with: python wsj_msci_world.py"
         )
         sys.exit(1)
-    MSCIW = load_combined_from_drive(folder_id=folder_id)
+    MSCIW = build_MSCIWORLD(folder_id=folder_id)
     if MSCIW is None:
         logging.error(
             "FAIL: msci_world_combined.csv not found in Drive folder %s.\n"

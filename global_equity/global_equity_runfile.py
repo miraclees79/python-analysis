@@ -74,21 +74,29 @@ from strategy_test_library import (
     print_backtest_report,
     
 )
-from multiasset_library import (
-    build_signal_series,
-)
+from multiasset_library import build_signal_series
+
 from global_equity_library import (
     download_yfinance,
     build_return_series,
     build_blend,
     build_price_df_from_returns,
+    build_mmf_extended,
     allocation_walk_forward_n,
     print_global_equity_report,
     CLOSE_COL,
     DATA_START,
 )
 
-from wsj_msci_world import load_combined_from_drive
+from wsj_msci_world import (
+    load_combined_from_drive as load_MSCIWORLD_from_drive,
+    build_and_upload as build_MSCIWORLD,
+    COMBINED_DRIVE_FILENAME as MSCI_COMBINED_FILENAME)
+from stoxx600 import (
+    load_combined_from_drive as load_stoxx600_from_drive,
+    build_and_upload as build_stoxx600,
+    COMBINED_DRIVE_FILENAME as STOXX600_COMBINED_FILENAME,
+)
 from global_equity_daily_output import build_daily_outputs
 
 
@@ -128,7 +136,7 @@ logging.info("=" * 80)
 #
 # "msci_world"    : Mode B — WIG20TR + PL_MID + MSCI_World + TBSP + MMF
 #                   OOS start ~2019, 9+1 walk-forward, two Polish equities
-PORTFOLIO_MODE = "msci_world"   # <- "global_equity" or "msci_world"
+PORTFOLIO_MODE = "global_equity"   # <- "global_equity" or "msci_world"
 
 # ---------------------------------------------------------------------------
 # GOOGLE DRIVE (required for msci_world mode; ignored in global_equity mode)
@@ -215,6 +223,19 @@ MWIG_WEIGHT = 0.50   # weight of MWIG40TR in the PL_MID blend
 SWIG_WEIGHT = 0.50   # weight of SWIG80TR in the PL_MID blend
 
 # ---------------------------------------------------------------------------
+# DATA FLOOR DATES
+# ---------------------------------------------------------------------------
+# WIG (Mode A only): daily continuous trading started 1994-10-03.
+#   Earlier data has multi-day gaps that distort the breakout trough
+#   calculation and MA windows.  Clipped after download in Phase 2.
+WIG_DATA_FLOOR = "1994-10-03"
+
+# MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
+#   date. Ensures IS windows starting before 1999 have realistic cash returns
+#   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
+MMF_FLOOR = "1994-10-03"
+
+# ---------------------------------------------------------------------------
 # DAILY OUTPUT
 # ---------------------------------------------------------------------------
 OUTPUT_DIR = "global_equity_outputs"   # local directory for daily artefacts
@@ -276,6 +297,15 @@ def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | No
 TBSP = _stooq("^tbsp",   "TBSP")
 MMF  = _stooq("2720.n",  "MMF")
 
+# WIBOR 1M — used to extend MMF backwards to MMF_FLOOR
+# Not mandatory: if unavailable the MMF runs from its natural start (~1999)
+WIBOR1M = _stooq("plopln1m", "WIBOR1M", mandatory=False)
+if WIBOR1M is None:
+    logging.warning(
+        "WIBOR1M (plopln1m) unavailable — MMF will not be extended. "
+        "IS windows before 1999 will use ret_mmf=0 for cash returns."
+    )
+
 # --- FX rates (downloaded always; applied only when FX_HEDGED=False) ---
 USDPLN = _stooq("usdpln", "USDPLN")
 EURPLN = _stooq("eurpln", "EURPLN")
@@ -289,14 +319,31 @@ if PORTFOLIO_MODE == "global_equity":
     SPX     = _stooq("^spx",  "SP500")     # S&P 500
     NKX     = _stooq("^nkx",   "Nikkei225")
 
-    logging.info("Downloading STOXX 600 from yfinance ...")
-    STOXX600 = download_yfinance("^STOXX", start=DATA_START)
+    # STOXX 600: load from Drive (historical base + yfinance extension).
+    # build_stoxx600() auto-selects first-build vs update mode:
+    #   First build: reads stoxx600.csv from Drive, extends with yfinance
+    #   Update:      reads stoxx600_combined.csv from Drive, extends forward
+    _stoxx_folder = (
+        os.environ.get("GDRIVE_FOLDER_ID", "").strip()
+        or GDRIVE_FOLDER_ID_DEFAULT.strip()
+    )
+    if not _stoxx_folder:
+        logging.error(
+            "FAIL: GDRIVE_FOLDER_ID not set — cannot load STOXX 600. "
+            "Set GDRIVE_FOLDER_ID_DEFAULT or the env var."
+        )
+        sys.exit(1)
+    STOXX600 = build_stoxx600(folder_id=_stoxx_folder)
     if STOXX600 is None:
-        logging.error("FAIL: STOXX 600 — yfinance download returned None. Exiting.")
+        logging.error(
+            "FAIL: STOXX 600 build/update failed. "
+            "Ensure stoxx600.csv is uploaded to Drive folder %s.",
+            _stoxx_folder,
+        )
         sys.exit(1)
     logging.info(
         "OK  : %-14s  %5d rows  %s to %s",
-        "STOXX600(yf)", len(STOXX600),
+        "STOXX600", len(STOXX600),
         STOXX600.index.min().date(), STOXX600.index.max().date(),
     )
 
@@ -322,7 +369,7 @@ elif PORTFOLIO_MODE == "msci_world":
             "  Build the combined file first with: python wsj_msci_world.py"
         )
         sys.exit(1)
-    MSCIW = load_combined_from_drive(folder_id=folder_id)
+    MSCIW = build_MSCIWORLD(folder_id=folder_id)
     if MSCIW is None:
         logging.error(
             "FAIL: msci_world_combined.csv not found in Drive folder %s.\n"
@@ -356,9 +403,34 @@ fx_usd = USDPLN[CLOSE_COL] if USDPLN is not None else None
 fx_eur = EURPLN[CLOSE_COL] if EURPLN is not None else None
 fx_jpy = JPYPLN[CLOSE_COL] if JPYPLN is not None else None
 
-# --- Shared ---
-ret_tbsp = build_return_series(TBSP, hedged=True)   # PLN bond index — no FX
-ret_mmf  = build_return_series(MMF,  hedged=True)   # PLN money market — no FX
+# --- WIG floor (Mode A only) ---
+# Clip WIG to the daily-continuous-trading era. Earlier data has multi-day
+# gaps that distort the breakout trough and MA signal calculations.
+if PORTFOLIO_MODE == "global_equity" and WIG is not None:
+    _wig_before = len(WIG)
+    WIG = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
+    logging.info(
+        "WIG clipped to %s: %d → %d rows",
+        WIG_DATA_FLOOR, _wig_before, len(WIG),
+    )
+
+# --- Extended MMF (both modes) ---
+# Chain-link WIBOR 1M backwards from first real MMF observation to MMF_FLOOR.
+# This gives realistic ~18-25% p.a. cash returns for 1994-1999 IS windows
+# in Mode A (global_equity), where WIG IS data goes back to 1994.
+if WIBOR1M is not None:
+    MMF_EXT = build_mmf_extended(MMF, WIBOR1M, floor_date=MMF_FLOOR)
+    logging.info(
+        "MMF extended: %s to %s (%d rows total; original MMF from %s)",
+        MMF_EXT.index.min().date(), MMF_EXT.index.max().date(),
+        len(MMF_EXT), MMF.index.min().date(),
+    )
+else:
+    MMF_EXT = MMF   # no extension available; falls back to original series
+
+# --- Shared returns ---
+ret_tbsp = build_return_series(TBSP,    hedged=True)   # PLN bond index — no FX
+ret_mmf  = build_return_series(MMF_EXT, hedged=True)   # PLN money market (extended)
 
 logging.info(
     "TBSP: %d return days  %s to %s",
