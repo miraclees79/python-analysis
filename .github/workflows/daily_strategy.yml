@@ -301,3 +301,9 @@ jobs:
             fi
           done
           echo "All expected outputs present."
+      # ------------------------------------------------------------------
+      # 12. Credentials cleanup
+      # ------------------------------------------------------------------
+      - name: Remove credentials file
+        if: always()
+        run: rm -f /tmp/credentials.json

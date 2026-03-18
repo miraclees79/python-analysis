@@ -1,0 +1,118 @@
+# .github/workflows/daily_global_equity.yml
+#
+# Daily runner for the global equity portfolio strategy.
+# Supports both "global_equity" and "msci_world" portfolio modes,
+# controlled by PORTFOLIO_MODE in global_equity_daily_runfile.py.
+#
+# Schedule: 20:00 Warsaw time on weekdays.
+#   Runs 30 minutes after the multi-asset workflow (19:30 Warsaw)
+#   to avoid concurrent Drive uploads from both workflows.
+#   20:00 Warsaw = 19:00 UTC (winter, UTC+1) / 18:00 UTC (summer, UTC+2).
+#
+# Phases run daily: 1–7 (data download, per-asset walk-forward, bond
+#   walk-forward, allocation walk-forward, reporting, daily output).
+#
+# Outputs (all prefixed global_equity_ to coexist with other strategy files):
+#   global_equity_outputs/global_equity_signal_status.txt
+#   global_equity_outputs/global_equity_signal_log.csv
+#   global_equity_outputs/global_equity_chart.png
+#   global_equity_outputs/global_equity_signal_snapshot.json
+#
+# All four files are uploaded to the same Google Drive folder used by
+# the other strategies.  Email notification on any action != HOLD.
+#
+# Required repository secrets (shared with other workflows):
+#   GOOGLE_CREDENTIALS      — service account key (raw JSON)
+#   GDRIVE_FOLDER_ID        — target Google Drive folder ID
+#   NOTIFY_EMAIL_TO         — recipient address for signal alerts
+#   GMAIL_USER              — sender Gmail address
+#   GMAIL_APP_PASSWORD      — Gmail App Password
+#
+# Optional:
+#   NOTIFY_EMAIL_CC         — CC address (leave unset to skip)
+
+name: Test Global Equity Signal
+
+on:
+  workflow_dispatch:  # Allows manual trigger
+ # schedule: ONLY MANUAL
+ 
+
+
+jobs:
+  run-global-equity:
+    name: Run global equity strategy and deliver outputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 360      # 6h — walk-forward on 2-core runner is slow
+
+    steps:
+      # ------------------------------------------------------------------
+      # 1. Checkout repository
+      # ------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------
+      # 2. Set up Python
+      # ------------------------------------------------------------------
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: global_equity/requirements.txt
+
+      # ------------------------------------------------------------------
+      # 3. Install dependencies
+      # ------------------------------------------------------------------
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r global_equity/requirements.txt
+
+      # ------------------------------------------------------------------
+      # 4. Write Google credentials
+      # ------------------------------------------------------------------
+      - name: Write Google credentials file
+        run: echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
+
+      # ------------------------------------------------------------------
+      # 5. Run the global equity daily runfile
+      # ------------------------------------------------------------------
+      - name: Run global equity daily runfile
+        id: strategy
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONPATH: ${{ github.workspace }}/development
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: |
+          cd development
+          python global_equity_runfile.py
+
+      
+
+      # ------------------------------------------------------------------
+      # 9. Upload log file to workflow artifacts (always, for debugging)
+      # ------------------------------------------------------------------
+      - name: Upload run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-equity-run-log
+          path: |
+            development/GlobalEquityDailyRun.log
+            development/global_equity_outputs/global_equity_signal_status.txt
+            development/global_equity_outputs/global_equity_signal_log.csv
+            developmetnt/global_equity_outputs/global_equity_chart.png
+          retention-days: 14
+
+
+
+
+
+      # ------------------------------------------------------------------
+      # 12. Credentials cleanup
+      # ------------------------------------------------------------------
+      - name: Remove credentials file
+        if: always()
+        run: rm -f /tmp/credentials.json

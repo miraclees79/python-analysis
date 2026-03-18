@@ -168,7 +168,7 @@ MOM_LB_EQ   = [126, 252]
 #         (longer history back to 1999, duration-weighted price proxy)
 # False = use TBSP price index as signal source (current behaviour, from 2006)
 # Execution is always on TBSP regardless of this setting.
-USE_YIELD_SIGNAL = True  # default preserves current behaviour
+USE_YIELD_SIGNAL = False  # default preserves current behaviour
 
 # --- TBSP signal parameter grids ---
 # Breakout disabled: Y_GRID_BD = [0.001] (price always > near-zero trough).
@@ -201,7 +201,7 @@ SL_YLD      = [0.05, 0.08, 0.10, 0.15]         # 4-5x wider than TBSP SL_BD
 
 
 # Monte Carlo robustness checks 
-RUN_MONTE_CARLO_PARAM_SINGLE = True # MC parameter robustness for single asset strategies
+RUN_MONTE_CARLO_PARAM_SINGLE = False # MC parameter robustness for single asset strategies
 ITERATIONS_MC_PARAM_SINGLE = 1000 # 1000 is the true test variant, 10 for smoke test
 
 RUN_BLOCK_BOOTSTRAP_SINGLE = False # Run bootstrap robustness test for single asset strategies
@@ -234,6 +234,14 @@ YIELD_PREFILTER_HARD_EXIT   = False   # Option B default
 # 75bp ~= more aggressive — only blocks sustained hiking
 YIELD_PREFILTER_THRESHOLD_BP = 50.0
 
+# robustness check - using chosen sample of training data to investigate sub-period sensitivity
+# and to investingate problems with global equity work (match sample to available data there)
+USE_SHORTER_SAMPLE = False
+short_sample_start = "2010-03-09"
+short_sample_end   = "2026-03-17"
+
+
+
 # ============================================================
 # PHASE 1 — DATA DOWNLOAD
 # ============================================================
@@ -244,9 +252,9 @@ logging.info("=" * 80)
 
 tmp_dir = tempfile.mkdtemp()
 
-# --- Equity: WIG total return index ---
+# --- Equity: WIG total return index --- #test changed to wig20tr
 csv_wig  = os.path.join(tmp_dir, "wig.csv")
-download_csv("https://stooq.pl/q/d/l/?s=wig&i=d", csv_wig)
+download_csv("https://stooq.pl/q/d/l/?s=wig20tr&i=d", csv_wig)
 WIG = load_csv(csv_wig)
 if WIG is None:
     logging.error("Failed to load WIG data. Exiting.")
@@ -273,6 +281,43 @@ if MMF is None:
     sys.exit(1)
 logging.info("MMF  loaded: %d rows  (%s to %s)",
              len(MMF), MMF.index.min().date(), MMF.index.max().date())
+
+
+
+if USE_SHORTER_SAMPLE:
+    
+    WIG_short   = WIG.loc[
+        (WIG.index >= short_sample_start) &
+        (WIG.index <= short_sample_end)
+    ]
+    TBSP_short   = TBSP.loc[
+        (TBSP.index >= short_sample_start) &
+        (TBSP.index <= short_sample_end)
+    ]
+    MMF_short = MMF.loc[
+        (MMF.index >= short_sample_start) &
+        (MMF.index <= short_sample_end)
+    ]
+        
+    WIG   = WIG_short      # was df.short — typo
+    TBSP = TBSP_short    # was missing
+    MMF = MMF_short    # was missing
+        
+    logging.info("=" * 80)
+    logging.info("Diagnostic sub-sample run - does the result hold in chosen sub-sample?")
+    logging.info(
+        "Data start forced to %s, data end forced to %s",
+        short_sample_start, short_sample_end
+    )
+    logging.info(
+        "Sub-sample: %d rows from %s to %s",
+        len(WIG),
+        WIG.index.min().date(),
+        WIG.index.max().date()
+    )
+    logging.info("=" * 80)
+#----------------------------------------------
+
 
 
 
