@@ -234,6 +234,14 @@ YIELD_PREFILTER_HARD_EXIT   = False   # Option B default
 # 75bp ~= more aggressive — only blocks sustained hiking
 YIELD_PREFILTER_THRESHOLD_BP = 50.0
 
+# robustness check - using chosen sample of training data to investigate sub-period sensitivity
+# and to investingate problems with global equity work (match sample to available data there)
+USE_SHORTER_SAMPLE = False
+short_sample_start = "2008-01-01"
+short_sample_end   = "2023-12-31"
+
+
+
 # ============================================================
 # PHASE 1 — DATA DOWNLOAD
 # ============================================================
@@ -273,6 +281,43 @@ if MMF is None:
     sys.exit(1)
 logging.info("MMF  loaded: %d rows  (%s to %s)",
              len(MMF), MMF.index.min().date(), MMF.index.max().date())
+
+
+
+if USE_SHORTER_SAMPLE:
+    
+    df_short   = df.loc[
+        (df.index >= short_sample_start) &
+        (df.index <= short_sample_end)
+    ]
+    CASH_short = CASH.loc[
+        (CASH.index >= short_sample_start) &
+        (CASH.index <= short_sample_end)
+    ]
+        
+    df   = df_short      # was df.short — typo
+    CASH = CASH_short    # was missing
+    if FUNDS is not None:
+        FUNDS = FUNDS.loc[
+            (FUNDS.index >= short_sample_start) &
+            (FUNDS.index <= short_sample_end)
+    ]
+        
+    logging.info("=" * 80)
+    logging.info("Diagnostic sub-sample run - does the result hold in chosen sub-sample?")
+    logging.info(
+        "Data start forced to %s, data end forced to %s",
+        short_sample_start, short_sample_end
+    )
+    logging.info(
+        "Sub-sample: %d rows from %s to %s",
+        len(df),
+        df.index.min().date(),
+        df.index.max().date()
+    )
+    logging.info("=" * 80)
+#----------------------------------------------
+
 
 
 
