@@ -168,7 +168,7 @@ MOM_LB_EQ   = [126, 252]
 #         (longer history back to 1999, duration-weighted price proxy)
 # False = use TBSP price index as signal source (current behaviour, from 2006)
 # Execution is always on TBSP regardless of this setting.
-USE_YIELD_SIGNAL = True  # default preserves current behaviour
+USE_YIELD_SIGNAL = False  # default preserves current behaviour
 
 # --- TBSP signal parameter grids ---
 # Breakout disabled: Y_GRID_BD = [0.001] (price always > near-zero trough).
