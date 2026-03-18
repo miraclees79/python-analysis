@@ -104,8 +104,8 @@ FORCE_FILTER_MODE =  ["ma","mom"]
 # options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
 RUN_MONTE_CARLO = False # MC parameter robustness
 RUN_BLOCK_BOOTSTRAP = False # Run bootstrap robustness test
-TRAIN_YEARS_EQ = 9
-TEST_YEARS_EQ = 1
+TRAIN_YEARS_EQ = 8
+TEST_YEARS_EQ = 2
 
 
 # OBJECTIVE FUNCTION
@@ -325,7 +325,7 @@ fast_grid   = [50, 75, 100]
 slow_grid = [150, 200, 250 ]
 tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
 sl_grid     = [0.05, 0.08, 0.10, 0.15]
-mom_lookback_grid = [126, 252]           # [126, 252]    # ADD
+mom_lookback_grid =  [252]  #[126, 252]           # [126, 252]    # ADD
     
 #============================
 
