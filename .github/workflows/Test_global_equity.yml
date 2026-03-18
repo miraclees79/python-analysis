@@ -100,9 +100,10 @@ jobs:
         with:
           name: global-equity-run-log
           path: |
-            global_equity_outputs/global_equity_signal_status.txt
-            global_equity_outputs/global_equity_signal_log.csv
-            global_equity_outputs/global_equity_chart.png
+            development/GlobalEquityDailyRun.log
+            development/global_equity_outputs/global_equity_signal_status.txt
+            development/global_equity_outputs/global_equity_signal_log.csv
+            developmetnt/global_equity_outputs/global_equity_chart.png
           retention-days: 14
 
 

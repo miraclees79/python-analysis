@@ -270,23 +270,30 @@ jobs:
           EOF
 
       # ------------------------------------------------------------------
-      # 9. Upload log file to workflow artifacts (always, for debugging)
+      # 9. Upload run log and output files to workflow artifacts
+      #    (always runs, even on failure — useful for debugging)
+      #
+      #    All paths are relative to the workspace root.
+      #    The runfile runs from global_equity/ so outputs land at
+      #    global_equity/global_equity_outputs/*.
       # ------------------------------------------------------------------
       - name: Upload run log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: global-equity-run-log
-          path: |
-            global_equity_outputs/global_equity_signal_status.txt
-            global_equity_outputs/global_equity_signal_log.csv
-            global_equity_outputs/global_equity_chart.png
+          path: global_equity/GlobalEquityDailyRun.log
           retention-days: 14
 
-
-                # ------------------------------------------------------------------
-      # 12. Credentials cleanup
-      # ------------------------------------------------------------------
-      - name: Remove credentials file
+      - name: Upload output files
         if: always()
-        run: rm -f /tmp/credentials.json
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-equity-outputs
+          path: |
+            global_equity/global_equity_outputs/global_equity_signal_status.txt
+            global_equity/global_equity_outputs/global_equity_signal_log.csv
+            global_equity/global_equity_outputs/global_equity_chart.png
+            global_equity/global_equity_outputs/global_equity_signal_snapshot.json
+          retention-days: 14
+          if-no-files-found: warn
