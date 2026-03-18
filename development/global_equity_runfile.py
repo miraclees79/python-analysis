@@ -255,11 +255,11 @@ MMF_FLOOR = "1994-10-03"
 # ---------------------------------------------------------------------------
 # Phase 7a: Monte Carlo parameter perturbation — per asset
 RUN_MC_PARAM_SINGLE        = True
-ITERATIONS_MC_PARAM_SINGLE = 10   # 10 for smoke test, 1000 for full run
+ITERATIONS_MC_PARAM_SINGLE = 1000   # 10 for smoke test, 1000 for full run
  
 # Phase 7b: Block bootstrap — per asset
 RUN_BLOCK_BOOTSTRAP_SINGLE    = True
-ITERATIONS_BOOTSTRAP_SINGLE   = 10    # 10 for smoke test, 500 for full run
+ITERATIONS_BOOTSTRAP_SINGLE   = 50    # 10 for smoke test, 500 for full run
  
 # Phase 8: N-asset allocation weight perturbation
 RUN_ROBUSTNESS_ALLOCATION_WEIGHT = True
