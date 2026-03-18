@@ -76,6 +76,19 @@ from strategy_test_library import (
 )
 from multiasset_library import build_signal_series
 
+from mc_robustness import (
+    run_monte_carlo_robustness,
+    analyze_robustness,
+    extract_windows_from_wf_results,
+    extract_best_params_from_wf_results,
+    run_block_bootstrap_robustness,
+    analyze_bootstrap,
+    BOND_THRESHOLDS_MC,
+    BOND_THRESHOLDS_BOOTSTRAP,
+    EQUITY_THRESHOLDS_MC,
+    EQUITY_THRESHOLDS_BOOTSTRAP,
+)
+ 
 from global_equity_library import (
     download_yfinance,
     build_return_series,
@@ -83,6 +96,8 @@ from global_equity_library import (
     build_price_df_from_returns,
     build_mmf_extended,
     allocation_walk_forward_n,
+    allocation_weight_robustness_n,
+    print_allocation_robustness_report_n,
     print_global_equity_report,
     CLOSE_COL,
     DATA_START,
@@ -124,10 +139,10 @@ logging.info("GLOBAL EQUITY RUNFILE START: %s", dt.datetime.now())
 logging.info("=" * 80)
 
 
-# ============================================================
+## ============================================================
 # USER SETTINGS  <- edit these to switch modes and adjust behaviour
 # ============================================================
-
+ 
 # ---------------------------------------------------------------------------
 # PORTFOLIO MODE  (the primary switch)
 # ---------------------------------------------------------------------------
@@ -136,50 +151,50 @@ logging.info("=" * 80)
 #
 # "msci_world"    : Mode B — WIG20TR + PL_MID + MSCI_World + TBSP + MMF
 #                   OOS start ~2019, 9+1 walk-forward, two Polish equities
-PORTFOLIO_MODE = "msci_world"   # <- "global_equity" or "msci_world"
-
+PORTFOLIO_MODE = "global_equity"   # <- "global_equity" or "msci_world"
+ 
 # ---------------------------------------------------------------------------
 # GOOGLE DRIVE (required for msci_world mode; ignored in global_equity mode)
 # ---------------------------------------------------------------------------
 # Same folder ID used by all other strategy scripts.
 # Env var GDRIVE_FOLDER_ID takes precedence over this hardcoded value.
 GDRIVE_FOLDER_ID_DEFAULT = ""   # <- paste your folder ID here
-
+ 
 # ---------------------------------------------------------------------------
 # FX TREATMENT
 # ---------------------------------------------------------------------------
 # True  : funds are PLN-hedged — use local index returns directly
 # False : funds are unhedged  — compound local returns with daily FX return
 FX_HEDGED = True
-
+ 
 # ---------------------------------------------------------------------------
 # POSITION SIZING
 # ---------------------------------------------------------------------------
 POSITION_MODE = "full"   # "full" | "vol_entry" | "vol_dynamic"
-
+ 
 # ---------------------------------------------------------------------------
 # WALK-FORWARD WINDOWS
 # ---------------------------------------------------------------------------
 TRAIN_YEARS = 9    # training window length (years) — same for all assets
 TEST_YEARS  = 1    # test window length (years)      — same for all assets
 VOL_WINDOW  = 20   # rolling volatility window (days)
-
+ 
 # ---------------------------------------------------------------------------
 # REALLOCATION GATE
 # ---------------------------------------------------------------------------
 COOLDOWN_DAYS = 10    # minimum calendar days between reallocations
 ANNUAL_CAP    = 999   # effectively disabled (no hard annual limit)
-
+ 
 # ---------------------------------------------------------------------------
 # ALLOCATION OBJECTIVE
 # ---------------------------------------------------------------------------
 ALLOC_OBJECTIVE = "calmar"   # "calmar" | "sharpe" | "cagr"
-
+ 
 # ---------------------------------------------------------------------------
 # ALLOCATION WEIGHT GRID STEP
 # ---------------------------------------------------------------------------
 ALLOC_STEP = 0.10   # 10% increments
-
+ 
 # ---------------------------------------------------------------------------
 # FILTER MODES
 # ---------------------------------------------------------------------------
@@ -188,7 +203,7 @@ ALLOC_STEP = 0.10   # 10% increments
 # ["ma", "mom"] = allow MA or momentum
 FORCE_FILTER_MODE_EQ = None    # equity signals
 FORCE_FILTER_MODE_BD = ["ma"]  # bond: MA-only always
-
+ 
 # ---------------------------------------------------------------------------
 # EQUITY SIGNAL PARAMETER GRIDS  (shared across all equity assets)
 # ---------------------------------------------------------------------------
@@ -199,7 +214,7 @@ SLOW_EQ   = [150, 200, 250]
 TV_EQ     = [0.08, 0.10, 0.12, 0.15, 0.20]
 SL_EQ     = [0.05, 0.08, 0.10, 0.15]
 MOM_LB_EQ = [126, 252]
-
+ 
 # ---------------------------------------------------------------------------
 # BOND SIGNAL PARAMETER GRIDS  (TBSP, MA-only, no breakout)
 # ---------------------------------------------------------------------------
@@ -209,19 +224,19 @@ FAST_BD   = [50, 100, 150]
 SLOW_BD   = [200, 300, 400, 500]
 TV_BD     = [0.08, 0.10, 0.12]
 SL_BD     = [0.01, 0.02, 0.03]
-
+ 
 # ---------------------------------------------------------------------------
 # PARALLELISM
 # ---------------------------------------------------------------------------
 _cpu_count = os.cpu_count() or 1
 N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
-
+ 
 # ---------------------------------------------------------------------------
 # MID/SMALL BLEND WEIGHTS  (Mode B only)
 # ---------------------------------------------------------------------------
 MWIG_WEIGHT = 0.50   # weight of MWIG40TR in the PL_MID blend
 SWIG_WEIGHT = 0.50   # weight of SWIG80TR in the PL_MID blend
-
+ 
 # ---------------------------------------------------------------------------
 # DATA FLOOR DATES
 # ---------------------------------------------------------------------------
@@ -229,16 +244,35 @@ SWIG_WEIGHT = 0.50   # weight of SWIG80TR in the PL_MID blend
 #   Earlier data has multi-day gaps that distort the breakout trough
 #   calculation and MA windows.  Clipped after download in Phase 2.
 WIG_DATA_FLOOR = "1994-10-03"
-
+ 
 # MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
 #   date. Ensures IS windows starting before 1999 have realistic cash returns
 #   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
 MMF_FLOOR = "1994-10-03"
-
+ 
+# ---------------------------------------------------------------------------
+# ROBUSTNESS CHECKS (Phases 7–8 — skipped in daily runner)
+# ---------------------------------------------------------------------------
+# Phase 7a: Monte Carlo parameter perturbation — per asset
+RUN_MC_PARAM_SINGLE        = True
+ITERATIONS_MC_PARAM_SINGLE = 10   # 10 for smoke test, 1000 for full run
+ 
+# Phase 7b: Block bootstrap — per asset
+RUN_BLOCK_BOOTSTRAP_SINGLE    = True
+ITERATIONS_BOOTSTRAP_SINGLE   = 10    # 10 for smoke test, 500 for full run
+ 
+# Phase 8: N-asset allocation weight perturbation
+RUN_ROBUSTNESS_ALLOCATION_WEIGHT = True
+PERTURB_STEPS_ALLOC              = [-0.2, -0.1, 0.0, 0.1, 0.2]
+# Only perturb assets whose mean OOS allocation >= this threshold
+ALLOC_ROBUSTNESS_MIN_MEAN_WEIGHT = 0.05
+ 
 # ---------------------------------------------------------------------------
 # DAILY OUTPUT
 # ---------------------------------------------------------------------------
 OUTPUT_DIR = "global_equity_outputs"   # local directory for daily artefacts
+ 
+ 
 
 
 # ============================================================
@@ -737,8 +771,173 @@ print_global_equity_report(
 
 
 # ============================================================
-# PHASE 7 — DAILY OUTPUT  (status, log, chart, snapshot)
+# PHASE 7 — PER-ASSET SIGNAL ROBUSTNESS
 # ============================================================
+ 
+logging.info("=" * 80)
+logging.info("PHASE 7: PER-ASSET SIGNAL ROBUSTNESS")
+logging.info("=" * 80)
+ 
+# Each tuple: (label, price_df, wf_equity, wf_results,
+#              X_grid, Y_grid, fast, slow, tv, sl, mom_lb,
+#              filter_override, cash_df, thresholds_mc, thresholds_bs)
+_rob_assets = []
+if PORTFOLIO_MODE == "global_equity":
+    _rob_assets = [
+        ("WIG",       price_WIG,    wf_eq_WIG,   wf_res_WIG,
+         X_GRID_EQ, Y_GRID_EQ, FAST_EQ, SLOW_EQ, TV_EQ, SL_EQ, MOM_LB_EQ,
+         FORCE_FILTER_MODE_EQ, MMF, EQUITY_THRESHOLDS_MC, EQUITY_THRESHOLDS_BOOTSTRAP),
+        ("SP500",     price_SPX,    wf_eq_SPX,   wf_res_SPX,
+         X_GRID_EQ, Y_GRID_EQ, FAST_EQ, SLOW_EQ, TV_EQ, SL_EQ, MOM_LB_EQ,
+         FORCE_FILTER_MODE_EQ, MMF, EQUITY_THRESHOLDS_MC, EQUITY_THRESHOLDS_BOOTSTRAP),
+        ("STOXX600",  price_STOXX,  wf_eq_STOXX, wf_res_STOXX,
+         X_GRID_EQ, Y_GRID_EQ, FAST_EQ, SLOW_EQ, TV_EQ, SL_EQ, MOM_LB_EQ,
+         FORCE_FILTER_MODE_EQ, MMF, EQUITY_THRESHOLDS_MC, EQUITY_THRESHOLDS_BOOTSTRAP),
+        ("Nikkei225", price_NKX,    wf_eq_NKX,   wf_res_NKX,
+         X_GRID_EQ, Y_GRID_EQ, FAST_EQ, SLOW_EQ, TV_EQ, SL_EQ, MOM_LB_EQ,
+         FORCE_FILTER_MODE_EQ, MMF, EQUITY_THRESHOLDS_MC, EQUITY_THRESHOLDS_BOOTSTRAP),
+        ("TBSP",      TBSP,         wf_eq_TBSP,  wf_res_TBSP,
+         X_GRID_BD, Y_GRID_BD, FAST_BD, SLOW_BD, TV_BD, SL_BD, [252],
+         FORCE_FILTER_MODE_BD, MMF, BOND_THRESHOLDS_MC, BOND_THRESHOLDS_BOOTSTRAP),
+    ]
+elif PORTFOLIO_MODE == "msci_world":
+    _rob_assets = [
+        ("WIG20TR",    price_WIG20TR, wf_eq_WIG20, wf_res_WIG20,
+         X_GRID_EQ, Y_GRID_EQ, FAST_EQ, SLOW_EQ, TV_EQ, SL_EQ, MOM_LB_EQ,
+         FORCE_FILTER_MODE_EQ, MMF, EQUITY_THRESHOLDS_MC, EQUITY_THRESHOLDS_BOOTSTRAP),
+        ("PL_MID",     price_PL_MID,  wf_eq_PLMID, wf_res_PLMID,
+         X_GRID_EQ, Y_GRID_EQ, FAST_EQ, SLOW_EQ, TV_EQ, SL_EQ, MOM_LB_EQ,
+         FORCE_FILTER_MODE_EQ, MMF, EQUITY_THRESHOLDS_MC, EQUITY_THRESHOLDS_BOOTSTRAP),
+        ("MSCI_World", price_MSCIW,   wf_eq_MSCIW, wf_res_MSCIW,
+         X_GRID_EQ, Y_GRID_EQ, FAST_EQ, SLOW_EQ, TV_EQ, SL_EQ, MOM_LB_EQ,
+         FORCE_FILTER_MODE_EQ, MMF, EQUITY_THRESHOLDS_MC, EQUITY_THRESHOLDS_BOOTSTRAP),
+        ("TBSP",       TBSP,          wf_eq_TBSP,  wf_res_TBSP,
+         X_GRID_BD, Y_GRID_BD, FAST_BD, SLOW_BD, TV_BD, SL_BD, [252],
+         FORCE_FILTER_MODE_BD, MMF, BOND_THRESHOLDS_MC, BOND_THRESHOLDS_BOOTSTRAP),
+    ]
+ 
+# Phase 7a: Monte Carlo parameter perturbation
+if RUN_MC_PARAM_SINGLE:
+    for (lbl, price_df, wf_eq, wf_res,
+         xg, yg, fg, sg, tvg, slg, mlg,
+         fm_override, cash_df_rob, thr_mc, thr_bs) in _rob_assets:
+        logging.info("=" * 80)
+        logging.info("MC PARAMETER ROBUSTNESS  — %s", lbl)
+        logging.info("=" * 80)
+        _windows     = extract_windows_from_wf_results(wf_res, train_years=TRAIN_YEARS)
+        _best_params = extract_best_params_from_wf_results(wf_res)
+        _mc_results  = run_monte_carlo_robustness(
+            best_params   = _best_params,
+            windows       = _windows,
+            df            = price_df,
+            cash_df       = cash_df_rob,
+            vol_window    = VOL_WINDOW,
+            selected_mode = POSITION_MODE,
+            funds_df      = None,
+            n_samples     = ITERATIONS_MC_PARAM_SINGLE,
+            n_jobs        = N_JOBS,
+            perturb_pct   = 0.20,
+            seed          = 42,
+            price_col     = CLOSE_COL,
+        )
+        analyze_robustness(_mc_results, compute_metrics(wf_eq), thresholds=thr_mc)
+else:
+    logging.info("Phase 7a (MC parameter robustness) skipped by user choice.")
+ 
+# Phase 7b: Block bootstrap
+if RUN_BLOCK_BOOTSTRAP_SINGLE:
+    for (lbl, price_df, wf_eq, wf_res,
+         xg, yg, fg, sg, tvg, slg, mlg,
+         fm_override, cash_df_rob, thr_mc, thr_bs) in _rob_assets:
+        logging.info("=" * 80)
+        logging.info("BLOCK BOOTSTRAP ROBUSTNESS  — %s", lbl)
+        logging.info("=" * 80)
+        _bb_results = run_block_bootstrap_robustness(
+            df                    = price_df,
+            cash_df               = cash_df_rob,
+            price_col             = CLOSE_COL,
+            cash_price_col        = CLOSE_COL,
+            n_samples             = ITERATIONS_BOOTSTRAP_SINGLE,
+            block_size            = 250,
+            train_years           = TRAIN_YEARS,
+            test_years            = TEST_YEARS,
+            vol_window            = VOL_WINDOW,
+            funds_df              = None,
+            fund_params_grid      = None,
+            selected_mode         = POSITION_MODE,
+            filter_modes_override = fm_override,
+            X_grid                = xg,
+            Y_grid                = yg,
+            fast_grid             = fg,
+            slow_grid             = sg,
+            tv_grid               = tvg,
+            sl_grid               = slg,
+            mom_lookback_grid     = mlg,
+        )
+        analyze_bootstrap(_bb_results, compute_metrics(wf_eq), thresholds=thr_bs)
+else:
+    logging.info("Phase 7b (block bootstrap) skipped by user choice.")
+ 
+ 
+# ============================================================
+# PHASE 8 — ALLOCATION WEIGHT ROBUSTNESS  (N-asset Level 2)
+# ============================================================
+ 
+logging.info("=" * 80)
+logging.info("PHASE 8: ALLOCATION WEIGHT ROBUSTNESS  (N-asset, Level 2)")
+logging.info("=" * 80)
+ 
+if RUN_ROBUSTNESS_ALLOCATION_WEIGHT:
+    # Identify assets with meaningful allocation history
+    _w_cols = [c for c in alloc_results_df.columns
+               if c.startswith("w_") and c != "w_mmf"]
+    _focus_assets = [
+        c[2:]   # strip "w_" prefix
+        for c in _w_cols
+        if alloc_results_df[c].mean() >= ALLOC_ROBUSTNESS_MIN_MEAN_WEIGHT
+    ]
+ 
+    if not _focus_assets:
+        logging.info(
+            "No asset exceeded the minimum mean weight threshold (%.0f%%) — "
+            "skipping allocation weight robustness.",
+            ALLOC_ROBUSTNESS_MIN_MEAN_WEIGHT * 100,
+        )
+    else:
+        logging.info(
+            "Running weight perturbation for %d asset(s): %s",
+            len(_focus_assets), _focus_assets,
+        )
+        for _focus in _focus_assets:
+            if _focus not in asset_keys:
+                logging.warning(
+                    "focus asset '%s' not in asset_keys — skipping.", _focus
+                )
+                continue
+            logging.info("-" * 80)
+            _rob_df = allocation_weight_robustness_n(
+                alloc_results_df = alloc_results_df,
+                returns_dict     = returns_dict,
+                mmf_returns      = ret_mmf,
+                signals_oos_dict = signals_oos_trimmed,
+                asset_keys       = asset_keys,
+                baseline_metrics = portfolio_metrics,
+                perturb_steps    = PERTURB_STEPS_ALLOC,
+                focus_asset      = _focus,
+                min_weight       = 0.0,
+                max_weight       = 1.0,
+                cooldown_days    = COOLDOWN_DAYS,
+                annual_cap       = ANNUAL_CAP,
+            )
+            print_allocation_robustness_report_n(_rob_df, focus_asset=_focus)
+else:
+    logging.info("Phase 8 (allocation weight robustness) skipped by user choice.")
+ 
+ 
+# ============================================================
+# PHASE 9 — DAILY OUTPUT  (status, log, chart, snapshot)
+# ============================================================
+ 
 
 logging.info("=" * 80)
 logging.info("PHASE 7: DAILY OUTPUT")

@@ -630,8 +630,11 @@ print_global_equity_report(
 )
 
 
+
 # ============================================================
-# PHASE 7 — DAILY OUTPUT  (status, log, chart, snapshot)
+# PHASE 9 — DAILY OUTPUT  (status, log, chart, snapshot)
+# Phases 7-8 (per-asset MC robustness + allocation weight perturbation)
+# are skipped in the daily runner — run in global_equity_runfile.py only.
 # ============================================================
 
 logging.info("=" * 80)
