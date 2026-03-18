@@ -236,7 +236,7 @@ YIELD_PREFILTER_THRESHOLD_BP = 50.0
 
 # robustness check - using chosen sample of training data to investigate sub-period sensitivity
 # and to investingate problems with global equity work (match sample to available data there)
-USE_SHORTER_SAMPLE = False
+USE_SHORTER_SAMPLE = True
 short_sample_start = "2010-03-09"
 short_sample_end   = "2026-03-17"
 
