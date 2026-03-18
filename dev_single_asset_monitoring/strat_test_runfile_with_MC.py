@@ -100,12 +100,12 @@ USER_AGENTS = [
 chosen_mode = "full"
 # options: "vol_entry", "vol_dynamic", "full"
 VOL_WINDOW = 20
-FORCE_FILTER_MODE = None # ["ma","mom"]
+FORCE_FILTER_MODE =  ["ma","mom"]
 # options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
-RUN_MONTE_CARLO = True # MC parameter robustness
+RUN_MONTE_CARLO = False # MC parameter robustness
 RUN_BLOCK_BOOTSTRAP = False # Run bootstrap robustness test
-TRAIN_YEARS_EQ = 8
-TEST_YEARS_EQ = 2
+TRAIN_YEARS_EQ = 9
+TEST_YEARS_EQ = 1
 
 
 # OBJECTIVE FUNCTION
@@ -135,7 +135,7 @@ logging.info("=" * 80)
 
 # Universe to be investigated: MWIG40TR, SWIG80TR, Stoxx Europe 600 - Eurex (FY.F), Nasdaq Composite - U.S. (^NDQ), S&P 500 - U.S. (^SPX), Nikkei 225 - Japan (^NKX)
 
-INDEX_CHOICE = "STOXX EU 600"
+INDEX_CHOICE = "WIG20TR"
 
 csv_filename_index = os.path.join(tmp_dir, "target_index.csv")
 if INDEX_CHOICE=="WIG20TR":
