@@ -72,7 +72,7 @@ from strategy_test_library import (
     compute_buy_and_hold,
     analyze_trades,
     print_backtest_report,
-    
+    build_signal_series,
 )
 
 from global_equity_library import (
@@ -80,14 +80,13 @@ from global_equity_library import (
     build_return_series,
     build_blend,
     build_price_df_from_returns,
+    build_mmf_extended,
     allocation_walk_forward_n,
     print_global_equity_report,
     CLOSE_COL,
     DATA_START,
 )
-from multiasset_library import (
-    build_signal_series,
-)
+
 from wsj_msci_world import load_combined_from_drive
 from global_equity_daily_output import build_daily_outputs
 
@@ -128,7 +127,7 @@ logging.info("=" * 80)
 #
 # "msci_world"    : Mode B — WIG20TR + PL_MID + MSCI_World + TBSP + MMF
 #                   OOS start ~2019, 9+1 walk-forward, two Polish equities
-PORTFOLIO_MODE = "msci_world"   # <- "global_equity" or "msci_world"
+PORTFOLIO_MODE = "global_equity"   # <- "global_equity" or "msci_world"
 
 # ---------------------------------------------------------------------------
 # GOOGLE DRIVE (required for msci_world mode; ignored in global_equity mode)
@@ -215,6 +214,19 @@ MWIG_WEIGHT = 0.50   # weight of MWIG40TR in the PL_MID blend
 SWIG_WEIGHT = 0.50   # weight of SWIG80TR in the PL_MID blend
 
 # ---------------------------------------------------------------------------
+# DATA FLOOR DATES
+# ---------------------------------------------------------------------------
+# WIG (Mode A only): daily continuous trading started 1994-10-03.
+#   Earlier data has multi-day gaps that distort the breakout trough
+#   calculation and MA windows.  Clipped after download in Phase 2.
+WIG_DATA_FLOOR = "1994-10-03"
+
+# MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
+#   date. Ensures IS windows starting before 1999 have realistic cash returns
+#   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
+MMF_FLOOR = "1994-10-03"
+
+# ---------------------------------------------------------------------------
 # DAILY OUTPUT
 # ---------------------------------------------------------------------------
 OUTPUT_DIR = "global_equity_outputs"   # local directory for daily artefacts
@@ -275,6 +287,15 @@ def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | No
 # --- Shared across both modes ---
 TBSP = _stooq("^tbsp",   "TBSP")
 MMF  = _stooq("2720.n",  "MMF")
+
+# WIBOR 1M — used to extend MMF backwards to MMF_FLOOR
+# Not mandatory: if unavailable the MMF runs from its natural start (~1999)
+WIBOR1M = _stooq("plopln1m", "WIBOR1M", mandatory=False)
+if WIBOR1M is None:
+    logging.warning(
+        "WIBOR1M (plopln1m) unavailable — MMF will not be extended. "
+        "IS windows before 1999 will use ret_mmf=0 for cash returns."
+    )
 
 # --- FX rates (downloaded always; applied only when FX_HEDGED=False) ---
 USDPLN = _stooq("usdpln", "USDPLN")
@@ -356,9 +377,34 @@ fx_usd = USDPLN[CLOSE_COL] if USDPLN is not None else None
 fx_eur = EURPLN[CLOSE_COL] if EURPLN is not None else None
 fx_jpy = JPYPLN[CLOSE_COL] if JPYPLN is not None else None
 
-# --- Shared ---
-ret_tbsp = build_return_series(TBSP, hedged=True)   # PLN bond index — no FX
-ret_mmf  = build_return_series(MMF,  hedged=True)   # PLN money market — no FX
+# --- WIG floor (Mode A only) ---
+# Clip WIG to the daily-continuous-trading era. Earlier data has multi-day
+# gaps that distort the breakout trough and MA signal calculations.
+if PORTFOLIO_MODE == "global_equity" and WIG is not None:
+    _wig_before = len(WIG)
+    WIG = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
+    logging.info(
+        "WIG clipped to %s: %d → %d rows",
+        WIG_DATA_FLOOR, _wig_before, len(WIG),
+    )
+
+# --- Extended MMF (both modes) ---
+# Chain-link WIBOR 1M backwards from first real MMF observation to MMF_FLOOR.
+# This gives realistic ~18-25% p.a. cash returns for 1994-1999 IS windows
+# in Mode A (global_equity), where WIG IS data goes back to 1994.
+if WIBOR1M is not None:
+    MMF_EXT = build_mmf_extended(MMF, WIBOR1M, floor_date=MMF_FLOOR)
+    logging.info(
+        "MMF extended: %s to %s (%d rows total; original MMF from %s)",
+        MMF_EXT.index.min().date(), MMF_EXT.index.max().date(),
+        len(MMF_EXT), MMF.index.min().date(),
+    )
+else:
+    MMF_EXT = MMF   # no extension available; falls back to original series
+
+# --- Shared returns ---
+ret_tbsp = build_return_series(TBSP,    hedged=True)   # PLN bond index — no FX
+ret_mmf  = build_return_series(MMF_EXT, hedged=True)   # PLN money market (extended)
 
 logging.info(
     "TBSP: %d return days  %s to %s",
