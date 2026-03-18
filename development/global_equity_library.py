@@ -80,11 +80,9 @@ import yfinance as yf
 
 from strategy_test_library import (
     compute_metrics,
-    
-)
-from multiasset_library import (
     build_signal_series,
 )
+
 
 # ============================================================
 # CONSTANTS
@@ -774,30 +772,54 @@ def signals_to_target_weights_n(
     """
     Map per-asset binary signals + optimised weights to a target weight dict.
 
-    For each asset:
-      - signal=1: allocate best_weights[asset]
-      - signal=0: that allocation falls to MMF
+    Mirrors signals_to_target_weights from multiasset_library exactly,
+    generalised to N assets:
 
-    The MMF receives: 1 - sum(active_asset_weights).
+      n_on == 0  :  100% MMF
+      n_on == 1  :  100% the single on-asset  (not its partial weight)
+      n_on >= 2  :  best_weights split applied across all on-assets
+
+    This IS/OOS consistency is critical: the IS optimiser evaluates combos
+    using exactly this same 3-state logic, so the OOS simulation must use
+    the same rule to remain consistent with what was optimised.
 
     Parameters
     ----------
     signals      : dict[str, int]    — binary signal per asset (0 or 1)
     best_weights : dict[str, float]  — optimised weight per asset
+                                       (used only when n_on >= 2)
     mmf_key      : str               — key for MMF in returned dict
 
     Returns
     -------
     dict  — {asset_key: weight, ..., mmf_key: mmf_weight}
     """
-    target = {}
-    total_risky = 0.0
-    for key, sig in signals.items():
-        w = best_weights.get(key, 0.0) * float(sig)
-        target[key] = w
-        total_risky += w
+    asset_keys = list(signals.keys())
+    on_keys    = [k for k in asset_keys if signals.get(k, 0)]
+    n_on       = len(on_keys)
 
-    target[mmf_key] = max(0.0, 1.0 - total_risky)
+    target = {k: 0.0 for k in asset_keys}
+
+    if n_on == 0:
+        # All signals off — 100% MMF
+        target[mmf_key] = 1.0
+
+    elif n_on == 1:
+        # Exactly one signal on — 100% that asset, consistent with IS optimiser
+        target[on_keys[0]] = 1.0
+        target[mmf_key]    = 0.0
+
+    else:
+        # Multiple signals on — apply optimised weight split
+        # Each on-asset gets its best_weights allocation; off-assets get 0
+        # MMF absorbs: residual (1 - sum of on-asset weights) + off-asset weights
+        total_risky = 0.0
+        for key in on_keys:
+            w = best_weights.get(key, 0.0)
+            target[key]  = w
+            total_risky += w
+        target[mmf_key] = max(0.0, 1.0 - total_risky)
+
     return target
 
 
