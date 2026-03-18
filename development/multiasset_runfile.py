@@ -237,8 +237,8 @@ YIELD_PREFILTER_THRESHOLD_BP = 50.0
 # robustness check - using chosen sample of training data to investigate sub-period sensitivity
 # and to investingate problems with global equity work (match sample to available data there)
 USE_SHORTER_SAMPLE = False
-short_sample_start = "2008-01-01"
-short_sample_end   = "2023-12-31"
+short_sample_start = "2010-03-09"
+short_sample_end   = "2026-03-17"
 
 
 
@@ -286,22 +286,22 @@ logging.info("MMF  loaded: %d rows  (%s to %s)",
 
 if USE_SHORTER_SAMPLE:
     
-    df_short   = df.loc[
-        (df.index >= short_sample_start) &
-        (df.index <= short_sample_end)
+    WIG_short   = WIG.loc[
+        (WIG.index >= short_sample_start) &
+        (WIG.index <= short_sample_end)
     ]
-    CASH_short = CASH.loc[
-        (CASH.index >= short_sample_start) &
-        (CASH.index <= short_sample_end)
+    TBSP_short   = TBSP.loc[
+        (TBSP.index >= short_sample_start) &
+        (TBSP.index <= short_sample_end)
+    ]
+    MMF_short = MMF.loc[
+        (MMF.index >= short_sample_start) &
+        (MMF.index <= short_sample_end)
     ]
         
-    df   = df_short      # was df.short — typo
-    CASH = CASH_short    # was missing
-    if FUNDS is not None:
-        FUNDS = FUNDS.loc[
-            (FUNDS.index >= short_sample_start) &
-            (FUNDS.index <= short_sample_end)
-    ]
+    WIG   = WIG_short      # was df.short — typo
+    TBSP = TBSP_short    # was missing
+    MMF = MMF_short    # was missing
         
     logging.info("=" * 80)
     logging.info("Diagnostic sub-sample run - does the result hold in chosen sub-sample?")
@@ -311,9 +311,9 @@ if USE_SHORTER_SAMPLE:
     )
     logging.info(
         "Sub-sample: %d rows from %s to %s",
-        len(df),
-        df.index.min().date(),
-        df.index.max().date()
+        len(WIG),
+        WIG.index.min().date(),
+        WIG.index.max().date()
     )
     logging.info("=" * 80)
 #----------------------------------------------
