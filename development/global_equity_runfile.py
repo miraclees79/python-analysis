@@ -111,7 +111,7 @@ from stoxx600 import (
     load_combined_from_drive as load_stoxx600_from_drive,
     build_and_upload as build_stoxx600,
     COMBINED_DRIVE_FILENAME as STOXX600_COMBINED_FILENAME,
-)
+    )
 from global_equity_daily_output import build_daily_outputs
 
 
@@ -259,7 +259,7 @@ ITERATIONS_MC_PARAM_SINGLE = 1000   # 10 for smoke test, 1000 for full run
  
 # Phase 7b: Block bootstrap — per asset
 RUN_BLOCK_BOOTSTRAP_SINGLE    = True
-ITERATIONS_BOOTSTRAP_SINGLE   = 50    # 10 for smoke test, 500 for full run
+ITERATIONS_BOOTSTRAP_SINGLE   = 100    # 10 for smoke test, 500 for full run
  
 # Phase 8: N-asset allocation weight perturbation
 RUN_ROBUSTNESS_ALLOCATION_WEIGHT = True
