@@ -120,7 +120,75 @@ import datetime as dt
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
+from numpy.linalg import lstsq as _lstsq
+
+try:
+    from scipy.optimize import minimize as _scipy_minimize
+    _SCIPY_AVAILABLE = True
+except ImportError:
+    _SCIPY_AVAILABLE = False
+
+
+def _nnls_sum_to_one(X: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """
+    Non-negative least squares with sum-to-one constraint.
+
+    Solves: min ||y - X @ w||² subject to w >= 0, sum(w) = 1.
+
+    Uses scipy SLSQP if available, otherwise pure-numpy fallback:
+      The constrained optimum on the simplex is found by iterating
+      over all pairs that could be on the boundary (w_i = 0) and
+      taking the best unconstrained solution on the remaining variables,
+      clipped to [0,1] and renormalised. For 2–5 variables this is
+      exact and fast.
+
+    Parameters
+    ----------
+    X : (n, k) array — regressors
+    y : (n,)   array — target
+
+    Returns
+    -------
+    w : (k,) array — non-negative weights summing to 1
+    """
+    k = X.shape[1]
+
+    if _SCIPY_AVAILABLE:
+        def _obj(w):
+            return np.sum((y - X @ w) ** 2)
+        from scipy.optimize import minimize as _m
+        res = _m(_obj, np.ones(k) / k,
+                 bounds=[(0.0, 1.0)] * k,
+                 constraints=[{"type": "eq", "fun": lambda w: w.sum() - 1.0}],
+                 method="SLSQP")
+        if res.success:
+            w = np.clip(res.x, 0, None)
+            return w / w.sum()
+
+    # Pure-numpy fallback: projected gradient / simplex search over boundaries
+    # For k <= 5 we enumerate active-set subsets and pick the best.
+    best_w = np.ones(k) / k
+    best_sse = np.inf
+
+    # Try all 2^k subsets of active variables (feasible for k <= 5)
+    for mask_bits in range(1, 2 ** k):
+        active = [i for i in range(k) if mask_bits & (1 << i)]
+        X_sub = X[:, active]
+        # Unconstrained OLS on active subset, then project to simplex
+        w_sub, _, _, _ = _lstsq(X_sub, y, rcond=None)
+        w_sub = np.clip(w_sub, 0, None)
+        if w_sub.sum() < 1e-12:
+            continue
+        w_sub /= w_sub.sum()
+        w_full = np.zeros(k)
+        for j, idx in enumerate(active):
+            w_full[idx] = w_sub[j]
+        sse = np.sum((y - X @ w_full) ** 2)
+        if sse < best_sse:
+            best_sse = sse
+            best_w = w_full
+
+    return best_w
 
 # yfinance — for FTSE 100 and URTH calibration target
 try:
@@ -414,16 +482,9 @@ def _build_europe_proxy(
             dax_ret.reindex(common_overlap).values,
             cac_ret.reindex(common_overlap).values,
         ])
-        # Constrained OLS: β_dax + β_cac = 1, both >= 0
-        def _objective(w):
-            pred = X @ w
-            return np.sum((y - pred) ** 2)
-
-        constraints = [{"type": "eq", "fun": lambda w: w.sum() - 1.0}]
-        bounds = [(0.0, 1.0), (0.0, 1.0)]
-        res = minimize(_objective, [0.5, 0.5], bounds=bounds, constraints=constraints)
-        w_dax, w_cac = res.x
-        blend_ret = X @ res.x
+        weights = _nnls_sum_to_one(X, y)
+        w_dax, w_cac = weights[0], weights[1]
+        blend_ret = X @ weights
         corr = np.corrcoef(y, blend_ret)[0, 1]
         logging.info(
             "_build_europe_proxy: DAX weight=%.1f%%  CAC weight=%.1f%%  "
@@ -537,17 +598,9 @@ def _rolling_ols_weights(
         if len(y) < min_obs:
             continue
 
-        # Constrained OLS
-        def _obj(w):
-            return np.sum((y - X @ w) ** 2)
-
-        constraints = [{"type": "eq", "fun": lambda w: w.sum() - 1.0}]
-        bounds = [(0.0, 1.0)] * X.shape[1]
-        w0 = np.ones(X.shape[1]) / X.shape[1]
-        res = minimize(_obj, w0, bounds=bounds, constraints=constraints,
-                       method="SLSQP")
-        if res.success:
-            row = dict(zip(component_cols, res.x))
+        weights = _nnls_sum_to_one(X, y)
+        if weights is not None:
+            row = dict(zip(component_cols, weights))
             row["date"] = common[end_pos - 1]
             results.append(row)
 
