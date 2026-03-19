@@ -164,7 +164,7 @@ _cpu_count = os.cpu_count() or 1
 N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
 
 # Monte Carlo iterations per asset per configuration
-N_MC_SAMPLES = 10   # set to 10 for a smoke test
+N_MC_SAMPLES = 1000   # set to 10 for a smoke test
 
 # Allocation weight perturbation steps
 PERTURB_STEPS = [-0.2, -0.1, 0.0, 0.1, 0.2]
