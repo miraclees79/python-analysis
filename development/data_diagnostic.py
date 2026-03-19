@@ -58,12 +58,17 @@ from global_equity_library import (
     DATA_START,
     FX_TICKERS,
 )
-from wsj_msci_world import (load_combined_from_drive,
-                            build_and_upload,
-                            COMBINED_DRIVE_FILENAME,
-                            CREDENTIALS_PATH,
-                            WSJ_DRIVE_FILENAME,
-                            )
+
+
+
+from price_series_builder import build_and_upload, load_combined_from_drive
+from global_equity_daily_output import build_daily_outputs
+from global_equity_library import build_mmf_extended
+                                        
+from msci_world_synthetic import (
+    build_full_msci_world_extended,
+    load_synthetic_from_drive,
+)
 
 # ============================================================
 # LOGGING
@@ -105,26 +110,33 @@ CHART_PATH = "global_equity_diagnostic.png"
 # ============================================================
 # PHASE 1 — DOWNLOAD ALL SERIES
 # ============================================================
+# ============================================================
+# PHASE 1 — DATA DOWNLOAD
+# ============================================================
 
 logging.info("=" * 80)
-logging.info("PHASE 1: DOWNLOADING ALL SERIES")
+logging.info("PHASE 1: DATA DOWNLOAD")
 logging.info("=" * 80)
 
 tmp_dir = tempfile.gettempdir()
 
-# ── Helper: stooq download + load ────────────────────────────────────────────
-def _stooq(ticker_code: str, label: str) -> pd.DataFrame | None:
-    url  = f"https://stooq.pl/q/d/l/?s={ticker_code}&i=d"
-    path = os.path.join(tmp_dir, f"diag_{label}.csv")
+def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
+    """Download a stooq series, clip to DATA_START, exit if mandatory and missing."""
+    url  = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
+    path = os.path.join(tmp_dir, f"ge_{label}.csv")
     ok   = download_csv(url, path)
     if not ok:
-        logging.error("FAIL: %s (%s) — stooq download failed.", label, ticker_code)
+        if mandatory:
+            logging.error("FAIL: %s (%s) — exiting.", label, ticker)
+            sys.exit(1)
+        logging.warning("WARN: %s (%s) — not available, skipping.", label, ticker)
         return None
     df = load_csv(path)
     if df is None:
-        logging.error("FAIL: %s — load_csv returned None.", label)
+        if mandatory:
+            logging.error("FAIL: load_csv returned None for %s — exiting.", label)
+            sys.exit(1)
         return None
-    # Apply data floor
     df = df.loc[df.index >= pd.Timestamp(DATA_START)]
     logging.info(
         "OK  : %-14s  %5d rows  %s to %s",
@@ -132,85 +144,129 @@ def _stooq(ticker_code: str, label: str) -> pd.DataFrame | None:
     )
     return df
 
-# ── Stooq: PLN-native equity indices ─────────────────────────────────────────
+# --- Shared across both modes ---
+
+# TBSP backcast (stooq ^tbsp extension, generic Date/Close format)
+TBSP = build_and_upload(
+      folder_id          = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()
+          or GDRIVE_FOLDER_ID_DEFAULT.strip()),
+      raw_filename       = "tbsp_extended_full.csv",
+      combined_filename  = "tbsp_extended_combined.csv",
+      extension_ticker   = "^tbsp",
+      extension_source   = "stooq",
+  )
+
+MMF  = _stooq("2720.n",  "MMF")
+
+# WIBOR 1M — used to extend MMF backwards to MMF_FLOOR
+# Not mandatory: if unavailable the MMF runs from its natural start (~1999)
+WIBOR1M = _stooq("plopln1m", "WIBOR1M", mandatory=False)
+if WIBOR1M is None:
+    logging.warning(
+        "WIBOR1M (plopln1m) unavailable — MMF will not be extended. "
+        "IS windows before 1999 will use ret_mmf=0 for cash returns."
+    )
+
+# --- Extended MMF (both modes) ---
+# Chain-link WIBOR 1M backwards from first real MMF observation to MMF_FLOOR.
+# This gives realistic ~18-25% p.a. cash returns for 1994-1999 IS windows
+# in Mode A (global_equity), where WIG IS data goes back to 1994.
+# MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
+#   date. Ensures IS windows starting before 1999 have realistic cash returns
+#   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
+MMF_FLOOR = "1994-10-03"
+if WIBOR1M is not None:
+    MMF_EXT = build_mmf_extended(MMF, WIBOR1M, floor_date=MMF_FLOOR)
+    logging.info(
+        "MMF extended: %s to %s (%d rows total; original MMF from %s)",
+        MMF_EXT.index.min().date(), MMF_EXT.index.max().date(),
+        len(MMF_EXT), MMF.index.min().date(),
+    )
+    
+else:
+    MMF_EXT = MMF   # no extension available; falls back to original series
+
+MMF=MMF_EXT
+
+# --- FX rates (downloaded always; applied only when FX_HEDGED=False) ---
+USDPLN = _stooq("usdpln", "USDPLN")
+EURPLN = _stooq("eurpln", "EURPLN")
+JPYPLN = _stooq("jpypln", "JPYPLN")
+
+
+
+WIG     = _stooq("wig",   "WIG")       # Polish broad market, 1991+
+SPX     = _stooq("^spx",  "SP500")     # S&P 500
+NKX     = _stooq("^nkx",   "Nikkei225")
+
+# STOXX 600: load from Drive (historical base + yfinance extension).
+# build_stoxx600() auto-selects first-build vs update mode:
+#   First build: reads stoxx600.csv from Drive, extends with yfinance
+#   Update:      reads stoxx600_combined.csv from Drive, extends forward
+_stoxx_folder = (
+        os.environ.get("GDRIVE_FOLDER_ID", "").strip()
+        or GDRIVE_FOLDER_ID_DEFAULT.strip()
+    )
+if not _stoxx_folder:
+        logging.error(
+            "FAIL: GDRIVE_FOLDER_ID not set — cannot load STOXX 600. "
+            "Set GDRIVE_FOLDER_ID_DEFAULT or the env var."
+        )
+        sys.exit(1)
+    # STOXX 600 (yfinance ^STOXX extension, generic Date/Close format)
+STOXX600 = build_and_upload(
+        folder_id          = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()  or GDRIVE_FOLDER_ID_DEFAULT.strip()),
+        raw_filename       = "stoxx600.csv",
+        combined_filename  = "stoxx600_combined.csv",
+        extension_ticker   = "^STOXX",
+    )
+if STOXX600 is None:
+        logging.error(
+            "FAIL: STOXX 600 build/update failed. "
+            "Ensure stoxx600.csv is uploaded to Drive folder %s.",
+            _stoxx_folder,
+        )
+        sys.exit(1)
+logging.info(
+        "OK  : %-14s  %5d rows  %s to %s",
+        "STOXX600", len(STOXX600),
+        STOXX600.index.min().date(), STOXX600.index.max().date(),
+    )
+
+
+
 WIG20TR  = _stooq("wig20tr",  "WIG20TR")
 MWIG40TR = _stooq("mwig40tr", "MWIG40TR")
 SWIG80TR = _stooq("swig80tr", "SWIG80TR")
 
-# ── Stooq: Foreign equity indices ────────────────────────────────────────────
-SPX     = _stooq("^spx",  "SP500")
-NKX     = _stooq("^nkx",   "Nikkei225")
+# MSCI World combined series from Google Drive
+MSCIW_wsj = build_and_upload(
+        folder_id         = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()  
+                             or GDRIVE_FOLDER_ID_DEFAULT.strip()),
+        raw_filename      = "msci_world_wsj_raw.csv",
+        combined_filename = "msci_world_combined.csv",
+        extension_ticker  = "URTH",
+        )
+if MSCIW_wsj is None:
+        logging.error("FAIL: MSCI World (WSJ+URTH) build failed — exiting.")
+        sys.exit(1)
 
-# ── Stooq: TBSP + MMF ────────────────────────────────────────────────────────
-TBSP    = _stooq("^tbsp",  "TBSP")
-MMF     = _stooq("2720.n", "MMF")
-
-# ── Stooq: FX rates ──────────────────────────────────────────────────────────
-USDPLN  = _stooq("usdpln", "USDPLN")
-EURPLN  = _stooq("eurpln", "EURPLN")
-JPYPLN  = _stooq("jpypln", "JPYPLN")
-
-# ── yfinance: STOXX 600 ───────────────────────────────────────────────────────
-STOXX600 = download_yfinance("^STOXX", start=DATA_START)
-if STOXX600 is not None:
-    logging.info(
+    # Prepend synthetic backcast (1990–2009) from Drive
+    # If msci_world_synthetic.csv is not on Drive yet, MSCIW_wsj is used as-is
+    # and Mode B OOS start remains ~2019. Run msci_world_synthetic.build_and_upload_synthetic()
+    # once to generate it.
+MSCIW = build_full_msci_world_extended(
+        wsj_combined_df = MSCIW_wsj,
+        folder_id       = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()  
+                           or GDRIVE_FOLDER_ID_DEFAULT.strip()),
+        )
+logging.info(
         "OK  : %-14s  %5d rows  %s to %s",
-        "STOXX600(yf)", len(STOXX600),
-        STOXX600.index.min().date(), STOXX600.index.max().date(),
-    )
-else:
-    logging.error("FAIL: STOXX600 — yfinance download returned None.")
-
-# ── MSCI World combined series — load from Google Drive ──────────────────────
-# Built once by wsj_msci_world.py (WSJ raw history + URTH extension).
-# The diagnostic rebuilts the file (coud be changed to only read the pre-built file)
-folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip() or GDRIVE_FOLDER_ID_DEFAULT.strip()
-
-result = build_and_upload()
-
-if result is not None:
-        print(
-            f"\nCombined MSCI World series ready.\n"
-            f"  {len(result)} trading days\n"
-            f"  {result.index.min().date()} to {result.index.max().date()}\n"
-            f"  Uploaded to Drive as: {COMBINED_DRIVE_FILENAME}\n"
-            f"  Local copy:           "
-            f"{os.path.join(tempfile.gettempdir(), COMBINED_DRIVE_FILENAME)}\n"
-        )
-else:
-        print(
-            "\nBuild failed.  Check wsj_msci_world.log for details.\n\n"
-            "Likely causes:\n"
-            "  1. GDRIVE_FOLDER_ID not set -- edit USER SETTINGS above\n"
-            f"  2. credentials.json missing at {CREDENTIALS_PATH}\n"
-            f"  3. WSJ CSV not uploaded -- upload '{WSJ_DRIVE_FILENAME}' to Drive\n"
-            "  4. yfinance not installed -- pip install yfinance\n"
+        "MSCI_World", len(MSCIW),
+        MSCIW.index.min().date(), MSCIW.index.max().date(),
         )
 
-URTH = None
-if not folder_id:
-    logging.warning(
-        "WARN: GDRIVE_FOLDER_ID not set — MSCI World series will be missing.\n"
-        "  Set GDRIVE_FOLDER_ID_DEFAULT in USER SETTINGS or the env var, then re-run.\n"
-        "  Build the combined file first with:  python wsj_msci_world.py"
-    )
-else:
-    try:
-        URTH = load_combined_from_drive(folder_id=folder_id)
-        if URTH is not None:
-            logging.info(
-                "OK  : %-14s  %5d rows  %s to %s",
-                "MSCI_World", len(URTH),
-                URTH.index.min().date(), URTH.index.max().date(),
-            )
-        else:
-            logging.warning(
-                "WARN: msci_world_combined.csv not found in Drive folder %s.\n"
-                "  Run wsj_msci_world.py to build it, then retry.",
-                folder_id,
-            )
-    except Exception as exc:
-        logging.error("FAIL: MSCI World Drive load — %s", exc)
+
 
 # ============================================================
 # PHASE 2 — SERIES SUMMARY
@@ -227,7 +283,7 @@ series_map = {
     "SP500":     SPX,
     "Nikkei225": NKX,
     "STOXX600":  STOXX600,
-    "MSCI_World":URTH,
+    "MSCI_World":MSCIW,
     "TBSP":      TBSP,
     "MMF":       MMF,
     "USDPLN":    USDPLN,
@@ -288,7 +344,7 @@ ret_MMF      = _ret_pln(MMF,      "MMF")
 ret_STOXX_H  = _ret_pln(STOXX600, "STOXX600_hedged",  fx_series=None, hedged=True)
 ret_SPX_H    = _ret_pln(SPX,      "SP500_hedged",     fx_series=None, hedged=True)
 ret_NKX_H    = _ret_pln(NKX,      "Nikkei_hedged",    fx_series=None, hedged=True)
-ret_WORLD_H  = _ret_pln(URTH,     "MSCI_World_hedged",fx_series=None, hedged=True)
+ret_WORLD_H  = _ret_pln(MSCIW,     "MSCI_World_hedged",fx_series=None, hedged=True)
 
 # Foreign assets — unhedged (FX-adjusted)
 fx_usd = USDPLN[CLOSE_COL].rename("FX_USD") if USDPLN is not None else None
@@ -298,7 +354,7 @@ fx_jpy = JPYPLN[CLOSE_COL].rename("FX_JPY") if JPYPLN is not None else None
 ret_STOXX_U  = _ret_pln(STOXX600, "STOXX600_unhedged", fx_series=fx_eur, hedged=False)
 ret_SPX_U    = _ret_pln(SPX,      "SP500_unhedged",    fx_series=fx_usd, hedged=False)
 ret_NKX_U    = _ret_pln(NKX,      "Nikkei_unhedged",   fx_series=fx_jpy, hedged=False)
-ret_WORLD_U  = _ret_pln(URTH,     "MSCI_World_unhedged",fx_series=fx_usd, hedged=False)
+ret_WORLD_U  = _ret_pln(MSCIW,     "MSCI_World_unhedged",fx_series=fx_usd, hedged=False)
 
 # ============================================================
 # PHASE 4 — CALENDAR ALIGNMENT CHECK
@@ -319,7 +375,7 @@ if WIG20TR is not None:
         "SP500":      SPX,
         "Nikkei225":  NKX,
         "STOXX600":   STOXX600,
-        "MSCI_World": URTH,
+        "MSCI_World": MSCIW,
         "TBSP":       TBSP,
         "MMF":        MMF,
     }

@@ -7,10 +7,10 @@ PURPOSE
 -------
 Evaluates all combinations of:
   - Portfolio mode : "global_equity" (Mode A), "msci_world" (Mode B)
-  - Train years    : 6, 7, 8, 9
+  - Train years    : 6, 7, 8, 9, 10, 12
   - Test years     : 1, 2
 
-That is 2 × 4 × 2 = 16 configurations in total.
+That is 2 × 6 × 2 = 24 configurations in total.
 
 For each configuration the script runs:
   1. Per-asset signal walk-forward
@@ -98,15 +98,14 @@ from global_equity_library import (
     DATA_START,
 )
 
-from wsj_msci_world import (
-    load_combined_from_drive as load_MSCIWORLD_from_drive,
-    build_and_upload as build_MSCIWORLD,
-    COMBINED_DRIVE_FILENAME as MSCI_COMBINED_FILENAME)
-from stoxx600 import (
-    load_combined_from_drive as load_stoxx600_from_drive,
-    build_and_upload as build_stoxx600,
-    COMBINED_DRIVE_FILENAME as STOXX600_COMBINED_FILENAME,
-    )
+
+from price_series_builder import build_and_upload, load_combined_from_drive
+from global_equity_daily_output import build_daily_outputs
+from msci_world_synthetic import (
+    build_full_msci_world_extended,
+    load_synthetic_from_drive,
+)
+
 
 
 # ============================================================
@@ -164,7 +163,7 @@ _cpu_count = os.cpu_count() or 1
 N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
 
 # Monte Carlo iterations per asset per configuration
-N_MC_SAMPLES = 1000   # set to 10 for a smoke test
+N_MC_SAMPLES = 500   # set to 10 for a smoke test
 
 # Allocation weight perturbation steps
 PERTURB_STEPS = [-0.2, -0.1, 0.0, 0.1, 0.2]
@@ -181,7 +180,7 @@ WIG_DATA_FLOOR = "1994-10-03"
 MMF_FLOOR      = "1994-10-03"
 
 # Sweep dimensions
-TRAIN_YEARS_LIST = [6, 7, 8, 9]
+TRAIN_YEARS_LIST = [6, 7, 8, 9, 10, 12]
 TEST_YEARS_LIST  = [1, 2]
 MODES_LIST       = ["global_equity", "msci_world"]
 
@@ -248,8 +247,30 @@ def download_all_data() -> dict:
 
     raw = {}
 
+    _stoxx_folder = (
+    os.environ.get("GDRIVE_FOLDER_ID", "").strip()
+    or GDRIVE_FOLDER_ID_DEFAULT.strip())
+
     # Shared
-    raw["TBSP"]   = _stooq("^tbsp",    "TBSP")
+    raw["TBSP"]   = build_and_upload(
+          folder_id          = _stoxx_folder ,
+          raw_filename       = "tbsp_extended_full.csv",
+          combined_filename  = "tbsp_extended_combined.csv",
+          extension_ticker   = "^tbsp",
+          extension_source   = "stooq",
+      )
+    if raw["TBSP"] is None:
+        logging.error(
+            "FAIL: TBPSbuild/update failed. "
+            "Ensure tbsp_extended_full.csv is uploaded to Drive folder %s.",
+            _stoxx_folder,
+        )
+        sys.exit(1)
+    logging.info(
+        "OK  : %-14s  %5d rows  %s to %s",
+        "TBSP", len(raw["TBSP"]),
+        raw["TBSP"].index.min().date(), raw["TBSP"].index.max().date(),
+    )
     raw["MMF"]    = _stooq("2720.n",   "MMF")
     raw["WIBOR1M"]= _stooq("plopln1m", "WIBOR1M", mandatory=False)
 
@@ -263,25 +284,65 @@ def download_all_data() -> dict:
     raw["SPX"]    = _stooq("^spx",   "SP500")
     raw["NKX"]    = _stooq("^nkx",    "Nikkei225")
 
-    # STOXX 600 via Drive
-    if not folder_id:
-        logging.error("GDRIVE_FOLDER_ID not set — cannot load STOXX 600 / MSCI World.")
+    # STOXX 600: load from Drive (historical base + yfinance extension).
+    # build_stoxx600() auto-selects first-build vs update mode:
+    #   First build: reads stoxx600.csv from Drive, extends with yfinance
+    #   Update:      reads stoxx600_combined.csv from Drive, extends forward
+    
+    if not _stoxx_folder:
+        logging.error(
+            "FAIL: GDRIVE_FOLDER_ID not set — cannot load STOXX 600. "
+            "Set GDRIVE_FOLDER_ID_DEFAULT or the env var."
+        )
         sys.exit(1)
-    raw["STOXX600"] = build_stoxx600(folder_id=folder_id)
+    # STOXX 600 (yfinance ^STOXX extension, generic Date/Close format)
+    raw["STOXX600"] = build_and_upload(
+        folder_id          = _stoxx_folder,
+        raw_filename       = "stoxx600.csv",
+        combined_filename  = "stoxx600_combined.csv",
+        extension_ticker   = "^STOXX",
+    )
     if raw["STOXX600"] is None:
-        logging.error("STOXX 600 build failed — check Drive for stoxx600.csv")
+        logging.error(
+            "FAIL: STOXX 600 build/update failed. "
+            "Ensure stoxx600.csv is uploaded to Drive folder %s.",
+            _stoxx_folder,
+        )
         sys.exit(1)
+    logging.info(
+        "OK  : %-14s  %5d rows  %s to %s",
+        "STOXX600", len(raw["STOXX600"]),
+        raw["STOXX600"].index.min().date(), raw["STOXX600"].index.max().date(),
+    )
 
     # Mode B equities
-    raw["WIG20TR"] = _stooq("wig20tr",  "WIG20TR")
-    raw["MWIG40TR"]= _stooq("mwig40tr", "MWIG40TR")
-    raw["SWIG80TR"]= _stooq("swig80tr", "SWIG80TR")
-
-    # MSCI World via Drive
-    raw["MSCIW"] = build_MSCIWORLD(folder_id=folder_id)
-    if raw["MSCIW"] is None:
-        logging.error("MSCI World build failed — check Drive for msci_world_wsj_raw.csv first")
+    raw["WIG"] = _stooq("wig",  "WIG")
+    
+    # MSCI World combined series from Google Drive
+    MSCIW_wsj = build_and_upload(
+        folder_id         = _stoxx_folder ,
+        raw_filename      = "msci_world_wsj_raw.csv",
+        combined_filename = "msci_world_combined.csv",
+        extension_ticker  = "URTH",
+        )
+    if MSCIW_wsj is None:
+        logging.error("FAIL: MSCI World (WSJ+URTH) build failed — exiting.")
         sys.exit(1)
+
+    # Prepend synthetic backcast (1990–2009) from Drive
+    # If msci_world_synthetic.csv is not on Drive yet, MSCIW_wsj is used as-is
+    # and Mode B OOS start remains ~2019. Run msci_world_synthetic.build_and_upload_synthetic()
+    # once to generate it.
+    raw["MSCIW"] = build_full_msci_world_extended(
+        wsj_combined_df = MSCIW_wsj,
+        folder_id       = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()  
+                           or GDRIVE_FOLDER_ID_DEFAULT.strip()),
+        )
+    logging.info(
+        "OK  : %-14s  %5d rows  %s to %s",
+        "MSCI_World", len(raw["MSCIW"]),
+        raw["MSCIW"].index.min().date(), raw["MSCIW"].index.max().date(),
+        )
 
     logging.info("All data downloaded.")
     return raw
@@ -324,14 +385,10 @@ def build_derived(raw: dict) -> dict:
     price_STOXX = raw["STOXX600"] if FX_HEDGED else build_price_df_from_returns(ret_STOXX, "STOXX600_PLN")
     price_NKX   = raw["NKX"]   if FX_HEDGED else build_price_df_from_returns(ret_NKX,   "Nikkei225_PLN")
 
-    # Mode B returns and blend
-    pl_mid      = build_blend(raw["MWIG40TR"], raw["SWIG80TR"], MWIG_WEIGHT, SWIG_WEIGHT, "PL_MID")
-    ret_WIG20   = build_return_series(raw["WIG20TR"], hedged=True)
-    ret_PL_MID  = build_return_series(pl_mid,         hedged=True)
+    # Mode B returns 
+    
     ret_MSCIW   = build_return_series(raw["MSCIW"],   fx_series=fx_usd, hedged=FX_HEDGED)
 
-    price_WIG20  = raw["WIG20TR"] if FX_HEDGED else build_price_df_from_returns(ret_WIG20,  "WIG20TR_PLN")
-    price_PL_MID = pl_mid         if FX_HEDGED else build_price_df_from_returns(ret_PL_MID, "PL_MID_PLN")
     price_MSCIW  = raw["MSCIW"]   if FX_HEDGED else build_price_df_from_returns(ret_MSCIW,  "MSCIW_PLN")
 
     return dict(
@@ -345,9 +402,9 @@ def build_derived(raw: dict) -> dict:
         ret_WIG=ret_WIG, ret_SPX=ret_SPX,
         ret_STOXX=ret_STOXX, ret_NKX=ret_NKX,
         # mode B prices
-        price_WIG20=price_WIG20, price_PL_MID=price_PL_MID, price_MSCIW=price_MSCIW,
+        price_MSCIW=price_MSCIW,
         # mode B returns
-        ret_WIG20=ret_WIG20, ret_PL_MID=ret_PL_MID, ret_MSCIW=ret_MSCIW,
+        ret_MSCIW=ret_MSCIW,
     )
 
 
@@ -418,12 +475,7 @@ def run_one_config(
             X_GRID_EQ, Y_GRID_EQ, FAST_EQ, SLOW_EQ, TV_EQ, SL_EQ, MOM_LB_EQ)
 
     elif mode == "msci_world":
-        wf_eq_WIG20, wf_res_WIG20, wf_tr_WIG20, sig_WIG20 = _run_wf(
-            derived["price_WIG20"],  "WIG20TR",   FORCE_FILTER_MODE_EQ,
-            X_GRID_EQ, Y_GRID_EQ, FAST_EQ, SLOW_EQ, TV_EQ, SL_EQ, MOM_LB_EQ)
-        wf_eq_PLMID, wf_res_PLMID, wf_tr_PLMID, sig_PLMID = _run_wf(
-            derived["price_PL_MID"], "PL_MID",    FORCE_FILTER_MODE_EQ,
-            X_GRID_EQ, Y_GRID_EQ, FAST_EQ, SLOW_EQ, TV_EQ, SL_EQ, MOM_LB_EQ)
+        
         wf_eq_MSCIW, wf_res_MSCIW, wf_tr_MSCIW, sig_MSCIW = _run_wf(
             derived["price_MSCIW"],  "MSCI_World",FORCE_FILTER_MODE_EQ,
             X_GRID_EQ, Y_GRID_EQ, FAST_EQ, SLOW_EQ, TV_EQ, SL_EQ, MOM_LB_EQ)
@@ -466,21 +518,20 @@ def run_one_config(
             ("TBSP",      raw["TBSP"],            wf_eq_TBSP,  wf_res_TBSP,  BOND_THRESHOLDS_MC),
         ]
     else:
-        asset_keys = ["WIG20TR", "PL_MID", "MSCI_World", "TBSP"]
+        asset_keys = ["WIG", "MSCI_World", "TBSP"]
         returns_dict = {
-            "WIG20TR":    derived["ret_WIG20"].dropna(),
-            "PL_MID":     derived["ret_PL_MID"].dropna(),
+            "WIG":    derived["ret_WIG"].dropna(),
+            
             "MSCI_World": derived["ret_MSCIW"].dropna(),
             "TBSP":       ret_tbsp.dropna(),
         }
         signals_full = {
-            "WIG20TR":sig_WIG20, "PL_MID":sig_PLMID,
+            "WIG":sig_WIG, 
             "MSCI_World":sig_MSCIW, "TBSP":sig_TBSP,
         }
         wf_results_ref = wf_res_TBSP
         mc_assets = [
-            ("WIG20TR",    derived["price_WIG20"],  wf_eq_WIG20, wf_res_WIG20, EQUITY_THRESHOLDS_MC),
-            ("PL_MID",     derived["price_PL_MID"], wf_eq_PLMID, wf_res_PLMID, EQUITY_THRESHOLDS_MC),
+            ("WIG",    derived["price_WIG"],  wf_eq_WIG, wf_res_WIG, EQUITY_THRESHOLDS_MC),
             ("MSCI_World", derived["price_MSCIW"],  wf_eq_MSCIW, wf_res_MSCIW, EQUITY_THRESHOLDS_MC),
             ("TBSP",       raw["TBSP"],             wf_eq_TBSP,  wf_res_TBSP,  BOND_THRESHOLDS_MC),
         ]
@@ -686,7 +737,7 @@ def discover_oos_starts(raw: dict, derived: dict) -> dict:
                 )
                 if not eq.empty:
                     # In Mode B, the effective OOS start is constrained further
-                    # by MSCI World and PL_MID data start.  The allocation walk-
+                    # by MSCI World data start.  The allocation walk-
                     # forward will automatically clip to the intersection, so the
                     # effective OOS start is the allocation portfolio's first date.
                     # Approximate it here as max(TBSP_oos_start, mode_data_floor).
@@ -697,14 +748,13 @@ def discover_oos_starts(raw: dict, derived: dict) -> dict:
                         # Add 1 training window to the shortest series start
                         msciw_start = (derived["ret_MSCIW"].dropna().index.min()
                                        + pd.DateOffset(years=train_years))
-                        plmid_start = (derived["ret_PL_MID"].dropna().index.min()
-                                       + pd.DateOffset(years=train_years))
-                        effective_start = max(tbsp_oos_start, msciw_start, plmid_start)
+                        
+                        effective_start = max(tbsp_oos_start, msciw_start )
                     else:
                         effective_start = tbsp_oos_start
 
                     oos_starts_by_mode[mode].append(effective_start)
-                    logging.info("  %s  train=%dy test=%dy  →  OOS start %s",
+                    logging.info("  %s  train=%dy test=%dy  ->  OOS start %s",
                                  mode, train_years, test_years, effective_start.date())
 
     # Common OOS start per mode = latest OOS start among all configs

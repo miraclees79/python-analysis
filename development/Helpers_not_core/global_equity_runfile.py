@@ -105,6 +105,10 @@ from global_equity_library import (
 
 from price_series_builder import build_and_upload, load_combined_from_drive
 from global_equity_daily_output import build_daily_outputs
+from msci_world_synthetic import (
+    build_full_msci_world_extended,
+    load_synthetic_from_drive,
+)
 
 
 # ============================================================
@@ -417,35 +421,31 @@ elif PORTFOLIO_MODE == "msci_world":
     SWIG80TR = _stooq("swig80tr", "SWIG80TR")
 
     # MSCI World combined series from Google Drive
-    folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip() or GDRIVE_FOLDER_ID_DEFAULT.strip()
-    if not folder_id:
-        logging.error(
-            "FAIL: GDRIVE_FOLDER_ID not set.\n"
-            "  Set GDRIVE_FOLDER_ID_DEFAULT in USER SETTINGS or the env var.\n"
-            "  Build the combined file first with: python wsj_msci_world.py"
+    MSCIW_wsj = build_and_upload(
+        folder_id         = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()  
+                             or GDRIVE_FOLDER_ID_DEFAULT.strip()),
+        raw_filename      = "msci_world_wsj_raw.csv",
+        combined_filename = "msci_world_combined.csv",
+        extension_ticker  = "URTH",
         )
+    if MSCIW_wsj is None:
+        logging.error("FAIL: MSCI World (WSJ+URTH) build failed — exiting.")
         sys.exit(1)
-    # MSCI World (yfinance URTH extension, WSJ raw format)
-    MSCIW =   build_and_upload(
-          folder_id          = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()
-              or GDRIVE_FOLDER_ID_DEFAULT.strip()),
-          raw_filename       = "msci_world_wsj_raw.csv",
-          combined_filename  = "msci_world_combined.csv",
-          extension_ticker   = "URTH",
-      )
 
-    if MSCIW is None:
-        logging.error(
-            "FAIL: msci_world_combined.csv not found in Drive folder %s.\n"
-            "  Run wsj_msci_world.py to build it, then retry.",
-            folder_id,
+    # Prepend synthetic backcast (1990–2009) from Drive
+    # If msci_world_synthetic.csv is not on Drive yet, MSCIW_wsj is used as-is
+    # and Mode B OOS start remains ~2019. Run msci_world_synthetic.build_and_upload_synthetic()
+    # once to generate it.
+    MSCIW = build_full_msci_world_extended(
+        wsj_combined_df = MSCIW_wsj,
+        folder_id       = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()  
+                           or GDRIVE_FOLDER_ID_DEFAULT.strip()),
         )
-        sys.exit(1)
     logging.info(
         "OK  : %-14s  %5d rows  %s to %s",
         "MSCI_World", len(MSCIW),
         MSCIW.index.min().date(), MSCIW.index.max().date(),
-    )
+        )
 
     # Mode B does not use these
     WIG      = None
