@@ -304,7 +304,7 @@ def _parse_generic_csv(raw_bytes: bytes) -> pd.DataFrame | None:
                     if sep == ";":
                         close_guess = [
                             c for c in candidate.columns
-                            if c.strip().lower() in ("close", "price", "last", "zamkniecie")
+                            if c.strip().lower() in ("close", "price", "last", "zamkniecie", "TBSP_synth")
                         ]
                         if close_guess:
                             try:

@@ -103,15 +103,7 @@ from global_equity_library import (
     DATA_START,
 )
 
-from wsj_msci_world import (
-    load_combined_from_drive as load_MSCIWORLD_from_drive,
-    build_and_upload as build_MSCIWORLD,
-    COMBINED_DRIVE_FILENAME as MSCI_COMBINED_FILENAME)
-from stoxx600 import (
-    load_combined_from_drive as load_stoxx600_from_drive,
-    build_and_upload as build_stoxx600,
-    COMBINED_DRIVE_FILENAME as STOXX600_COMBINED_FILENAME,
-    )
+from price_series_builder import build_and_upload, load_combined_from_drive
 from global_equity_daily_output import build_daily_outputs
 
 
@@ -254,11 +246,11 @@ MMF_FLOOR = "1994-10-03"
 # ROBUSTNESS CHECKS (Phases 7–8 — skipped in daily runner)
 # ---------------------------------------------------------------------------
 # Phase 7a: Monte Carlo parameter perturbation — per asset
-RUN_MC_PARAM_SINGLE        = True
+RUN_MC_PARAM_SINGLE        = False
 ITERATIONS_MC_PARAM_SINGLE = 1000   # 10 for smoke test, 1000 for full run
  
 # Phase 7b: Block bootstrap — per asset
-RUN_BLOCK_BOOTSTRAP_SINGLE    = True
+RUN_BLOCK_BOOTSTRAP_SINGLE    = False
 ITERATIONS_BOOTSTRAP_SINGLE   = 100    # 10 for smoke test, 500 for full run
  
 # Phase 8: N-asset allocation weight perturbation
@@ -328,7 +320,17 @@ def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | No
     return df
 
 # --- Shared across both modes ---
-TBSP = _stooq("^tbsp",   "TBSP")
+
+# TBSP backcast (stooq ^tbsp extension, generic Date/Close format)
+TBSP = build_and_upload(
+      folder_id          = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()
+          or GDRIVE_FOLDER_ID_DEFAULT.strip()),
+      raw_filename       = "tbsp_extended_full.csv",
+      combined_filename  = "tbsp_extended_combined.csv",
+      extension_ticker   = "^tbsp",
+      extension_source   = "stooq",
+  )
+
 MMF  = _stooq("2720.n",  "MMF")
 
 # WIBOR 1M — used to extend MMF backwards to MMF_FLOOR
@@ -339,6 +341,20 @@ if WIBOR1M is None:
         "WIBOR1M (plopln1m) unavailable — MMF will not be extended. "
         "IS windows before 1999 will use ret_mmf=0 for cash returns."
     )
+
+# --- Extended MMF (both modes) ---
+# Chain-link WIBOR 1M backwards from first real MMF observation to MMF_FLOOR.
+# This gives realistic ~18-25% p.a. cash returns for 1994-1999 IS windows
+# in Mode A (global_equity), where WIG IS data goes back to 1994.
+if WIBOR1M is not None:
+    MMF_EXT = build_mmf_extended(MMF, WIBOR1M, floor_date=MMF_FLOOR)
+    logging.info(
+        "MMF extended: %s to %s (%d rows total; original MMF from %s)",
+        MMF_EXT.index.min().date(), MMF_EXT.index.max().date(),
+        len(MMF_EXT), MMF.index.min().date(),
+    )
+else:
+    MMF_EXT = MMF   # no extension available; falls back to original series
 
 # --- FX rates (downloaded always; applied only when FX_HEDGED=False) ---
 USDPLN = _stooq("usdpln", "USDPLN")
@@ -367,7 +383,13 @@ if PORTFOLIO_MODE == "global_equity":
             "Set GDRIVE_FOLDER_ID_DEFAULT or the env var."
         )
         sys.exit(1)
-    STOXX600 = build_stoxx600(folder_id=_stoxx_folder)
+    # STOXX 600 (yfinance ^STOXX extension, generic Date/Close format)
+    STOXX600 = build_and_upload(
+        folder_id          = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()  or GDRIVE_FOLDER_ID_DEFAULT.strip()),
+        raw_filename       = "stoxx600.csv",
+        combined_filename  = "stoxx600_combined.csv",
+        extension_ticker   = "^STOXX",
+    )
     if STOXX600 is None:
         logging.error(
             "FAIL: STOXX 600 build/update failed. "
@@ -403,7 +425,15 @@ elif PORTFOLIO_MODE == "msci_world":
             "  Build the combined file first with: python wsj_msci_world.py"
         )
         sys.exit(1)
-    MSCIW = build_MSCIWORLD(folder_id=folder_id)
+    # MSCI World (yfinance URTH extension, WSJ raw format)
+    MSCIW =   build_and_upload(
+          folder_id          = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()
+              or GDRIVE_FOLDER_ID_DEFAULT.strip()),
+          raw_filename       = "msci_world_wsj_raw.csv",
+          combined_filename  = "msci_world_combined.csv",
+          extension_ticker   = "URTH",
+      )
+
     if MSCIW is None:
         logging.error(
             "FAIL: msci_world_combined.csv not found in Drive folder %s.\n"
@@ -448,19 +478,7 @@ if PORTFOLIO_MODE == "global_equity" and WIG is not None:
         WIG_DATA_FLOOR, _wig_before, len(WIG),
     )
 
-# --- Extended MMF (both modes) ---
-# Chain-link WIBOR 1M backwards from first real MMF observation to MMF_FLOOR.
-# This gives realistic ~18-25% p.a. cash returns for 1994-1999 IS windows
-# in Mode A (global_equity), where WIG IS data goes back to 1994.
-if WIBOR1M is not None:
-    MMF_EXT = build_mmf_extended(MMF, WIBOR1M, floor_date=MMF_FLOOR)
-    logging.info(
-        "MMF extended: %s to %s (%d rows total; original MMF from %s)",
-        MMF_EXT.index.min().date(), MMF_EXT.index.max().date(),
-        len(MMF_EXT), MMF.index.min().date(),
-    )
-else:
-    MMF_EXT = MMF   # no extension available; falls back to original series
+
 
 # --- Shared returns ---
 ret_tbsp = build_return_series(TBSP,    hedged=True)   # PLN bond index — no FX
