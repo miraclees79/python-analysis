@@ -475,7 +475,9 @@ def run_one_config(
             X_GRID_EQ, Y_GRID_EQ, FAST_EQ, SLOW_EQ, TV_EQ, SL_EQ, MOM_LB_EQ)
 
     elif mode == "msci_world":
-        
+        wf_eq_WIG,   wf_res_WIG,   wf_tr_WIG,   sig_WIG   = _run_wf(
+            derived["price_WIG"],   "WIG",       FORCE_FILTER_MODE_EQ,
+            X_GRID_EQ, Y_GRID_EQ, FAST_EQ, SLOW_EQ, TV_EQ, SL_EQ, MOM_LB_EQ)
         wf_eq_MSCIW, wf_res_MSCIW, wf_tr_MSCIW, sig_MSCIW = _run_wf(
             derived["price_MSCIW"],  "MSCI_World",FORCE_FILTER_MODE_EQ,
             X_GRID_EQ, Y_GRID_EQ, FAST_EQ, SLOW_EQ, TV_EQ, SL_EQ, MOM_LB_EQ)
