@@ -27,3 +27,8 @@ development/MSCI_World_history.csv
 development/global_equity_sweep_report.txt
 development/global_equity_sweep_results.csv
 development/twoasset_comparison_results.csv
+dev_single_asset_monitoring/__pycache__/global_equity_library.cpython-314.pyc
+dev_single_asset_monitoring/__pycache__/mc_robustness.cpython-314.pyc
+dev_single_asset_monitoring/__pycache__/multiasset_library.cpython-314.pyc
+dev_single_asset_monitoring/__pycache__/price_series_builder.cpython-314.pyc
+dev_single_asset_monitoring/__pycache__/strategy_test_library.cpython-314.pyc
