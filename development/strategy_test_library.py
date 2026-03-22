@@ -726,6 +726,8 @@ def run_strategy_with_trades(
     warmup_df=None,    # NEW: pre-window data for indicator warm-up
     fund_signal=None,   # NEW: precomputed pd.Series from compute_fund_breadth_signal
     entry_gate=None,        # ADD — pre-sliced gate for this training window
+    fast_mode=False,    # NEW: True = numpy array access (~3-5x faster loop)
+                        #      False = original iterrows (stable default)
 ):
 
 
@@ -948,119 +950,242 @@ def run_strategy_with_trades(
         filter_mode_active = "mom"
     else:
         filter_mode_active = "ma"
+
+    # --- fast_mode: pre-extract numpy arrays for O(1) per-row access -------
+    # Only allocated when fast_mode=True. The slow-path (iterrows) is
+    # completely unchanged and never references these variables.
+    if fast_mode:
+        _prices    = df["price"].to_numpy()
+        _rets      = df["ret"].to_numpy()
+        _cash_rets = df["cash_ret"].to_numpy()
+        _trends    = df["trend"].to_numpy()
+        _moms      = df["MOM"].to_numpy()
+        _vols      = df["vol"].to_numpy()
+        _warmups   = df["_warmup"].to_numpy(dtype=bool)
+        _gate_vals = (
+            gate_aligned.reindex(df.index).fillna(1).to_numpy().astype(int)
+            if gate_aligned is not None else None
+        )
+        _fund_vals = (
+            df["fund_filter"].to_numpy()
+            if "fund_filter" in df.columns else None
+        )
+        _index = df.index    # DatetimeIndex — needed for trade date recording
+    # -------------------------------------------------------------------------
+
     
-    # -----------------------
 
     # -----------------------
     # Main loop — track warmup rows separately
 
     
 
-    for i, row in df.iterrows():
+    if fast_mode:
+        # ------------------------------------------------------------------
+        # Fast path: integer loop over pre-extracted numpy arrays.
+        # Logic is identical to the slow path; only row access differs.
+        # ------------------------------------------------------------------
+        for _n in range(len(_prices)):
 
-        price    = row["price"]
-        ret      = row["ret"]
-        cash_ret = row["cash_ret"]
-        trend    = row["trend"]
-        mom      = row["MOM"]
-        vol      = row["vol"]
-        
-        
-        if filter_mode_active == "fund":
-            filter_on = bool(row["fund_filter"])
-        elif filter_mode_active == "mom":
-            filter_on = mom > 0
-        else:
-            filter_on = (trend == 1)
-        
-                
-        is_warmup_row = row["_warmup"]    
-        if is_warmup_row:
+            i        = _index[_n]           # Timestamp — for trade records
+            price    = float(_prices[_n])
+            ret      = float(_rets[_n])
+            cash_ret = float(_cash_rets[_n])
+            trend    = int(_trends[_n])
+            mom      = float(_moms[_n])
+            vol      = float(_vols[_n])
+
+            if filter_mode_active == "fund":
+                filter_on = bool(_fund_vals[_n]) if _fund_vals is not None else True
+            elif filter_mode_active == "mom":
+                filter_on = mom > 0
+            else:
+                filter_on = (trend == 1)
+
+            is_warmup_row = bool(_warmups[_n])
+            if is_warmup_row:
+                equity_curve.append(equity)
+                continue
+
+            # Update equity — standard daily P&L
+            if position > 0:
+                equity *= (1 + position * ret + (1 - position) * cash_ret)
+            else:
+                equity *= (1 + cash_ret)
+
+            exit_reasons = []
+
+            if position > 0:
+                dd = (price - entry_price) / entry_price
+                if dd < -stop_loss:
+                    exit_reasons.append("ABSOLUTE_STOP")
+
+            # Dynamic volatility rebalancing with transaction cost
+            if position > 0 and position_mode == "vol_dynamic":
+                new_pos = calc_position(vol, position_mode, target_vol, max_leverage)
+                size_change = abs(new_pos - position)
+                if size_change > 0.1:
+                    REBAL_COST = 0.0005
+                    equity *= (1 - size_change * REBAL_COST)
+                    position = new_pos
+                    rebal_count      += 1
+                    rebal_cost_total += size_change * REBAL_COST
+
+            if position > 0:
+                M = max(M, price) if M is not None else price
+                if price < (1 - X) * M:
+                    if "ABSOLUTE_STOP" not in exit_reasons:
+                        exit_reasons.append("TRAIL_STOP")
+                elif not filter_on:
+                    exit_reasons.append("FILTER_EXIT")
+
+            exit_reason = " + ".join(exit_reasons) if exit_reasons else None
+
+            if position > 0 and exit_reason:
+                COST = 0.0020
+                trade_ret = price / entry_price - 1 - COST
+                days = (i - entry_date).days
+                trades.append({
+                    "EntryDate":    entry_date,
+                    "ExitDate":     i,
+                    "EntryPrice":   entry_price,
+                    "Position":     entry_pos,
+                    "ExitPrice":    price,
+                    "Return":       trade_ret,
+                    "Days":         days,
+                    "Entry Reason": entry_reason,
+                    "Exit Reason":  exit_reason,
+                    "CrossWindow":  entry_carried
+                })
+                position    = 0
+                entry_price = None
+                entry_date  = None
+                entry_reason= None
+                M           = None
+                m           = None
+                entry_pos   = None
+                entry_carried = False
+
+            if position == 0:
+                m = price if m is None else min(m, price)
+                gate_allows = (_gate_vals is None or int(_gate_vals[_n]) == 1)
+                if (price > (1 + Y) * m) and filter_on and gate_allows:
+                    entry_reason  = "BREAKOUT & FILTER"
+                    position      = calc_position(vol, position_mode, target_vol, max_leverage)
+                    entry_price   = price
+                    entry_date    = i
+                    entry_pos     = position
+                    M             = price
+                    entry_carried = False
+
             equity_curve.append(equity)
-            continue
-        
-        # Update equity — standard daily P&L
-        if position > 0:
-            equity *= (1 + position * ret + (1 - position) * cash_ret)
-        else:
-            equity *= (1 + cash_ret)
 
-        exit_reasons = []
+    else:
+        # ------------------------------------------------------------------
+        # Slow path: original iterrows loop — unchanged, stable, default.
+        # ------------------------------------------------------------------
+        for i, row in df.iterrows():
 
-        if position > 0:
-            dd = (price - entry_price) / entry_price
-            if dd < -stop_loss:
-                exit_reasons.append("ABSOLUTE_STOP")
+            price    = row["price"]
+            ret      = row["ret"]
+            cash_ret = row["cash_ret"]
+            trend    = row["trend"]
+            mom      = row["MOM"]
+            vol      = row["vol"]
 
-        # Dynamic volatility rebalancing with transaction cost
-        if position > 0 and position_mode == "vol_dynamic":
-            new_pos = calc_position(vol, position_mode, target_vol, max_leverage)
-            size_change = abs(new_pos - position)
 
-            if size_change > 0.1:
-                # Cost applies only to the fraction of capital being traded
-                # e.g. if position moves from 0.6 to 0.8, we trade 0.2 * capital
-                # Cost = size_change * COST_PER_UNIT
-                REBAL_COST = 0.0005  # 5 bps, same as exit cost
-                equity *= (1 - size_change * REBAL_COST)
+            if filter_mode_active == "fund":
+                filter_on = bool(row["fund_filter"])
+            elif filter_mode_active == "mom":
+                filter_on = mom > 0
+            else:
+                filter_on = (trend == 1)
 
-                position = new_pos
 
-                # Track rebalancing for diagnostics
-                rebal_count  += 1
-                rebal_cost_total += size_change * REBAL_COST
+            is_warmup_row = row["_warmup"]
+            if is_warmup_row:
+                equity_curve.append(equity)
+                continue
 
-        if position > 0:
-            M = max(M, price) if M is not None else price
-            if price < (1 - X) * M:
-                if "ABSOLUTE_STOP" not in exit_reasons:
-                    exit_reasons.append("TRAIL_STOP")
-            elif not filter_on:
-                exit_reasons.append("FILTER_EXIT")
+            # Update equity — standard daily P&L
+            if position > 0:
+                equity *= (1 + position * ret + (1 - position) * cash_ret)
+            else:
+                equity *= (1 + cash_ret)
 
-        exit_reason = " + ".join(exit_reasons) if exit_reasons else None
+            exit_reasons = []
 
-        if position > 0 and exit_reason:
-            COST = 0.0020  # 20 bps
-            trade_ret = price / entry_price - 1 - COST
-            days = (i - entry_date).days
-            
-            
-            trades.append({
-                "EntryDate":    entry_date,
-                "ExitDate":     i,
-                "EntryPrice":   entry_price,
-                "Position":     entry_pos,
-                "ExitPrice":    price,
-                "Return":       trade_ret,
-                "Days":         days,
-                "Entry Reason": entry_reason,
-                "Exit Reason":  exit_reason,
-                "CrossWindow":  entry_carried
-            })
+            if position > 0:
+                dd = (price - entry_price) / entry_price
+                if dd < -stop_loss:
+                    exit_reasons.append("ABSOLUTE_STOP")
 
-            position    = 0
-            entry_price = None
-            entry_date  = None
-            entry_reason= None
-            M           = None
-            m           = None
-            entry_pos   = None
-            entry_carried = False
+            # Dynamic volatility rebalancing with transaction cost
+            if position > 0 and position_mode == "vol_dynamic":
+                new_pos = calc_position(vol, position_mode, target_vol, max_leverage)
+                size_change = abs(new_pos - position)
 
-        if position == 0:
-            m = price if m is None else min(m, price)
-            gate_allows = (gate_aligned is None or gate_aligned[i] == 1)
-            if (price > (1 + Y) * m) and filter_on and gate_allows:
-                entry_reason = "BREAKOUT & FILTER"
-                position     = calc_position(vol, position_mode, target_vol, max_leverage)
-                entry_price  = price
-                entry_date   = i
-                entry_pos    = position
-                M            = price
-                entry_carried   = False   # new entry in this window, not carried
+                if size_change > 0.1:
+                    REBAL_COST = 0.0005
+                    equity *= (1 - size_change * REBAL_COST)
 
-        equity_curve.append(equity)
+                    position = new_pos
+
+                    rebal_count  += 1
+                    rebal_cost_total += size_change * REBAL_COST
+
+            if position > 0:
+                M = max(M, price) if M is not None else price
+                if price < (1 - X) * M:
+                    if "ABSOLUTE_STOP" not in exit_reasons:
+                        exit_reasons.append("TRAIL_STOP")
+                elif not filter_on:
+                    exit_reasons.append("FILTER_EXIT")
+
+            exit_reason = " + ".join(exit_reasons) if exit_reasons else None
+
+            if position > 0 and exit_reason:
+                COST = 0.0020  # 20 bps
+                trade_ret = price / entry_price - 1 - COST
+                days = (i - entry_date).days
+                
+                
+                trades.append({
+                    "EntryDate":    entry_date,
+                    "ExitDate":     i,
+                    "EntryPrice":   entry_price,
+                    "Position":     entry_pos,
+                    "ExitPrice":    price,
+                    "Return":       trade_ret,
+                    "Days":         days,
+                    "Entry Reason": entry_reason,
+                    "Exit Reason":  exit_reason,
+                    "CrossWindow":  entry_carried
+                })
+
+                position    = 0
+                entry_price = None
+                entry_date  = None
+                entry_reason= None
+                M           = None
+                m           = None
+                entry_pos   = None
+                entry_pos   = None
+                entry_carried = False
+
+            if position == 0:
+                m = price if m is None else min(m, price)
+                gate_allows = (gate_aligned is None or gate_aligned[i] == 1)
+                if (price > (1 + Y) * m) and filter_on and gate_allows:
+                    entry_reason = "BREAKOUT & FILTER"
+                    position     = calc_position(vol, position_mode, target_vol, max_leverage)
+                    entry_price  = price
+                    entry_date   = i
+                    entry_pos    = position
+                    M            = price
+                    entry_carried   = False   # new entry in this window, not carried
+
+            equity_curve.append(equity)
     
     
     if position_mode == "vol_dynamic" and rebal_count > 0:
