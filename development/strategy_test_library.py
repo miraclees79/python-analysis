@@ -1296,6 +1296,7 @@ def evaluate_params(
     objective="calmar",   # <-- new parameter, default preserves v0.1 behaviour,
     mom_lookback=252,
     entry_gate=None,        # ADD — pre-sliced gate for this training window       
+    fast_mode=False,    # ADD
 ):
     """
     Evaluate a single parameter combination on the training window.
@@ -1422,7 +1423,8 @@ def evaluate_params(
         position_mode=selected_mode,
         use_momentum=use_mom,
         mom_lookback=mom_lookback,    
-        fund_signal=train_fund_signal
+        fund_signal=train_fund_signal,
+        fast_mode=fast_mode
     )
 
     if metrics is None:
@@ -1486,6 +1488,7 @@ def walk_forward(
     objective = "calmar",
     n_jobs=1,
     entry_gate_series=None,   # NEW — pd.Series of 0/1, applied as entry gate
+    fast_mode=False
     
 ):
 
@@ -1762,6 +1765,7 @@ def walk_forward(
                             train, cash_train, vol_window, selected_mode,
                             funds_df, train_start, train_end, objective=objective, mom_lookback=mom_lookback,
                             entry_gate=gate_train,        # ADD
+                            fast_mode=fast_mode,
                             )
                         for (filter_mode, fund_idx, fund_params,
                              X, Y, fast, slow, tv, stop_loss, mom_lookback)
@@ -1774,7 +1778,7 @@ def walk_forward(
                             X, Y, fast, slow, tv, stop_loss,
                             train, cash_train, vol_window, selected_mode,
                             funds_df, train_start, train_end, objective=objective, mom_lookback=mom_lookback,
-                            entry_gate=gate_train,
+                            entry_gate=gate_train, fast_mode=fast_mode,
                             )
                         for (filter_mode, fund_idx, fund_params,
                              X, Y, fast, slow, tv, stop_loss, mom_lookback)
@@ -1925,6 +1929,7 @@ def walk_forward(
             warmup_df=warmup,
             entry_gate=gate_oos,
             fund_signal=oos_fund_signal,
+            fast_mode=fast_mode,
             use_momentum=(best_params["filter_mode"] == "mom"),
             mom_lookback=best_params["mom_lookback"],    # ADD
             **{k: v for k, v in best_params.items()

@@ -125,6 +125,8 @@ TBSP_EXTENDED_PATH = os.getenv("TBSP_EXTENDED_PATH", None)
 N_MC         = int(os.getenv("N_MC",  "1000"))   # set to 10 for smoke test
 N_BOOTSTRAP  = int(os.getenv("N_BOOTSTRAP", "500"))
 
+FAST_MODE = True
+
 # Whether to run bootstrap (slow: ~3-6h per config on 12-core machine)
 RUN_BOOTSTRAP = os.getenv("RUN_BOOTSTRAP", "1") != "0"
 
@@ -322,6 +324,7 @@ def run_walk_forward(train_years, test_years,
         mom_lookback_grid=MOM_LB_EQ,
         objective="calmar",
         n_jobs=N_JOBS,
+        fast_mode=FAST_MODE
     )
 
     wf_eq_bd, wf_res_bd, wf_tr_bd = walk_forward(
@@ -339,6 +342,7 @@ def run_walk_forward(train_years, test_years,
         objective="calmar",
         n_jobs=N_JOBS,
         entry_gate_series=bond_gate,
+        fast_mode=FAST_MODE,
     )
 
     if wf_eq_eq.empty or wf_eq_bd.empty:

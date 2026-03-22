@@ -141,6 +141,8 @@ logging.info(
     _cpu_count, N_JOBS
 )
 
+FAST_MODE = True
+
 # --- Reallocation gate ---
 COOLDOWN_DAYS = 10
 ANNUAL_CAP    = 12
@@ -423,6 +425,7 @@ wf_equity_eq, wf_results_eq, wf_trades_eq = walk_forward(
     sl_grid               = SL_EQ,
     mom_lookback_grid     = MOM_LB_EQ,
     n_jobs                = N_JOBS,
+    fast_mode             = FAST_MODE,
 )
 
 if wf_equity_eq.empty:
@@ -510,6 +513,7 @@ wf_equity_bd, wf_results_bd, wf_trades_bd = walk_forward(
     mom_lookback_grid     = [252],                  # not used (filter_mode=ma)
     n_jobs                = N_JOBS,
     entry_gate_series     = bond_entry_gate,
+    fast_mode=FAST_MODE,
 )
 
 if wf_equity_bd.empty:

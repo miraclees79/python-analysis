@@ -105,6 +105,8 @@ FORCE_FILTER_MODE = ["ma","mom"]
 RUN_MONTE_CARLO = True # MC parameter robustness
 RUN_BLOCK_BOOTSTRAP = False # Run bootstrap robustness test
 
+FAST_MODE = True
+
 # OBJECTIVE FUNCTION
 OBJECTIVE = "calmar"   # or "calmar", "sharpe", "sortino", "calmar_sortino", "calmar_sharpe"
 
@@ -134,8 +136,8 @@ logging.info("=" * 80)
 
 csv_filename_w20tr = os.path.join(tmp_dir, "w20tr.csv")
 
-#download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr)
-download_csv('https://stooq.pl/q/d/l/?s=mwig40tr&i=d', csv_filename_w20tr)
+download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr)
+
 INDEX_W20 = load_csv(csv_filename_w20tr)
 
 df = INDEX_W20
@@ -379,7 +381,8 @@ wf_equity, wf_results, wf_trades = walk_forward(
     sl_grid     = sl_grid,
     mom_lookback_grid = mom_lookback_grid,    # ADD
     objective=OBJECTIVE,
-    n_jobs=N_JOBS
+    n_jobs=N_JOBS,
+    fast_mode=FAST_MODE
     
 )
 

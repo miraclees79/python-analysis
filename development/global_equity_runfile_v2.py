@@ -145,7 +145,7 @@ logging.info("=" * 80)
 # "global_equity" : Mode A — WIG + S&P500 + STOXX600 + Nikkei + TBSP + MMF
 #                   OOS start ~2016, 9+1 walk-forward, longest history
 #
-# "msci_world"    : Mode B — WIG20TR + PL_MID + MSCI_World + TBSP + MMF
+# "msci_world"    : Mode B — WIG20TR + MSCI_World + TBSP + MMF
 #                   OOS start ~2019, 9+1 walk-forward, two Polish equities
 PORTFOLIO_MODE = "msci_world"   # <- "global_equity" or "msci_world"
  
@@ -171,7 +171,7 @@ POSITION_MODE = "full"   # "full" | "vol_entry" | "vol_dynamic"
 # ---------------------------------------------------------------------------
 # WALK-FORWARD WINDOWS
 # ---------------------------------------------------------------------------
-TRAIN_YEARS = 9    # training window length (years) — same for all assets
+TRAIN_YEARS = 6    # training window length (years) — same for all assets
 TEST_YEARS  = 1    # test window length (years)      — same for all assets
 VOL_WINDOW  = 20   # rolling volatility window (days)
  
@@ -227,6 +227,7 @@ SL_BD     = [0.01, 0.02, 0.03]
 _cpu_count = os.cpu_count() or 1
 N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
  
+FAST_MODE = True
 # ---------------------------------------------------------------------------
 # MID/SMALL BLEND WEIGHTS  (Mode B only)
 # ---------------------------------------------------------------------------
@@ -250,12 +251,12 @@ MMF_FLOOR = "1994-10-03"
 # ROBUSTNESS CHECKS (Phases 7–8 — skipped in daily runner)
 # ---------------------------------------------------------------------------
 # Phase 7a: Monte Carlo parameter perturbation — per asset
-RUN_MC_PARAM_SINGLE        = False
+RUN_MC_PARAM_SINGLE        = True
 ITERATIONS_MC_PARAM_SINGLE = 1000   # 10 for smoke test, 1000 for full run
  
 # Phase 7b: Block bootstrap — per asset
-RUN_BLOCK_BOOTSTRAP_SINGLE    = False
-ITERATIONS_BOOTSTRAP_SINGLE   = 100    # 10 for smoke test, 500 for full run
+RUN_BLOCK_BOOTSTRAP_SINGLE    = True
+ITERATIONS_BOOTSTRAP_SINGLE   = 500    # 10 for smoke test, 500 for full run
  
 # Phase 8: N-asset allocation weight perturbation
 RUN_ROBUSTNESS_ALLOCATION_WEIGHT = True
@@ -586,6 +587,7 @@ def _run_equity_wf(price_df: pd.DataFrame, label: str):
         mom_lookback_grid     = MOM_LB_EQ,
         objective             = "calmar",
         n_jobs                = N_JOBS,
+        fast_mode=FAST_MODE
     )
     m = compute_metrics(wf_eq)
     logging.info(
@@ -640,6 +642,7 @@ wf_eq_TBSP, wf_res_TBSP, wf_tr_TBSP = walk_forward(
     mom_lookback_grid     = [252],
     objective             = "calmar",
     n_jobs                = N_JOBS,
+    fast_mode=FAST_MODE
 )
 
 m_tbsp = compute_metrics(wf_eq_TBSP)
