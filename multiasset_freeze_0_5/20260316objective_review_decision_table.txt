@@ -1,0 +1,66 @@
+================================================================================================================================================================
+ANNUAL OBJECTIVE FUNCTION REVIEW — DECISION TABLE
+Run date  : 2026-03-16
+Incumbent : calmar / calmar / calmar
+Last 5 yrs: [2021, 2022, 2023, 2024, 2025]
+Switch bar: CAGR +0.5pp | CalMAR +0.05 | MaxDD slack -2.0pp | MC=ROBUST | >= 3 yr wins
+================================================================================================================================================================
+
+GROUP        EQ_OBJ           BD_OBJ           ALLOC_OBJ         PORT_CAGR  PORT_CALMAR  PORT_MAXDD  PORT_SHARPE  N_REALLOC  MC_VERDICT  YR_WINS  N_MET   SWITCH
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+incumbent    calmar           calmar           calmar               11.73%         0.69     -17.08%         1.07         12      ROBUST        0      5 (5/5 gates)
+                years: 2021:L(+18.4%vs+18.4%) | 2022:L(+1.9%vs+1.9%) | 2023:L(+37.3%vs+37.3%) | 2024:L(+8.6%vs+8.6%) | 2025:L(+24.5%vs+24.5%)
+
+A_eq         sharpe           calmar           calmar               11.97%         0.70     -17.08%         1.09         12     FRAGILE        2      1 (1/5 gates)
+                gates: cagr=FAIL | calmar=FAIL | maxdd=PASS | mc_robust=FAIL | year_wins=FAIL
+                years: 2021:W(+18.4%vs+18.4%) | 2022:L(+1.9%vs+1.9%) | 2023:L(+37.3%vs+37.3%) | 2024:L(+8.6%vs+8.6%) | 2025:W(+24.5%vs+24.5%)
+
+A_eq         sortino          calmar           calmar               11.97%         0.70     -17.08%         1.09         12     FRAGILE        2      1 (1/5 gates)
+                gates: cagr=FAIL | calmar=FAIL | maxdd=PASS | mc_robust=FAIL | year_wins=FAIL
+                years: 2021:W(+18.4%vs+18.4%) | 2022:L(+1.9%vs+1.9%) | 2023:L(+37.3%vs+37.3%) | 2024:L(+8.6%vs+8.6%) | 2025:W(+24.5%vs+24.5%)
+
+A_eq         calmar_sharpe    calmar           calmar               12.26%         0.72     -17.08%         1.10         11      ROBUST        2      3 (3/5 gates)
+                gates: cagr=PASS | calmar=FAIL | maxdd=PASS | mc_robust=PASS | year_wins=FAIL
+                years: 2021:W(+18.4%vs+18.4%) | 2022:L(+1.9%vs+1.9%) | 2023:L(+37.3%vs+37.3%) | 2024:W(+9.0%vs+8.6%) | 2025:L(+24.5%vs+24.5%)
+
+A_eq         calmar_sortino   calmar           calmar               12.26%         0.72     -17.08%         1.10         11      ROBUST        2      3 (3/5 gates)
+                gates: cagr=PASS | calmar=FAIL | maxdd=PASS | mc_robust=PASS | year_wins=FAIL
+                years: 2021:W(+18.4%vs+18.4%) | 2022:L(+1.9%vs+1.9%) | 2023:L(+37.3%vs+37.3%) | 2024:W(+9.0%vs+8.6%) | 2025:L(+24.5%vs+24.5%)
+
+B_bd         calmar           sharpe           calmar               11.73%         0.69     -17.08%         1.07         12      ROBUST        0      2 (2/5 gates)
+                gates: cagr=FAIL | calmar=FAIL | maxdd=PASS | mc_robust=PASS | year_wins=FAIL
+                years: 2021:L(+18.4%vs+18.4%) | 2022:L(+1.9%vs+1.9%) | 2023:L(+37.3%vs+37.3%) | 2024:L(+8.6%vs+8.6%) | 2025:L(+24.5%vs+24.5%)
+
+B_bd         calmar           sortino          calmar               11.73%         0.69     -17.08%         1.07         12      ROBUST        0      2 (2/5 gates)
+                gates: cagr=FAIL | calmar=FAIL | maxdd=PASS | mc_robust=PASS | year_wins=FAIL
+                years: 2021:L(+18.4%vs+18.4%) | 2022:L(+1.9%vs+1.9%) | 2023:L(+37.3%vs+37.3%) | 2024:L(+8.6%vs+8.6%) | 2025:L(+24.5%vs+24.5%)
+
+B_bd         calmar           calmar_sharpe    calmar               11.73%         0.69     -17.08%         1.07         12      ROBUST        0      2 (2/5 gates)
+                gates: cagr=FAIL | calmar=FAIL | maxdd=PASS | mc_robust=PASS | year_wins=FAIL
+                years: 2021:L(+18.4%vs+18.4%) | 2022:L(+1.9%vs+1.9%) | 2023:L(+37.3%vs+37.3%) | 2024:L(+8.6%vs+8.6%) | 2025:L(+24.5%vs+24.5%)
+
+B_bd         calmar           calmar_sortino   calmar               11.73%         0.69     -17.08%         1.07         12      ROBUST        0      2 (2/5 gates)
+                gates: cagr=FAIL | calmar=FAIL | maxdd=PASS | mc_robust=PASS | year_wins=FAIL
+                years: 2021:L(+18.4%vs+18.4%) | 2022:L(+1.9%vs+1.9%) | 2023:L(+37.3%vs+37.3%) | 2024:L(+8.6%vs+8.6%) | 2025:L(+24.5%vs+24.5%)
+
+C_alloc      calmar           calmar           sharpe                9.61%         0.56     -17.08%         0.98         13     (alloc)        1      2 (2/5 gates)
+                gates: cagr=FAIL | calmar=FAIL | maxdd=PASS | mc_robust=PASS | year_wins=FAIL
+                years: 2021:L(+5.0%vs+18.4%) | 2022:L(+1.9%vs+1.9%) | 2023:L(+37.3%vs+37.3%) | 2024:W(+9.0%vs+8.6%) | 2025:L(+16.3%vs+24.5%)
+
+C_alloc      calmar           calmar           sortino               9.60%         0.56     -17.08%         0.98         12     (alloc)        1      2 (2/5 gates)
+                gates: cagr=FAIL | calmar=FAIL | maxdd=PASS | mc_robust=PASS | year_wins=FAIL
+                years: 2021:L(+5.0%vs+18.4%) | 2022:L(+1.9%vs+1.9%) | 2023:L(+37.3%vs+37.3%) | 2024:W(+9.0%vs+8.6%) | 2025:L(+16.3%vs+24.5%)
+
+C_alloc      calmar           calmar           calmar_sharpe        11.06%         0.65     -17.08%         1.04         14     (alloc)        2      2 (2/5 gates)
+                gates: cagr=FAIL | calmar=FAIL | maxdd=PASS | mc_robust=PASS | year_wins=FAIL
+                years: 2021:L(+11.6%vs+18.4%) | 2022:W(+1.9%vs+1.9%) | 2023:L(+37.3%vs+37.3%) | 2024:L(+8.6%vs+8.6%) | 2025:W(+24.5%vs+24.5%)
+
+C_alloc      calmar           calmar           calmar_sortino       11.40%         0.67     -17.08%         1.06         14     (alloc)        3      3 (3/5 gates)
+                gates: cagr=FAIL | calmar=FAIL | maxdd=PASS | mc_robust=PASS | year_wins=PASS
+                years: 2021:L(+15.0%vs+18.4%) | 2022:W(+1.9%vs+1.9%) | 2023:W(+37.3%vs+37.3%) | 2024:L(+8.6%vs+8.6%) | 2025:W(+24.5%vs+24.5%)
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+NO SWITCH CANDIDATES — retain CalMAR for all optimisers.
+
+================================================================================================================================================================
