@@ -939,7 +939,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--mode", choices=["smoke", "full"], default="smoke",
+        "--mode", choices=["smoke", "full"], default="full",
         help=(
             "smoke = n_mc=20, no regime (fast verification);\n"
             "full  = n_mc=1000, with regime decomp (production run)"

@@ -527,9 +527,9 @@ def run_monte_carlo_robustness(
         price_col     = price_col
     )
     single_ms = (time.time() - t0) * 1000
-    est_total_s = single_ms * n_samples / max(n_jobs, 1) / 1000
+    est_total_s = 2 * single_ms * n_samples / max(n_jobs, 1) / 1000
     logging.info(
-        "Single sample: %.0fms -> estimated total: %.0fs (~%.1f min) on %d jobs",
+        "Single sample: %.0fms -> estimated total (x2, including overhead): %.0fs (~%.1f min) on %d jobs",
         single_ms, est_total_s, est_total_s / 60, n_jobs
     )
 
