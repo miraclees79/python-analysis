@@ -29,7 +29,8 @@ import datetime as dt
 import matplotlib.pyplot as plt
 import sys
 
-
+from global_equity_library import build_mmf_extended
+from price_series_builder import build_and_upload, load_combined_from_drive
 ### Initials
 
 
@@ -94,7 +95,7 @@ USER_AGENTS = [
 #    return items[0]['id'] if items else None
 
 
-
+GDRIVE_FOLDER_ID_DEFAULT = None
 
 ## Set global parameters
 chosen_mode = "full"
@@ -118,7 +119,19 @@ USE_SHORTER_SAMPLE = False
 short_sample_start = "2008-01-01"
 short_sample_end   = "2023-12-31"
 
-
+# ---------------------------------------------------------------------------
+# DATA FLOOR DATES
+# ---------------------------------------------------------------------------
+# WIG (Mode A only): daily continuous trading started 1994-10-03.
+#   Earlier data has multi-day gaps that distort the breakout trough
+#   calculation and MA windows.  Clipped after download in Phase 2.
+WIG_DATA_FLOOR = "1994-10-03"
+ 
+# MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
+#   date. Ensures IS windows starting before 1999 have realistic cash returns
+#   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
+MMF_FLOOR = "1994-10-03"
+DATA_START = "1990-01-01"  # hard floor for all series
 
 
 
@@ -128,38 +141,122 @@ logging.info("=" * 80)
 logging.info("DOWNLOAD DATA")
 logging.info("=" * 80)
 
+#------------------------
+# Phase 1 Download Data
+#-----------------------
 
+
+def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
+    """Download a stooq series, clip to DATA_START, exit if mandatory and missing."""
+    url  = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
+    path = os.path.join(tmp_dir, f"ge_{label}.csv")
+    ok   = download_csv(url, path)
+    if not ok:
+        if mandatory:
+            logging.error("FAIL: %s (%s) — exiting.", label, ticker)
+            sys.exit(1)
+        logging.warning("WARN: %s (%s) — not available, skipping.", label, ticker)
+        return None
+    df = load_csv(path)
+    if df is None:
+        if mandatory:
+            logging.error("FAIL: load_csv returned None for %s — exiting.", label)
+            sys.exit(1)
+        return None
+    df = df.loc[df.index >= pd.Timestamp(DATA_START)]
+    logging.info(
+        "OK  : %-14s  %5d rows  %s to %s",
+        label, len(df), df.index.min().date(), df.index.max().date(),
+    )
+    return df
 
 # Create a temporary file inside the temp directory # Filepath for CSV
 # WIG20TR - done
 
-# Universe to be investigated: MWIG40TR, SWIG80TR, Stoxx Europe 600 - Eurex (FY.F), Nasdaq Composite - U.S. (^NDQ), S&P 500 - U.S. (^SPX), Nikkei 225 - Japan (^NKX)
+# Universe to be investigated: MWIG40TR, SWIG80TR, STOXX EU 600, NASDAQ 100 Nasdaq Composite - U.S. (^NDQ), S&P 500 - U.S. (^SPX), Nikkei 225 - Japan (^NKX)
 
-INDEX_CHOICE = "WIG20TR"
+INDEX_CHOICE = "SP500"
 
-csv_filename_index = os.path.join(tmp_dir, "target_index.csv")
+
+
 if INDEX_CHOICE=="WIG20TR":
-    download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_index)
+    
+    TARGET_INDEX =  _stooq("wig20tr",  "WIG20TR")
 
 elif INDEX_CHOICE=="MWIG40TR":
-    download_csv('https://stooq.pl/q/d/l/?s=mwig40tr&i=d', csv_filename_index)
+    TARGET_INDEX =  _stooq("mwig40tr",  "MWIG40TR")
     
 elif INDEX_CHOICE=="SWIG80TR":
-    download_csv('https://stooq.pl/q/d/l/?s=swig80tr&i=d', csv_filename_index)
+    TARGET_INDEX =  _stooq("swig80tr",  "SWIG80TR")
 
 elif INDEX_CHOICE=="STOXX EU 600":
-    download_csv('https://stooq.pl/q/d/l/?s=fy.f&i=d', csv_filename_index)
+    # STOXX 600: load from Drive (historical base + yfinance extension).
+    # build_stoxx600() auto-selects first-build vs update mode:
+    #   First build: reads stoxx600.csv from Drive, extends with yfinance
+    #   Update:      reads stoxx600_combined.csv from Drive, extends forward
+    _stoxx_folder = (
+        os.environ.get("GDRIVE_FOLDER_ID", "").strip()
+        or GDRIVE_FOLDER_ID_DEFAULT.strip()
+    )
+    if not _stoxx_folder:
+        logging.error(
+            "FAIL: GDRIVE_FOLDER_ID not set — cannot load STOXX 600. "
+            "Set GDRIVE_FOLDER_ID_DEFAULT or the env var."
+        )
+        sys.exit(1)
+    # STOXX 600 (yfinance ^STOXX extension, generic Date/Close format)
+    STOXX600 = build_and_upload(
+        folder_id          = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()  or GDRIVE_FOLDER_ID_DEFAULT.strip()),
+        raw_filename       = "stoxx600.csv",
+        combined_filename  = "stoxx600_combined.csv",
+        extension_ticker   = "^STOXX",
+    )
+    if STOXX600 is None:
+        logging.error(
+            "FAIL: STOXX 600 build/update failed. "
+            "Ensure stoxx600.csv is uploaded to Drive folder %s.",
+            _stoxx_folder,
+        )
+        sys.exit(1)
+    logging.info(
+        "OK  : %-14s  %5d rows  %s to %s",
+        "STOXX600", len(STOXX600),
+        STOXX600.index.min().date(), STOXX600.index.max().date(),
+    )
+    TARGET_INDEX=STOXX600
     FORCE_FILTER_MODE =  ["ma","mom"]
 
 elif INDEX_CHOICE=="NASDAQ 100":
-    download_csv('https://stooq.pl/q/d/l/?s=^ndq&i=d', csv_filename_index)
+    TARGET_INDEX =  _stooq("^ndq",  "NASDAQ 100")
     FORCE_FILTER_MODE =  ["ma","mom"]
     
 elif INDEX_CHOICE=="SP500":
-    download_csv('https://stooq.pl/q/d/l/?s=^spx&i=d', csv_filename_index)
+    TARGET_INDEX =  _stooq("^spx",  "S&P 500")
     FORCE_FILTER_MODE =  ["ma","mom"]
+    
 elif INDEX_CHOICE=="Nikkei 225":
-    download_csv('https://stooq.pl/q/d/l/?s=^nkx&i=d', csv_filename_index)
+    TARGET_INDEX =  _stooq("^nkx",  "Nikkei 225")
+    FORCE_FILTER_MODE =  ["ma","mom"]
+
+elif INDEX_CHOICE=="MSCI World":
+    # MSCI World combined series from Google Drive
+    MSCIW = build_and_upload(
+        folder_id         = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()  
+                             or GDRIVE_FOLDER_ID_DEFAULT.strip()),
+        raw_filename      = "msci_world_wsj_raw.csv",
+        combined_filename = "msci_world_combined.csv",
+        extension_ticker  = "URTH",
+        )
+    if MSCIW is None:
+        logging.error("FAIL: MSCI World (WSJ+URTH) build failed — exiting.")
+        sys.exit(1)
+
+    logging.info(
+        "OK  : %-14s  %5d rows  %s to %s",
+        "MSCI_World", len(MSCIW),
+        MSCIW.index.min().date(), MSCIW.index.max().date(),
+        )
+    TARGET_INDEX = MSCIW
     FORCE_FILTER_MODE =  ["ma","mom"]
 
 else:
@@ -173,22 +270,36 @@ logging.info(f"EQUITY MODEL WALK-FORWARD  ({INDEX_CHOICE}, train={TRAIN_YEARS_EQ
              )
 logging.info("=" * 80)
 
-TARGET_INDEX = load_csv(csv_filename_index)
-
 df = TARGET_INDEX
 
-# CASH series - Goldman Sachs Konserwatywny
-csv_filename_cash = os.path.join(tmp_dir, "GS_konserw2720.csv")
+# --- Shared across both modes ---
 
-# Download money market / bond fund
-download_csv(
-    "https://stooq.pl/q/d/l/?s=2720.n&i=d",   
-    csv_filename_cash    
-)
+MMF  = _stooq("2720.n",  "MMF")
 
-CASH = load_csv(csv_filename_cash)
+# WIBOR 1M — used to extend MMF backwards to MMF_FLOOR
+# Not mandatory: if unavailable the MMF runs from its natural start (~1999)
+WIBOR1M = _stooq("plopln1m", "WIBOR1M", mandatory=False)
+if WIBOR1M is None:
+    logging.warning(
+        "WIBOR1M (plopln1m) unavailable — MMF will not be extended. "
+        "IS windows before 1999 will use ret_mmf=0 for cash returns."
+    )
 
+# --- Extended MMF (both modes) ---
+# Chain-link WIBOR 1M backwards from first real MMF observation to MMF_FLOOR.
+# This gives realistic ~18-25% p.a. cash returns for 1994-1999 IS windows
+# in Mode A (global_equity), where WIG IS data goes back to 1994.
+if WIBOR1M is not None:
+    MMF_EXT = build_mmf_extended(MMF, WIBOR1M, floor_date=MMF_FLOOR)
+    logging.info(
+        "MMF extended: %s to %s (%d rows total; original MMF from %s)",
+        MMF_EXT.index.min().date(), MMF_EXT.index.max().date(),
+        len(MMF_EXT), MMF.index.min().date(),
+    )
+else:
+    MMF_EXT = MMF   # no extension available; falls back to original series
 
+CASH = MMF_EXT
 
 
 # -------------------------------------------------------
@@ -415,7 +526,8 @@ wf_equity, wf_results, wf_trades = walk_forward(
     sl_grid     = sl_grid,
     mom_lookback_grid = mom_lookback_grid,    # ADD
     objective=OBJECTIVE,
-    n_jobs=N_JOBS
+    n_jobs=N_JOBS,
+    fast_mode = True
     
 )
 

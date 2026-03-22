@@ -1,0 +1,2 @@
+date,action,signal_equity,signal_bond,w_equity,w_bond,w_mmf,realloc_today,eq_entry_date,eq_entry_price,eq_unrealised_pct,eq_binding_stop,eq_stop_gap_pct,bd_entry_date,bd_entry_price,bd_unrealised_pct,bd_binding_stop,bd_stop_gap_pct,portfolio_cagr,portfolio_maxdd,portfolio_calmar
+2026-03-22,EQ_ENTER+BD_ENTER,IN,IN,1.0,0.0,0.0,False,2025-02-10,89895.48,32.71,108579.84,-8.99,2023-02-22,1863.22,21.97,2207.77,-2.86,0.0668,-0.1794,0.3727

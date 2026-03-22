@@ -83,8 +83,8 @@ from mc_robustness import (
     EQUITY_THRESHOLDS_MC,
     EQUITY_THRESHOLDS_BOOTSTRAP,
 )
-
-
+from global_equity_library import build_mmf_extended
+from price_series_builder import build_and_upload, load_combined_from_drive
 # ============================================================
 # LOGGING SETUP
 # ============================================================
@@ -124,10 +124,10 @@ logging.info("=" * 80)
 POSITION_MODE = "full"
 
 # --- Walk-forward window lengths (years) ---
-TRAIN_YEARS_EQ = 9     # equity signal training window
-TEST_YEARS_EQ  = 1     # equity signal test window
-TRAIN_YEARS_BD = 9     # bond signal training window
-TEST_YEARS_BD  = 1     # bond signal test window
+TRAIN_YEARS_EQ = 7     # equity signal training window
+TEST_YEARS_EQ  = 2     # equity signal test window
+TRAIN_YEARS_BD = 7     # bond signal training window
+TEST_YEARS_BD  = 2     # bond signal test window
 
 # --- Volatility window (days) ---
 VOL_WINDOW = 20
@@ -234,6 +234,23 @@ YIELD_PREFILTER_HARD_EXIT   = False   # Option B default
 # 75bp ~= more aggressive — only blocks sustained hiking
 YIELD_PREFILTER_THRESHOLD_BP = 50.0
 
+CLOSE_COL = "Zamkniecie"   # stooq close column name used throughout
+FAST_MODE = True
+# ---------------------------------------------------------------------------
+# DATA FLOOR DATES
+# ---------------------------------------------------------------------------
+# WIG (Mode A only): daily continuous trading started 1994-10-03.
+#   Earlier data has multi-day gaps that distort the breakout trough
+#   calculation and MA windows.  Clipped after download in Phase 2.
+WIG_DATA_FLOOR = "1994-10-03"
+ 
+# MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
+#   date. Ensures IS windows starting before 1999 have realistic cash returns
+#   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
+MMF_FLOOR = "1994-10-03"
+DATA_START = "1990-01-01"  # hard floor for all series
+
+GDRIVE_FOLDER_ID_DEFAULT = None
 # ============================================================
 # PHASE 1 — DATA DOWNLOAD
 # ============================================================
@@ -254,25 +271,72 @@ if WIG is None:
 logging.info("WIG loaded: %d rows  (%s to %s)",
              len(WIG), WIG.index.min().date(), WIG.index.max().date())
 
-# --- Bond: TBSP Polish government bond total return index ---
-csv_tbsp = os.path.join(tmp_dir, "tbsp.csv")
-download_csv("https://stooq.pl/q/d/l/?s=^tbsp&i=d", csv_tbsp)
-TBSP = load_csv(csv_tbsp)
-if TBSP is None:
-    logging.error("Failed to load TBSP data. Exiting.")
-    sys.exit(1)
-logging.info("TBSP loaded: %d rows  (%s to %s)",
-             len(TBSP), TBSP.index.min().date(), TBSP.index.max().date())
 
-# --- MMF: Goldman Sachs Konserwatywny (money-market proxy, code 2720) ---
-csv_mmf  = os.path.join(tmp_dir, "mmf.csv")
-download_csv("https://stooq.pl/q/d/l/?s=2720.n&i=d", csv_mmf)
-MMF = load_csv(csv_mmf)
-if MMF is None:
-    logging.error("Failed to load MMF data. Exiting.")
-    sys.exit(1)
-logging.info("MMF  loaded: %d rows  (%s to %s)",
-             len(MMF), MMF.index.min().date(), MMF.index.max().date())
+
+
+tmp_dir = tempfile.gettempdir()
+
+def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
+    """Download a stooq series, clip to DATA_START, exit if mandatory and missing."""
+    url  = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
+    path = os.path.join(tmp_dir, f"ge_{label}.csv")
+    ok   = download_csv(url, path)
+    if not ok:
+        if mandatory:
+            logging.error("FAIL: %s (%s) — exiting.", label, ticker)
+            sys.exit(1)
+        logging.warning("WARN: %s (%s) — not available, skipping.", label, ticker)
+        return None
+    df = load_csv(path)
+    if df is None:
+        if mandatory:
+            logging.error("FAIL: load_csv returned None for %s — exiting.", label)
+            sys.exit(1)
+        return None
+    df = df.loc[df.index >= pd.Timestamp(DATA_START)]
+    logging.info(
+        "OK  : %-14s  %5d rows  %s to %s",
+        label, len(df), df.index.min().date(), df.index.max().date(),
+    )
+    return df
+
+# --- Shared across both modes ---
+
+# TBSP backcast (stooq ^tbsp extension, generic Date/Close format)
+TBSP = build_and_upload(
+      folder_id          = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()
+          or GDRIVE_FOLDER_ID_DEFAULT.strip()),
+      raw_filename       = "tbsp_extended_full.csv",
+      combined_filename  = "tbsp_extended_combined.csv",
+      extension_ticker   = "^tbsp",
+      extension_source   = "stooq",
+  )
+
+MMF  = _stooq("2720.n",  "MMF")
+
+# WIBOR 1M — used to extend MMF backwards to MMF_FLOOR
+# Not mandatory: if unavailable the MMF runs from its natural start (~1999)
+WIBOR1M = _stooq("plopln1m", "WIBOR1M", mandatory=False)
+if WIBOR1M is None:
+    logging.warning(
+        "WIBOR1M (plopln1m) unavailable — MMF will not be extended. "
+        "IS windows before 1999 will use ret_mmf=0 for cash returns."
+    )
+
+# --- Extended MMF (both modes) ---
+# Chain-link WIBOR 1M backwards from first real MMF observation to MMF_FLOOR.
+# This gives realistic ~18-25% p.a. cash returns for 1994-1999 IS windows
+# in Mode A (global_equity), where WIG IS data goes back to 1994.
+if WIBOR1M is not None:
+    MMF_EXT = build_mmf_extended(MMF, WIBOR1M, floor_date=MMF_FLOOR)
+    logging.info(
+        "MMF extended: %s to %s (%d rows total; original MMF from %s)",
+        MMF_EXT.index.min().date(), MMF_EXT.index.max().date(),
+        len(MMF_EXT), MMF.index.min().date(),
+    )
+else:
+    MMF_EXT = MMF   # no extension available; falls back to original series
+
 
 
 
@@ -378,6 +442,7 @@ wf_equity_eq, wf_results_eq, wf_trades_eq = walk_forward(
     sl_grid               = SL_EQ,
     mom_lookback_grid     = MOM_LB_EQ,
     n_jobs                = N_JOBS,
+    fast_mode=FAST_MODE
 )
 
 if wf_equity_eq.empty:
@@ -465,6 +530,7 @@ wf_equity_bd, wf_results_bd, wf_trades_bd = walk_forward(
     mom_lookback_grid     = [252],                  # not used (filter_mode=ma)
     n_jobs                = N_JOBS,
     entry_gate_series     = bond_entry_gate,
+        fast_mode=FAST_MODE
 )
 
 if wf_equity_bd.empty:
