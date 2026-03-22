@@ -32,3 +32,6 @@ dev_single_asset_monitoring/__pycache__/mc_robustness.cpython-314.pyc
 dev_single_asset_monitoring/__pycache__/multiasset_library.cpython-314.pyc
 dev_single_asset_monitoring/__pycache__/price_series_builder.cpython-314.pyc
 dev_single_asset_monitoring/__pycache__/strategy_test_library.cpython-314.pyc
+/dev_single_asset_monitoring/sweep_outputs
+*.png
+/strategy_freeze_0_2/outputs
