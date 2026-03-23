@@ -726,7 +726,7 @@ def run_strategy_with_trades(
     warmup_df=None,    # NEW: pre-window data for indicator warm-up
     fund_signal=None,   # NEW: precomputed pd.Series from compute_fund_breadth_signal
     entry_gate=None,        # ADD — pre-sliced gate for this training window
-    fast_mode=False,    # NEW: True = numpy array access (~3-5x faster loop)
+    fast_mode=True,    # NEW: True = numpy array access (~3-5x faster loop)
                         #      False = original iterrows (stable default)
 ):
 
@@ -1296,7 +1296,7 @@ def evaluate_params(
     objective="calmar",   # <-- new parameter, default preserves v0.1 behaviour,
     mom_lookback=252,
     entry_gate=None,        # ADD — pre-sliced gate for this training window       
-    fast_mode=False,    # ADD
+    fast_mode=True,    # ADD
 ):
     """
     Evaluate a single parameter combination on the training window.
@@ -1488,7 +1488,7 @@ def walk_forward(
     objective = "calmar",
     n_jobs=1,
     entry_gate_series=None,   # NEW — pd.Series of 0/1, applied as entry gate
-    fast_mode=False
+    fast_mode=True
     
 ):
 

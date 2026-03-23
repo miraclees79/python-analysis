@@ -26,8 +26,7 @@ jobs:
       - name: Create Google Credentials File
         run: |
           echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
-        env:
-            GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        
           
      
       - name: Validate JSON Format
@@ -37,9 +36,9 @@ jobs:
    
 
       - name: run Python script
-      #  env:
-      #    CSV_BASE_URL: ${{ secrets.CSV_BASE_URL }}
-      #    FOLDER_NAME: ${{ secrets.FOLDER_NAME }} 
+        
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
           
         run: |
           python dev_single_asset_monitoring/asset_config_sweep.py --mode full --n_mc 500 --assets WIG20TR MWIG40TR SP500  MSCI_World
