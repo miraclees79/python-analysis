@@ -518,8 +518,8 @@ os.makedirs(PREFIX_OUTPUT_DIR, exist_ok=True)
 # This is the minimal surgical change — no modifications to daily_output.py.
 import daily_output as _do
 
-_orig_log_file = _do.LOG_FILE  # save
-_do.LOG_FILE   = f"{OUTPUT_PREFIX}_signal_log.csv"  # patch
+#_orig_log_file = _do.LOG_FILE  # save
+#_do.LOG_FILE   = f"{OUTPUT_PREFIX}_signal_log.csv"  # patch
 
 outputs = build_daily_outputs(
     wf_equity   = wf_equity,
@@ -536,7 +536,7 @@ outputs = build_daily_outputs(
                          if os.path.exists("/tmp/credentials.json") else None,
 )
 
-_do.LOG_FILE = _orig_log_file  # restore
+#_do.LOG_FILE = _orig_log_file  # restore
 
 logging.info(
     "Daily output complete — action=%s  signal=%s",
