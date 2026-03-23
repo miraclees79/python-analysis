@@ -1,0 +1,56 @@
+name: Single asset sweep - optional robustness check Monte Carlo
+
+on:
+  workflow_dispatch:  # Allows manual trigger
+ # schedule: ONLY MANUAL
+ #   - cron: "0 0 * * *"  # Runs daily at midn UTC
+
+jobs: 
+  process_stooq_data:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.14'
+
+      - name: Install python deps
+        run: |
+          pip install  pandas numpy requests  google-api-python-client matplotlib joblib
+
+      
+      #- name: Create Google Credentials File
+      #  run: |
+      #    echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
+          
+     
+      #- name: Validate JSON Format
+      #  run: |
+      #    python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
+          
+   
+
+      - name: run Python script
+      #  env:
+      #    CSV_BASE_URL: ${{ secrets.CSV_BASE_URL }}
+      #    FOLDER_NAME: ${{ secrets.FOLDER_NAME }} 
+          
+        run: |
+          python dev_single_asset_monitoring/asset_config_sweep.py --mode full --n_mc 500
+      
+
+      
+      - name: Upload log file and chart as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: download-logs
+          path: |
+            sweep_run.log
+            sweep_outputs\sweep_results_latest.csv
+            sweep_outputs\sweep_windows_latest.csv
+          retention-days: 30
+
