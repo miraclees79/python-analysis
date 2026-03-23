@@ -555,7 +555,7 @@ logging.info(
 # we rename to prefixed names in the parent outputs/ directory.
 FILE_MAP = {
     "signal_status.txt":    f"{OUTPUT_PREFIX}_signal_status.txt",
-    "signal_log.csv":       f"{OUTPUT_PREFIX}_signal_log.csv",
+    f"{OUTPUT_PREFIX}_signal_log.csv":       f"{OUTPUT_PREFIX}_signal_log.csv",
     "equity_chart.png":     f"{OUTPUT_PREFIX}_equity_chart.png",
     "signal_snapshot.json": f"{OUTPUT_PREFIX}_signal_snapshot.json",
 }

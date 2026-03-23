@@ -76,10 +76,10 @@ from price_series_builder import build_and_upload
 # ██████████████████████████████████████████████████████████
 # ============================================================
 
-ASSET_NAME    = "SWIG80TR"
+ASSET_NAME    = "MWIG40TR"
 # Must match a key in ASSET_REGISTRY below.
 
-OUTPUT_PREFIX = "swig80tr"
+OUTPUT_PREFIX = "mwig40tr"
 # Unique lowercase identifier for output file naming.
 # Determines log file name, output filenames, and Drive filenames.
 # Examples: "sp500", "mwig40tr", "nikkei225", "stoxx600", "msci_world"
@@ -514,8 +514,15 @@ os.makedirs(PREFIX_OUTPUT_DIR, exist_ok=True)
 
 # daily_output._fetch_log_from_drive looks for "signal_log.csv" by default.
 # The file on Drive is named "{PREFIX}_signal_log.csv".
-
+# We temporarily monkey-patch the constant so the fetch targets the correct file.
+# This is the minimal surgical change — no modifications to daily_output.py.
 import daily_output as _do
+
+
+# daily_output._fetch_log_from_drive looks for "signal_log.csv" by default.
+# The file on Drive is named "{PREFIX}_signal_log.csv".
+
+
 
 #_orig_log_file = _do.LOG_FILE  # save
 #_do.LOG_FILE   = f"{OUTPUT_PREFIX}_signal_log.csv"  # patch
