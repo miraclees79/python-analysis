@@ -1,4 +1,4 @@
-name: Single asset sweep - optional robustness check Monte Carlo
+name: Single asset sweep WIG20TR MWIG40TR SP500  MSCI_World - optional robustness check Monte Carlo
 
 on:
   workflow_dispatch:  # Allows manual trigger
