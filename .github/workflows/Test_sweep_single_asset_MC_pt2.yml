@@ -42,7 +42,7 @@ jobs:
       #    FOLDER_NAME: ${{ secrets.FOLDER_NAME }} 
           
         run: |
-          python dev_single_asset_monitoring/asset_config_sweep.py --mode full --n_mc 500 --assets NASDAQ100  Nikkei225 SWIG80TR STOXX600
+          python dev_single_asset_monitoring/asset_config_sweep.py --mode full --n_mc 500 --assets WIG20TR MWIG40TR SP500  MSCI_World
       
 
       
