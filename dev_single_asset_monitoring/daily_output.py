@@ -119,6 +119,7 @@ def _fetch_log_from_drive(
     log_path: Path,
     folder_id: str,
     credentials_path: str,
+    logfile_name = "signal_log.csv"
 ) -> None:
     """
     Download signal_log.csv from Google Drive into log_path, overwriting any
@@ -149,7 +150,7 @@ def _fetch_log_from_drive(
 
         # Search for signal_log.csv in the target folder
         query = (
-            f"name='signal_log.csv' "
+            f"name='{logfile_name}' "
             f"and '{folder_id}' in parents "
             f"and trashed=false"
         )
@@ -753,6 +754,7 @@ def build_daily_outputs(
     df:          pd.DataFrame,
     output_dir:  str  = "outputs",
     price_col:   str  = "Zamkniecie",
+    logfile_name:   str  = "signal_log.csv",
     run_date:    dt.date | None = None,
     gdrive_folder_id:   str | None = None,
     gdrive_credentials: str | None = None,
@@ -796,13 +798,13 @@ def build_daily_outputs(
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    log_path      = out_dir / "signal_log.csv"
+    log_path      = out_dir / logfile_name
 
     # --- Fetch yesterday's signal log from Drive (before any local read) ---
     # Ensures ENTER/EXIT/HOLD is correct on a fresh GitHub Actions runner
     # where outputs/ is always empty at the start of each run.
     if gdrive_folder_id and gdrive_credentials:
-        _fetch_log_from_drive(log_path, gdrive_folder_id, gdrive_credentials)
+        _fetch_log_from_drive(log_path, gdrive_folder_id, gdrive_credentials, logfile_name)
     else:
         logging.info(
             "daily_output: gdrive_folder_id/gdrive_credentials not supplied — "

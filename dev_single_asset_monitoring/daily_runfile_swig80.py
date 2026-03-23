@@ -514,8 +514,7 @@ os.makedirs(PREFIX_OUTPUT_DIR, exist_ok=True)
 
 # daily_output._fetch_log_from_drive looks for "signal_log.csv" by default.
 # The file on Drive is named "{PREFIX}_signal_log.csv".
-# We temporarily monkey-patch the constant so the fetch targets the correct file.
-# This is the minimal surgical change — no modifications to daily_output.py.
+
 import daily_output as _do
 
 #_orig_log_file = _do.LOG_FILE  # save
@@ -531,6 +530,7 @@ outputs = build_daily_outputs(
     df          = df,
     output_dir  = PREFIX_OUTPUT_DIR,
     price_col   = "Zamkniecie",
+    logfile_name = f"{OUTPUT_PREFIX}_signal_log.csv",
     gdrive_folder_id   = os.getenv("GDRIVE_FOLDER_ID"),
     gdrive_credentials = "/tmp/credentials.json"
                          if os.path.exists("/tmp/credentials.json") else None,

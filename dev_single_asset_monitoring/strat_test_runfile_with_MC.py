@@ -175,7 +175,7 @@ def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | No
 
 # Universe to be investigated: MWIG40TR, SWIG80TR, STOXX EU 600, NASDAQ 100 Nasdaq Composite - U.S. (^NDQ), S&P 500 - U.S. (^SPX), Nikkei 225 - Japan (^NKX)
 
-INDEX_CHOICE = "SWIG80TR"
+INDEX_CHOICE = "MWIG40TR"
 
 
 

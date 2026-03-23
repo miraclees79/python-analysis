@@ -518,8 +518,14 @@ os.makedirs(PREFIX_OUTPUT_DIR, exist_ok=True)
 # This is the minimal surgical change — no modifications to daily_output.py.
 import daily_output as _do
 
-_orig_log_file = _do.LOG_FILE  # save
-_do.LOG_FILE   = f"{OUTPUT_PREFIX}_signal_log.csv"  # patch
+
+# daily_output._fetch_log_from_drive looks for "signal_log.csv" by default.
+# The file on Drive is named "{PREFIX}_signal_log.csv".
+
+
+
+#_orig_log_file = _do.LOG_FILE  # save
+#_do.LOG_FILE   = f"{OUTPUT_PREFIX}_signal_log.csv"  # patch
 
 outputs = build_daily_outputs(
     wf_equity   = wf_equity,
@@ -531,12 +537,13 @@ outputs = build_daily_outputs(
     df          = df,
     output_dir  = PREFIX_OUTPUT_DIR,
     price_col   = "Zamkniecie",
+    logfile_name = f"{OUTPUT_PREFIX}_signal_log.csv",
     gdrive_folder_id   = os.getenv("GDRIVE_FOLDER_ID"),
     gdrive_credentials = "/tmp/credentials.json"
                          if os.path.exists("/tmp/credentials.json") else None,
 )
 
-_do.LOG_FILE = _orig_log_file  # restore
+#_do.LOG_FILE = _orig_log_file  # restore
 
 logging.info(
     "Daily output complete — action=%s  signal=%s",
