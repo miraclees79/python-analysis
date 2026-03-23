@@ -28,7 +28,7 @@
 # ----------------
 #   NOTIFY_EMAIL_CC         — CC address
 
-name: Daily SP500 Signal    # <-- change this per asset
+name: Daily GENERIC Signal    # <-- change this per asset
 
 on:
   schedule:
