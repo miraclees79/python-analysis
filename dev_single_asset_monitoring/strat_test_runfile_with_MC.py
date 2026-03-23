@@ -103,8 +103,8 @@ chosen_mode = "full"
 VOL_WINDOW = 20
 FORCE_FILTER_MODE =  ["ma","mom"]
 # options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
-RUN_MONTE_CARLO = False # MC parameter robustness
-RUN_BLOCK_BOOTSTRAP = False # Run bootstrap robustness test
+RUN_MONTE_CARLO = True # MC parameter robustness
+RUN_BLOCK_BOOTSTRAP = True # Run bootstrap robustness test
 TRAIN_YEARS_EQ = 8
 TEST_YEARS_EQ = 2
 
@@ -175,7 +175,7 @@ def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | No
 
 # Universe to be investigated: MWIG40TR, SWIG80TR, STOXX EU 600, NASDAQ 100 Nasdaq Composite - U.S. (^NDQ), S&P 500 - U.S. (^SPX), Nikkei 225 - Japan (^NKX)
 
-INDEX_CHOICE = "SP500"
+INDEX_CHOICE = "SWIG80TR"
 
 
 
@@ -624,13 +624,6 @@ else:
 #---------------------------------------
 # Regime analysis
 #-------------------------------------
-
-
-
-
-
-
-
 
 
 # Assuming you have these from your existing strategy runner:

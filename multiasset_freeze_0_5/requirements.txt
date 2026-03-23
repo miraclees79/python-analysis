@@ -7,6 +7,7 @@ matplotlib>=3.8
 requests>=2.31
 joblib>=1.3
 scipy>=1.11
+yfinance>=0.2.40
 
 # Google Drive upload (step 6 in daily_strategy.yml)
 google-auth>=2.28
