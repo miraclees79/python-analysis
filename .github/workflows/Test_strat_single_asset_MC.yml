@@ -13,30 +13,39 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+     # ------------------------------------------------------------------
+      # 2. Python setup
+      # ------------------------------------------------------------------
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: dev_single_asset_monitoring/requirements.txt
 
-      - name: Install python deps
+      # ------------------------------------------------------------------
+      # 3. Install dependencies
+      # ------------------------------------------------------------------
+      - name: Install Python dependencies
         run: |
-          pip install  pandas numpy requests  google-api-python-client matplotlib joblib
+          pip install --upgrade pip
+          pip install -r dev_single_asset_monitoring/requirements.txt
 
       
-      #- name: Create Google Credentials File
-      #  run: |
-      #    echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
+      - name: Create Google Credentials File
+        run: |
+          echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
           
      
-      #- name: Validate JSON Format
-      #  run: |
-      #    python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
+      - name: Validate JSON Format
+        run: |
+          python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
           
    
 
       - name: run Python script
         env:
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
           #    CSV_BASE_URL: ${{ secrets.CSV_BASE_URL }}
       #    FOLDER_NAME: ${{ secrets.FOLDER_NAME }} 
           
