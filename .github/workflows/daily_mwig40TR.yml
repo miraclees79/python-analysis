@@ -101,7 +101,7 @@ jobs:
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           cd dev_single_asset_monitoring
-          python daily_runfile_generic.py
+          python daily_runfile_mwig40tr.py
 
       # ------------------------------------------------------------------
       # 6. Parse action from snapshot JSON
