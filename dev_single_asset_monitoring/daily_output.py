@@ -452,7 +452,7 @@ def _build_snapshot(
 # Artefact 1: Status text block
 # ---------------------------------------------------------------------------
 
-def _build_status_text(snap: dict, action: str) -> str:
+def _build_status_text(snap: dict, action: str, asset_name) -> str:
     """
     Render the human-readable status block from a snapshot dict.
     Designed to be pasted verbatim into an email body.
@@ -461,7 +461,7 @@ def _build_status_text(snap: dict, action: str) -> str:
     sep2 = "-" * 60
     lines = [
         sep,
-        f"  WIG20TR STRATEGY SIGNAL — {snap['run_date']}",
+        f"  {asset_name} STRATEGY SIGNAL — {snap['run_date']}",
         sep,
         f"  Signal:      {snap['signal']}",
         f"  Action:      {action}",
@@ -755,6 +755,7 @@ def build_daily_outputs(
     output_dir:  str  = "outputs",
     price_col:   str  = "Zamkniecie",
     logfile_name:   str  = "signal_log.csv",
+    asset_name: str = 'WIG20TR'
     run_date:    dt.date | None = None,
     gdrive_folder_id:   str | None = None,
     gdrive_credentials: str | None = None,
@@ -773,6 +774,8 @@ def build_daily_outputs(
     df          : full price DataFrame (must contain price_col column)
     output_dir  : directory to write output files into (created if absent)
     price_col   : price column name in df
+    logfile_name : correct asset-specific signal log name in Drive
+    asset_name  : asset name for formatting
     run_date    : override today's date (default: dt.date.today())
     gdrive_folder_id   : Drive folder ID containing signal_log.csv.
                          When supplied (together with gdrive_credentials),
@@ -834,7 +837,7 @@ def build_daily_outputs(
     snap["action"]  = action   # clean copy written to snapshot JSON for GH Actions
 
     # --- Status text ---
-    status_text = _build_status_text(snap, action)
+    status_text = _build_status_text(snap, action, asset_name)
     logging.info("\n%s", status_text)
     _atomic_write(status_path, status_text)
     logging.info("daily_output: status text written to %s", status_path)

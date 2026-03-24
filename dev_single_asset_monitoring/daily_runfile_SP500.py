@@ -531,6 +531,7 @@ outputs = build_daily_outputs(
     bh_metrics  = bh_metrics,
     df          = df,
     output_dir  = PREFIX_OUTPUT_DIR,
+    asset_name = ASSET_NAME,
     price_col   = "Zamkniecie",
     logfile_name = f"{OUTPUT_PREFIX}_signal_log.csv",
     gdrive_folder_id   = os.getenv("GDRIVE_FOLDER_ID"),
