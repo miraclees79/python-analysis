@@ -755,7 +755,7 @@ def build_daily_outputs(
     output_dir:  str  = "outputs",
     price_col:   str  = "Zamkniecie",
     logfile_name:   str  = "signal_log.csv",
-    asset_name: str = 'WIG20TR'
+    asset_name: str = 'WIG20TR',
     run_date:    dt.date | None = None,
     gdrive_folder_id:   str | None = None,
     gdrive_credentials: str | None = None,
