@@ -87,6 +87,7 @@ OUTPUT_PREFIX = "sp500"
 TRAIN_YEARS   = 6
 TEST_YEARS    = 2
 # Set from sweep candidate results.
+# SP500 6+2 double robust on 24/03/2026
 
 FORCE_FILTER_MODE = ["ma", "mom"]
 # Override to ["ma"] if sweep showed ma-only was consistently dominant

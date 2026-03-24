@@ -29,8 +29,7 @@ import datetime as dt
 import matplotlib.pyplot as plt
 import sys
 
-from global_equity_library import build_mmf_extended
-from price_series_builder import build_and_upload, load_combined_from_drive
+
 ### Initials
 
 
@@ -95,19 +94,16 @@ USER_AGENTS = [
 #    return items[0]['id'] if items else None
 
 
-GDRIVE_FOLDER_ID_DEFAULT = None
+
 
 ## Set global parameters
 chosen_mode = "full"
 # options: "vol_entry", "vol_dynamic", "full"
 VOL_WINDOW = 20
-FORCE_FILTER_MODE =  ["ma","mom"]
+FORCE_FILTER_MODE = ["ma","mom"]
 # options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
-RUN_MONTE_CARLO = True # MC parameter robustness
-RUN_BLOCK_BOOTSTRAP = True # Run bootstrap robustness test
-TRAIN_YEARS_EQ = 6
-TEST_YEARS_EQ = 2
-
+RUN_MONTE_CARLO = False # MC parameter robustness
+RUN_BLOCK_BOOTSTRAP = False # Run bootstrap robustness test
 
 # OBJECTIVE FUNCTION
 OBJECTIVE = "calmar"   # or "calmar", "sharpe", "sortino", "calmar_sortino", "calmar_sharpe"
@@ -119,19 +115,7 @@ USE_SHORTER_SAMPLE = False
 short_sample_start = "2008-01-01"
 short_sample_end   = "2023-12-31"
 
-# ---------------------------------------------------------------------------
-# DATA FLOOR DATES
-# ---------------------------------------------------------------------------
-# WIG (Mode A only): daily continuous trading started 1994-10-03.
-#   Earlier data has multi-day gaps that distort the breakout trough
-#   calculation and MA windows.  Clipped after download in Phase 2.
-WIG_DATA_FLOOR = "1994-10-03"
- 
-# MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
-#   date. Ensures IS windows starting before 1999 have realistic cash returns
-#   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
-MMF_FLOOR = "1994-10-03"
-DATA_START = "1990-01-01"  # hard floor for all series
+
 
 
 
@@ -141,165 +125,29 @@ logging.info("=" * 80)
 logging.info("DOWNLOAD DATA")
 logging.info("=" * 80)
 
-#------------------------
-# Phase 1 Download Data
-#-----------------------
 
-
-def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
-    """Download a stooq series, clip to DATA_START, exit if mandatory and missing."""
-    url  = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
-    path = os.path.join(tmp_dir, f"ge_{label}.csv")
-    ok   = download_csv(url, path)
-    if not ok:
-        if mandatory:
-            logging.error("FAIL: %s (%s) — exiting.", label, ticker)
-            sys.exit(1)
-        logging.warning("WARN: %s (%s) — not available, skipping.", label, ticker)
-        return None
-    df = load_csv(path)
-    if df is None:
-        if mandatory:
-            logging.error("FAIL: load_csv returned None for %s — exiting.", label)
-            sys.exit(1)
-        return None
-    df = df.loc[df.index >= pd.Timestamp(DATA_START)]
-    logging.info(
-        "OK  : %-14s  %5d rows  %s to %s",
-        label, len(df), df.index.min().date(), df.index.max().date(),
-    )
-    return df
 
 # Create a temporary file inside the temp directory # Filepath for CSV
-# WIG20TR - done
+# WIG20TR - target
+csv_filename_w20tr = os.path.join(tmp_dir, "w20tr.csv")
 
-# Universe to be investigated: MWIG40TR, SWIG80TR, STOXX EU 600, NASDAQ 100 Nasdaq Composite - U.S. (^NDQ), S&P 500 - U.S. (^SPX), Nikkei 225 - Japan (^NKX)
+download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr)
+INDEX_W20 = load_csv(csv_filename_w20tr)
 
-INDEX_CHOICE = "MSCI World"
+df = INDEX_W20
+
+# CASH series - Goldman Sachs Konserwatywny
+csv_filename_cash = os.path.join(tmp_dir, "GS_konserw2720.csv")
+
+# Download money market / bond fund
+download_csv(
+    "https://stooq.pl/q/d/l/?s=2720.n&i=d",   
+    csv_filename_cash    
+)
+
+CASH = load_csv(csv_filename_cash)
 
 
-
-if INDEX_CHOICE=="SP500":
-    
-    TARGET_INDEX =  _stooq("wig20tr",  "WIG20TR")
-
-elif INDEX_CHOICE=="MWIG40TR":
-    TARGET_INDEX =  _stooq("mwig40tr",  "MWIG40TR")
-    
-elif INDEX_CHOICE=="SWIG80TR":
-    TARGET_INDEX =  _stooq("swig80tr",  "SWIG80TR")
-
-elif INDEX_CHOICE=="STOXX EU 600":
-    # STOXX 600: load from Drive (historical base + yfinance extension).
-    # build_stoxx600() auto-selects first-build vs update mode:
-    #   First build: reads stoxx600.csv from Drive, extends with yfinance
-    #   Update:      reads stoxx600_combined.csv from Drive, extends forward
-    _stoxx_folder = (
-        os.environ.get("GDRIVE_FOLDER_ID", "").strip()
-        or GDRIVE_FOLDER_ID_DEFAULT.strip()
-    )
-    if not _stoxx_folder:
-        logging.error(
-            "FAIL: GDRIVE_FOLDER_ID not set — cannot load STOXX 600. "
-            "Set GDRIVE_FOLDER_ID_DEFAULT or the env var."
-        )
-        sys.exit(1)
-    # STOXX 600 (yfinance ^STOXX extension, generic Date/Close format)
-    STOXX600 = build_and_upload(
-        folder_id          = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()  or GDRIVE_FOLDER_ID_DEFAULT.strip()),
-        raw_filename       = "stoxx600.csv",
-        combined_filename  = "stoxx600_combined.csv",
-        extension_ticker   = "^STOXX",
-    )
-    if STOXX600 is None:
-        logging.error(
-            "FAIL: STOXX 600 build/update failed. "
-            "Ensure stoxx600.csv is uploaded to Drive folder %s.",
-            _stoxx_folder,
-        )
-        sys.exit(1)
-    logging.info(
-        "OK  : %-14s  %5d rows  %s to %s",
-        "STOXX600", len(STOXX600),
-        STOXX600.index.min().date(), STOXX600.index.max().date(),
-    )
-    TARGET_INDEX=STOXX600
-    FORCE_FILTER_MODE =  ["ma","mom"]
-
-elif INDEX_CHOICE=="NASDAQ 100":
-    TARGET_INDEX =  _stooq("^ndq",  "NASDAQ 100")
-    FORCE_FILTER_MODE =  ["ma","mom"]
-    
-elif INDEX_CHOICE=="SP500":
-    TARGET_INDEX =  _stooq("^spx",  "S&P 500")
-    FORCE_FILTER_MODE =  ["ma","mom"]
-    
-elif INDEX_CHOICE=="Nikkei 225":
-    TARGET_INDEX =  _stooq("^nkx",  "Nikkei 225")
-    FORCE_FILTER_MODE =  ["ma","mom"]
-
-elif INDEX_CHOICE=="MSCI World":
-    # MSCI World combined series from Google Drive
-    MSCIW = build_and_upload(
-        folder_id         = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()  
-                             or GDRIVE_FOLDER_ID_DEFAULT.strip()),
-        raw_filename      = "msci_world_wsj_raw.csv",
-        combined_filename = "msci_world_combined.csv",
-        extension_ticker  = "URTH",
-        )
-    if MSCIW is None:
-        logging.error("FAIL: MSCI World (WSJ+URTH) build failed — exiting.")
-        sys.exit(1)
-
-    logging.info(
-        "OK  : %-14s  %5d rows  %s to %s",
-        "MSCI_World", len(MSCIW),
-        MSCIW.index.min().date(), MSCIW.index.max().date(),
-        )
-    TARGET_INDEX = MSCIW
-    FORCE_FILTER_MODE =  ["ma","mom"]
-
-else:
-    logging.info("=" * 80)
-    logging.info("UNDEFINED INDEX SELECTED - ENDING RUN")  
-    logging.info("=" * 80)
-    sys.exit
-
-logging.info("=" * 80)
-logging.info(f"EQUITY MODEL WALK-FORWARD  ({INDEX_CHOICE}, train={TRAIN_YEARS_EQ}y test={TEST_YEARS_EQ}y)"
-             )
-logging.info("=" * 80)
-
-df = TARGET_INDEX
-
-# --- Shared across both modes ---
-
-MMF  = _stooq("2720.n",  "MMF")
-
-# WIBOR 1M — used to extend MMF backwards to MMF_FLOOR
-# Not mandatory: if unavailable the MMF runs from its natural start (~1999)
-WIBOR1M = _stooq("plopln1m", "WIBOR1M", mandatory=False)
-if WIBOR1M is None:
-    logging.warning(
-        "WIBOR1M (plopln1m) unavailable — MMF will not be extended. "
-        "IS windows before 1999 will use ret_mmf=0 for cash returns."
-    )
-
-# --- Extended MMF (both modes) ---
-# Chain-link WIBOR 1M backwards from first real MMF observation to MMF_FLOOR.
-# This gives realistic ~18-25% p.a. cash returns for 1994-1999 IS windows
-# in Mode A (global_equity), where WIG IS data goes back to 1994.
-if WIBOR1M is not None:
-    MMF_EXT = build_mmf_extended(MMF, WIBOR1M, floor_date=MMF_FLOOR)
-    logging.info(
-        "MMF extended: %s to %s (%d rows total; original MMF from %s)",
-        MMF_EXT.index.min().date(), MMF_EXT.index.max().date(),
-        len(MMF_EXT), MMF.index.min().date(),
-    )
-else:
-    MMF_EXT = MMF   # no extension available; falls back to original series
-
-CASH = MMF_EXT
 
 
 # -------------------------------------------------------
@@ -428,15 +276,15 @@ else:
 #============================
 
 #===========GRIDS============
-# Define search grids once — passed to both the loop and neighbour_mean
-# so they are guaranteed to stay in sync
-X_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
-Y_grid = [0.02, 0.03, 0.05, 0.07, 0.10]
-fast_grid   = [50, 75, 100]
-slow_grid = [150, 200, 250 ]
-tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
-sl_grid     = [0.05, 0.08, 0.10, 0.15]
-mom_lookback_grid =  [252]  #[126, 252]           # [126, 252]    # ADD
+    # Define search grids once — passed to both the loop and neighbour_mean
+    # so they are guaranteed to stay in sync
+    X_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
+    Y_grid = [0.02, 0.03, 0.05, 0.07, 0.10]
+    fast_grid   = [50, 75, 100]
+    slow_grid = [150, 200, 250 ]
+    tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
+    sl_grid     = [0.05, 0.08, 0.10, 0.15]
+    mom_lookback_grid = [252]           # [126, 252]    # ADD
     
 #============================
 
@@ -484,6 +332,7 @@ if USE_SHORTER_SAMPLE:
 # ============================
 
 
+
 # -------- Walk Forward --------
 
 logging.info("=" * 80)
@@ -511,8 +360,8 @@ logging.info(
 wf_equity, wf_results, wf_trades = walk_forward(
     df,
     cash_df=CASH,
-    train_years=TRAIN_YEARS_EQ, 
-    test_years=TEST_YEARS_EQ,
+    train_years=8,
+    test_years=2,
     selected_mode=chosen_mode,
     vol_window=VOL_WINDOW,
     funds_df=FUNDS, #DIAG RUN - None             if not using fund filter  FUNDS if using fund filter
@@ -526,8 +375,7 @@ wf_equity, wf_results, wf_trades = walk_forward(
     sl_grid     = sl_grid,
     mom_lookback_grid = mom_lookback_grid,    # ADD
     objective=OBJECTIVE,
-    n_jobs=N_JOBS,
-    fast_mode = True
+    n_jobs=N_JOBS
     
 )
 
@@ -624,6 +472,13 @@ else:
 #---------------------------------------
 # Regime analysis
 #-------------------------------------
+
+
+
+
+
+
+
 
 
 # Assuming you have these from your existing strategy runner:
@@ -765,17 +620,10 @@ if wf_equity is not None and not wf_equity.empty:
         (bh_equity.index >= wf_equity.index.min()) &
         (bh_equity.index <= wf_equity.index.max())
     ]
-    
-    ax.plot(
-    bh_equity_aligned.index,
-    bh_equity_aligned.values,
-    label=f"Buy & Hold {INDEX_CHOICE}",
-    color='grey',
-    linewidth=1.5,
-    linestyle='--'
-    )
-    
-    
+    ax.plot(bh_equity_aligned.index, bh_equity_aligned.values,
+            label='Buy & Hold WIG20TR', color='grey',
+            linewidth=1.5, linestyle='--')
+
     # Shade OOS windows for orientation
     for _, row in wf_results.iterrows():
         ax.axvspan(row["TestStart"], row["TestEnd"], color='grey', alpha=0.07)
@@ -825,8 +673,5 @@ if wf_equity is not None and not wf_equity.empty:
     ax.grid(True, alpha=0.3)
     ax.legend()
     plt.tight_layout()
-    plot_path = "single_asset_equity.png"
-    plt.savefig(plot_path, dpi=150)
-    plt.close()
-    logging.info("Plot saved to %s", plot_path)
+    plt.show()
     logging.info("RUN END")
