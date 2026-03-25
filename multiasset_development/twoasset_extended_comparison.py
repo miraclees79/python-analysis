@@ -168,6 +168,22 @@ N_JOBS = max(1, _cpu - 1) if _cpu > 3 and sys.platform == "win32" else _cpu
 
 FAST_MODE = True
 
+# ---------------------------------------------------------------------------
+# DATA FLOOR DATES
+# ---------------------------------------------------------------------------
+# WIG (Mode A only): daily continuous trading started 1994-10-03.
+#   Earlier data has multi-day gaps that distort the breakout trough
+#   calculation and MA windows.  Clipped after download in Phase 2.
+WIG_DATA_FLOOR = "1994-10-03"
+ 
+# MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
+#   date. Ensures IS windows starting before 1999 have realistic cash returns
+#   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
+MMF_FLOOR = "1994-10-03"
+DATA_START = "1990-01-01"  # hard floor for all series
+
+
+
 # ── MC / Bootstrap robustness settings ──────────────────────────────────────
 #
 # RUN_MC=True  : run MC parameter perturbation for each window config.
@@ -227,6 +243,7 @@ def download_all(tmp_dir):
         return df
 
     WIG   = _get("wig",       "WIG")
+    WIG = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
     MMF   = _get("2720.n",    "MMF")
     W1M   = _get("plopln1m",  "WIBOR1M", mandatory=False)
     PL10Y = _get("10yply.b",  "PL10Y")
