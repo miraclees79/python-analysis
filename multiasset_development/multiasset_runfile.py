@@ -124,9 +124,9 @@ logging.info("=" * 80)
 POSITION_MODE = "full"
 
 # --- Walk-forward window lengths (years) ---
-TRAIN_YEARS_EQ = 7     # equity signal training window
+TRAIN_YEARS_EQ = 9     # equity signal training window
 TEST_YEARS_EQ  = 2     # equity signal test window
-TRAIN_YEARS_BD = 7     # bond signal training window
+TRAIN_YEARS_BD = 9     # bond signal training window
 TEST_YEARS_BD  = 2     # bond signal test window
 
 # --- Volatility window (days) ---
@@ -161,6 +161,27 @@ SLOW_EQ     = [150, 200, 250]
 TV_EQ       = [0.08, 0.10, 0.12, 0.15, 0.20]
 SL_EQ       = [0.05, 0.08, 0.10, 0.15]
 MOM_LB_EQ   = [126, 252]
+
+# --- Trailing stop mode ---
+# USE_ATR_STOP = False : fixed percentage trailing stop (current default)
+#     X_GRID_EQ is used; stop fires when price < (1 - X) * peak
+# USE_ATR_STOP = True  : ATR-scaled Chandelier exit
+#     N_ATR_GRID is used; stop fires when price < peak - N * ATR
+#     ATR = rolling mean of |daily price change| over ATR_WINDOW bars
+#     Recommended N_ATR range for WIG: 3–6 (wider = more room to breathe)
+#     ATR_WINDOW: 20 matches VOL_WINDOW; increase to 40–60 for a slower ATR
+#
+# The bond walk-forward (Phase 3) uses a separate flag USE_ATR_STOP_BD
+# so equity and bond stops can be tuned independently.
+# Set USE_ATR_STOP_BD = USE_ATR_STOP to keep them in sync.
+#
+USE_ATR_STOP    = True          # Equity trailing stop mode
+ATR_WINDOW      = 20             # Rolling window for ATR estimate (days)
+N_ATR_GRID      = [3.0, 4.0, 5.0, 6.0, 7.0]   # Multiplier grid for IS search
+
+USE_ATR_STOP_BD = False          # Bond trailing stop mode (can differ from equity)
+ATR_WINDOW_BD   = 20
+N_ATR_GRID_BD   = [2.0, 3.0, 4.0, 5.0, 6.0]
 
 
 # --- Bond signal source ---
@@ -204,7 +225,7 @@ SL_YLD      = [0.05, 0.08, 0.10, 0.15]         # 4-5x wider than TBSP SL_BD
 RUN_MONTE_CARLO_PARAM_SINGLE = True # MC parameter robustness for single asset strategies
 ITERATIONS_MC_PARAM_SINGLE = 1000 # 1000 is the true test variant, 10 for smoke test
 
-RUN_BLOCK_BOOTSTRAP_SINGLE = False # Run bootstrap robustness test for single asset strategies
+RUN_BLOCK_BOOTSTRAP_SINGLE = True # Run bootstrap robustness test for single asset strategies
 ITERATIONS_BOOTSTRAP_SINGLE = 500 # 500 is the true test variant, 10 for smoke test
 # ATTENTION - # ~3-6h on 12-core machine — run overnight
 
@@ -442,8 +463,11 @@ wf_equity_eq, wf_results_eq, wf_trades_eq = walk_forward(
     sl_grid               = SL_EQ,
     mom_lookback_grid     = MOM_LB_EQ,
     n_jobs                = N_JOBS,
-    fast_mode=FAST_MODE
-)
+    fast_mode=FAST_MODE,         # (or fast_mode=True in daily runfile)
+    use_atr_stop          = USE_ATR_STOP,
+    N_atr_grid            = N_ATR_GRID if USE_ATR_STOP else None,
+    atr_window            = ATR_WINDOW,
+     )
 
 if wf_equity_eq.empty:
     logging.error("Equity walk-forward returned empty equity curve. Exiting.")
@@ -530,8 +554,11 @@ wf_equity_bd, wf_results_bd, wf_trades_bd = walk_forward(
     mom_lookback_grid     = [252],                  # not used (filter_mode=ma)
     n_jobs                = N_JOBS,
     entry_gate_series     = bond_entry_gate,
-        fast_mode=FAST_MODE
-)
+    fast_mode=FAST_MODE,         # (or fast_mode=True in daily runfile)
+    use_atr_stop          = USE_ATR_STOP_BD,
+    N_atr_grid            = N_ATR_GRID_BD if USE_ATR_STOP_BD else None,
+    atr_window            = ATR_WINDOW_BD,
+    )
 
 if wf_equity_bd.empty:
     logging.error("Bond walk-forward returned empty equity curve. Exiting.")
@@ -860,8 +887,11 @@ if RUN_BLOCK_BOOTSTRAP_SINGLE:
         slow_grid             = SLOW_EQ,
         tv_grid               = TV_EQ,
         sl_grid               = SL_EQ,
-        mom_lookback_grid     = MOM_LB_EQ,   # fix — currently missing from call
-    )
+        mom_lookback_grid     = MOM_LB_EQ,
+        use_atr_stop          = USE_ATR_STOP,
+        N_atr_grid            = N_ATR_GRID if USE_ATR_STOP else None,
+        atr_window            = ATR_WINDOW,
+        )
 
     baseline_eq = compute_metrics(wf_equity_eq)
     analyze_bootstrap(bb_results_eq, baseline_eq, thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
@@ -892,9 +922,11 @@ if RUN_BLOCK_BOOTSTRAP_SINGLE:
         slow_grid             = SLOW_BD,
         tv_grid               = TV_BD,
         sl_grid               = SL_BD,
-        mom_lookback_grid     = [252],                  # not used (filter_mode=ma)
-        
-    )
+        mom_lookback_grid     = [252],
+        use_atr_stop          = USE_ATR_STOP_BD,
+        N_atr_grid            = N_ATR_GRID_BD if USE_ATR_STOP_BD else None,
+        atr_window            = ATR_WINDOW_BD,
+        )
 
     baseline_bd = compute_metrics(wf_equity_bd)
     analyze_bootstrap(bb_results_bd, baseline_bd,thresholds=BOND_THRESHOLDS_BOOTSTRAP)

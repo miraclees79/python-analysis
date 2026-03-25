@@ -105,8 +105,8 @@ FORCE_FILTER_MODE =  ["ma","mom"]
 # options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
 RUN_MONTE_CARLO = True # MC parameter robustness
 RUN_BLOCK_BOOTSTRAP = True # Run bootstrap robustness test
-TRAIN_YEARS_EQ = 6
-TEST_YEARS_EQ = 2
+TRAIN_YEARS_EQ = 8
+TEST_YEARS_EQ = 1
 
 
 # OBJECTIVE FUNCTION
@@ -243,7 +243,7 @@ elif INDEX_CHOICE=="MSCI World":
     MSCIW = build_and_upload(
         folder_id         = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()  
                              or GDRIVE_FOLDER_ID_DEFAULT.strip()),
-        raw_filename      = "msci_world_wsj_raw.csv",
+        raw_filename      = "msci_world_synthetic.csv",
         combined_filename = "msci_world_combined.csv",
         extension_ticker  = "URTH",
         )

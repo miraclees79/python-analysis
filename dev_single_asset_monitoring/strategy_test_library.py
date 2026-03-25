@@ -167,6 +167,25 @@ def load_csv(filename):
 def download_fund_navs(fund_codes, tmp_dir):
     """
     Download fund NAV series from stooq.pl and build the FUND_FILES dict.
+
+    Each fund is identified by a four-digit stooq code. The URL pattern
+    is https://stooq.pl/q/d/l/?s={code}.n&i=d — the same format used
+    for the money market fund (2720.n).
+
+    Successfully downloaded funds are added to FUND_FILES. Failed
+    downloads are logged and skipped — the caller should check that
+    the returned dict has enough entries before passing to build_funds_df.
+
+    Parameters
+    ----------
+    fund_codes : dict[str, str] — mapping of four-digit stooq code to
+                 human-readable fund name, e.g. {"1234": "PKO_Akcji"}
+    tmp_dir    : str            — directory for temporary CSV files
+
+    Returns
+    -------
+    dict[str, str] — mapping of fund name to local CSV filepath,
+                     suitable for passing directly to build_funds_df.
     """
 
     BASE_URL = "https://stooq.pl/q/d/l/?s={code}.n&i=d"
@@ -200,9 +219,36 @@ def download_fund_navs(fund_codes, tmp_dir):
 def build_funds_df(fund_files, price_col="Zamkniecie", min_history_years=10):
     """
     Build a combined fund NAV panel from a list of CSV files.
+
+    Each file is loaded via load_csv and the closing price column is
+    extracted and renamed to the fund identifier. Files that fail to
+    load, lack the price column, or have insufficient history are
+    skipped with a warning.
+
+    The panel is constructed as an outer join so no dates are dropped
+    if funds have slightly different trading calendars. Missing values
+    are forward-filled (fund NAV not published on a given day) and then
+    any remaining leading NaNs are dropped.
+
+    Funds with excessive missing data after forward-fill (more than
+    max_gap_days consecutive NaNs at any point) are excluded — this
+    catches funds that were suspended or had long reporting gaps.
+
+    Parameters
+    ----------
+    fund_files       : dict[str, str] — mapping of fund identifier to
+                       CSV filepath, e.g. {"fund_A": "C:/tmp/fund_a.csv"}
+    price_col        : str            — column name for NAV/closing price
+    min_history_years: int            — exclude funds with fewer than this
+                       many years of data (default 10)
+
+    Returns
+    -------
+    pd.DataFrame — date-indexed panel, one column per fund, forward-filled.
+                   Returns empty DataFrame if fewer than 2 funds loaded.
     """
 
-    MAX_GAP_DAYS = 30
+    MAX_GAP_DAYS = 30   # fund suspended or data missing — exclude
 
     series_list = []
     excluded    = []
@@ -227,6 +273,7 @@ def build_funds_df(fund_files, price_col="Zamkniecie", min_history_years=10):
         series = df[price_col].copy()
         series.name = fund_id
 
+        # Check minimum history
         years = (series.index.max() - series.index.min()).days / 365.25
         if years < min_history_years:
             logging.warning(
@@ -252,12 +299,19 @@ def build_funds_df(fund_files, price_col="Zamkniecie", min_history_years=10):
         )
         return pd.DataFrame()
 
+    # Outer join — preserves all dates across funds
     funds_df = pd.concat(series_list, axis=1, join="outer", sort=True)
     funds_df.sort_index(inplace=True)
+
+    # Forward-fill NAV gaps (weekends, holidays, reporting lags)
     funds_df = funds_df.ffill()
 
+    # Check for excessive gaps after forward-fill
+    # (remaining NaNs are leading NaNs before fund inception)
     for fund_id in funds_df.columns:
         col = funds_df[fund_id]
+        # Find longest consecutive NaN run in the interior of the series
+        # (exclude leading NaNs which are handled by dropna below)
         first_valid = col.first_valid_index()
         if first_valid is None:
             logging.warning(
@@ -281,6 +335,8 @@ def build_funds_df(fund_files, price_col="Zamkniecie", min_history_years=10):
             funds_df.drop(columns=[fund_id], inplace=True)
             excluded.append((fund_id, f"gap of {int(max_gap)} days"))
 
+    # Drop leading rows where fewer than half the funds have data
+    # This avoids a sparse panel at the start where few funds existed
     min_funds_required = max(2, len(funds_df.columns) // 2)
     funds_df = funds_df.dropna(thresh=min_funds_required)
 
@@ -306,10 +362,34 @@ def build_funds_df(fund_files, price_col="Zamkniecie", min_history_years=10):
 
 
 def prepare_cash_returns(cash_df, price_col="Zamkniecie"):
+    
+    """
+    Compute daily returns from a money market or bond fund price series.
+
+    The resulting 'cash_ret' column is used in run_strategy_with_trades
+    to credit the out-of-market portion of capital with a realistic
+    return rather than assuming zero. This avoids overstating the
+    opportunity cost of being flat.
+
+    Parameters
+    ----------
+    cash_df   : DataFrame — price series with a date index
+    price_col : str       — column containing the NAV/price
+    
+    Returns
+    -------
+    DataFrame with a single column 'cash_ret', indexed by date.
+    """
+    
+    
     cash = cash_df.copy()
+
     cash["cash_price"] = cash[price_col]
+
     cash["cash_ret"] = cash["cash_price"].pct_change()
+
     cash = cash[["cash_ret"]].dropna()
+
     return cash
 
 
@@ -317,8 +397,31 @@ def prepare_cash_returns(cash_df, price_col="Zamkniecie"):
 # Indicators
 # ============================
 
+
+
 def compute_momentum(series, lookback=252, skip=21):
+
+    """
+    Compute a 12-month momentum signal with a 1-month skip.
+
+    Returns the ratio of price 'skip' days ago to price 'lookback'
+    days ago, minus 1. The skip avoids the well-documented short-term
+    reversal effect that would otherwise contaminate a pure momentum
+    signal.
+
+    All values are shifted (lagged) so that the signal on any given
+    day uses only information available before that day's open.
+
+    Parameters
+    ----------
+    series   : pd.Series — price series
+    lookback : int       — total lookback in trading days (default 252 = 1 year)
+    skip     : int       — recent period to exclude (default 21 = 1 month)
+    """
+
     return series.shift(skip) / series.shift(lookback) - 1
+
+
 
 
 # ============================
@@ -326,26 +429,44 @@ def compute_momentum(series, lookback=252, skip=21):
 # ============================
 
 def compute_fund_breadth_signal(
-    funds_df,
-    lookback_days=30,
-    n_top=2,
-    entry_roll_thresh=0.03,
-    entry_since_thresh=0.05,
-    exit_roll_thresh=-0.03,
-    exit_since_thresh=-0.05,
+    funds_df,           # DataFrame: date index, one column per fund NAV
+    lookback_days=30,   # B / E — rolling window for return calculation
+    n_top=2,            # number of best/worst funds to consider
+    entry_roll_thresh=0.03,    # A — min return over lookback_days to trigger entry
+    entry_since_thresh=0.05,   # C — min return since last signal change for entry
+    exit_roll_thresh=-0.03,    # D — max return over lookback_days to trigger exit
+    exit_since_thresh=-0.05,   # F — max return since last signal change for exit
 ):
     """
     Compute a binary IN/OUT signal from a panel of fund NAV series.
+
+    Entry (OUT -> IN) triggered if EITHER:
+      - The mean return of the top n_top funds over the last lookback_days
+        exceeds entry_roll_thresh
+      - The mean return of the top n_top funds since the last signal change
+        exceeds entry_since_thresh
+
+    Exit (IN -> OUT) triggered if EITHER:
+      - The mean return of the bottom n_top funds over the last lookback_days
+        is below exit_roll_thresh
+      - The mean return of the bottom n_top funds since the last signal change
+        is below exit_since_thresh
+
+    Returns
+    -------
+    pd.Series of 1 (IN) / 0 (OUT), indexed by date
     """
 
+    # Daily returns for all funds
     fund_rets = funds_df.pct_change()
 
+    # Rolling return over lookback_days for each fund
     roll_ret = (1 + fund_rets).rolling(lookback_days).apply(
         np.prod, raw=True
     ) - 1
 
     signal   = pd.Series(0, index=funds_df.index)
-    state    = 0
+    state    = 0       # 0 = OUT, 1 = IN
     last_change_idx = funds_df.index[0]
 
     for i, date in enumerate(funds_df.index):
@@ -360,14 +481,20 @@ def compute_fund_breadth_signal(
             signal.iloc[i] = state
             continue
 
+        # "Since last signal change" returns
+        # Use last available value on or before last_change_idx
+        # to handle cases where that date is not in the fund index
         ref_prices = funds_df.loc[:last_change_idx].iloc[-1]
         curr_prices = funds_df.loc[date]
 
         since_rets = (curr_prices / ref_prices - 1).dropna()
 
+        # Only rank funds that have valid data in BOTH rolling
+        # and since-last-change calculations — take intersection
         common_funds = todays_roll.index.intersection(since_rets.index)
 
         if len(common_funds) < n_top:
+            # Not enough funds with complete data — hold current state
             signal.iloc[i] = state
             continue
 
@@ -380,7 +507,7 @@ def compute_fund_breadth_signal(
         top_since    = since_rets.loc[top_funds.index]
         bottom_since = since_rets.loc[bottom_funds.index]
 
-        if state == 0:
+        if state == 0:   # currently OUT — look for entry
             roll_condition  = top_funds.mean()  >= entry_roll_thresh
             since_condition = top_since.mean()  >= entry_since_thresh
 
@@ -388,7 +515,7 @@ def compute_fund_breadth_signal(
                 state = 1
                 last_change_idx = date
 
-        elif state == 1:
+        elif state == 1:   # currently IN — look for exit
             roll_condition  = bottom_funds.mean()  <= exit_roll_thresh
             since_condition = bottom_since.mean()  <= exit_since_thresh
 
@@ -407,6 +534,27 @@ def compute_fund_breadth_signal(
 def compute_metrics(equity, 
                     risk_free_rate=0, 
                     freq=252):
+
+    """
+    Compute standard performance metrics from an equity curve.
+
+    Metrics returned:
+      CAGR   — compound annual growth rate
+      Vol    — annualised volatility of daily returns
+      Sharpe — CAGR divided by Vol (simplified, no risk-free rate)
+      MaxDD  — maximum peak-to-trough drawdown (negative value)
+      CalMAR — CAGR divided by absolute MaxDD
+
+    Note: Sharpe here uses CAGR as the return numerator rather than
+    mean daily return * freq. This is consistent across the codebase
+    but differs slightly from the textbook definition.
+
+    Parameters
+    ----------
+    equity : pd.Series — equity curve (should start at 1.0)
+    freq   : int       — trading days per year for annualisation
+    """
+
     ret = equity.pct_change().dropna()
 
     years = len(ret) / freq
@@ -416,6 +564,9 @@ def compute_metrics(equity,
     excess_return = cagr - risk_free_rate
     sharpe = excess_return / vol if vol > 0 else 0.0
     
+    
+    # Sortino — penalises downside volatility only
+    # Downside returns = daily returns below the daily risk-free rate
     daily_rf   = (1 + risk_free_rate) ** (1 / 252) - 1
     daily_rets = equity.pct_change().dropna()
     downside   = daily_rets[daily_rets < daily_rf] - daily_rf
@@ -425,6 +576,8 @@ def compute_metrics(equity,
         downside_vol = 0.0
     sortino = excess_return / downside_vol if downside_vol > 0 else 0.0
 
+    
+    
     cummax = equity.cummax()
     drawdown = equity / cummax - 1
     max_dd = drawdown.min()
@@ -444,42 +597,48 @@ def compute_metrics(equity,
 # ============================================================
 
 
-def neighbour_mean(key, scores, stop_grid, Y_grid):
+def neighbour_mean(key, scores, X_grid, Y_grid):
+
     """
     Compute the mean score of neighbouring parameter sets for a given key.
 
-    Neighbours vary by one step in the stop dimension (X or N_atr depending
-    on stop mode) or the Y dimension, holding all other parameters fixed.
+    Used during walk-forward grid search to penalise parameter sets that
+    sit in a narrow performance spike rather than a broad plateau.
+    A strategy that is only optimal for very specific X/Y values is more
+    likely to be overfit than one that performs well across a range.
+
+    Neighbours are defined as all parameter sets that differ by at most
+    one step in the X or Y dimension, holding fast/slow/tv/stop_loss
+    fixed. The grids must be passed explicitly to guarantee they match
+    the grids used in the search loop — this prevents silent bugs if the
+    search grid is changed without updating this function.
 
     Parameters
     ----------
-    key       : tuple        — (filter_mode, fund_idx, stop_param, Y, fast,
-                               slow, tv, stop_loss, mom_lookback)
-    scores    : dict         — maps parameter tuples to objective scores
-    stop_grid : list[float]  — ordered list of values for the stop parameter
-                               in position 2 of the key (X_grid in fixed mode,
-                               N_atr_grid in ATR mode)
-    Y_grid    : list[float]  — ordered list of Y values used in the search
+    key    : tuple        — (filter_mode, fund_paras, X, Y, fast, slow, tv, stop_loss)
+    scores : dict         — maps parameter tuples to CalMAR scores
+    X_grid : list[float]  — ordered list of X values used in the search
+    Y_grid : list[float]  — ordered list of Y values used in the search
 
     Returns
     -------
-    float — mean score of all neighbours including the key itself, or the
-            key's own score if no neighbours exist in scores.
+    float — mean CalMAR of all neighbours including the key itself,
+            or the key's own score if no neighbours exist in scores.
     """
 
-    filter_mode, fund_idx, stop_param, Y, fast, slow, tv, sl, mom_lookback = key
 
-    # Find index of current stop_param and Y in their grids
-    si = min(range(len(stop_grid)), key=lambda i: abs(stop_grid[i] - stop_param))
-    yi = min(range(len(Y_grid)),    key=lambda i: abs(Y_grid[i] - Y))
+    filter_mode, fund_idx, X, Y, fast, slow, tv, sl, mom_lookback = key
+
+    xi = min(range(len(X_grid)), key=lambda i: abs(X_grid[i] - X))
+    yi = min(range(len(Y_grid)), key=lambda i: abs(Y_grid[i] - Y))
 
     neighbours = []
-    for ds in [-1, 0, 1]:
+    for dx in [-1, 0, 1]:
         for dy in [-1, 0, 1]:
-            nsi, nyi = si + ds, yi + dy
-            if 0 <= nsi < len(stop_grid) and 0 <= nyi < len(Y_grid):
+            nxi, nyi = xi + dx, yi + dy
+            if 0 <= nxi < len(X_grid) and 0 <= nyi < len(Y_grid):
                 nkey = (filter_mode, fund_idx,
-                        stop_grid[nsi], Y_grid[nyi],
+                        X_grid[nxi], Y_grid[nyi],
                         fast, slow, tv, sl, mom_lookback)
                 if nkey in scores:
                     neighbours.append(scores[nkey])
@@ -487,6 +646,31 @@ def neighbour_mean(key, scores, stop_grid, Y_grid):
     return np.mean(neighbours) if neighbours else scores[key]
 
 def calc_position(vol, position_mode, target_vol, max_leverage):
+
+    """
+    Compute the position size (fraction of capital to allocate).
+
+    Three modes are supported:
+
+      'full'        — always fully invested (position = 1.0).
+                      Volatility targeting is ignored.
+
+      'vol_entry'   — position sized at entry using volatility targeting:
+                      position = target_vol / realised_vol, capped at
+                      max_leverage. Size is fixed for the life of the trade.
+
+      'vol_dynamic' — same formula as vol_entry but recomputed daily.
+                      Rebalancing only occurs if the new size differs from
+                      the current size by more than 10 percentage points,
+                      to reduce unnecessary turnover.
+
+    Parameters
+    ----------
+    vol           : float — annualised realised volatility (rolling window)
+    position_mode : str   — one of 'full', 'vol_entry', 'vol_dynamic'
+    target_vol    : float — desired annualised portfolio volatility
+    max_leverage  : float — upper bound on position size (1.0 = no leverage)
+    """
     if position_mode == "full":
         return 1.0
     if pd.notna(vol) and vol > 0:
@@ -500,7 +684,12 @@ def calc_position(vol, position_mode, target_vol, max_leverage):
 # Buy & Hold for comparison
 # ============================
 
+
 def compute_buy_and_hold(df, price_col="Zamkniecie", start=None, end=None):
+    """
+    Compute buy-and-hold equity curve and metrics over the OOS period.
+    Normalised to start at 1.0 to match the stitched OOS equity curve.
+    """
     bh = df[price_col].copy()
     
     if start is not None:
@@ -508,7 +697,7 @@ def compute_buy_and_hold(df, price_col="Zamkniecie", start=None, end=None):
     if end is not None:
         bh = bh.loc[bh.index <= end]
     
-    bh_equity = bh / bh.iloc[0]
+    bh_equity = bh / bh.iloc[0]   # normalise to 1.0
     bh_metrics = compute_metrics(bh_equity)
     
     return bh_equity, {k: float(v) for k, v in bh_metrics.items()}
@@ -520,7 +709,7 @@ def compute_buy_and_hold(df, price_col="Zamkniecie", start=None, end=None):
 def run_strategy_with_trades(
     df,
     price_col="price",
-    X=0.1,
+        X=0.1,
     Y=0.1,
     stop_loss=0.1,
     fast=50,
@@ -530,51 +719,128 @@ def run_strategy_with_trades(
     max_leverage=1.0,
     position_mode="vol_entry",
     use_momentum=False,
-    mom_lookback=252,
+    mom_lookback=252,       # ADD: 252 for 12M momentum, 126 for 6M momentum
     cash_df=None,
     safe_rate=0.0,
-    initial_state=None,
-    warmup_df=None,
-    fund_signal=None,
-    entry_gate=None,
-    # -------------------------------------------------------
-    # ATR trailing stop parameters
-    # -------------------------------------------------------
-    use_atr_stop=False,   # False = fixed % (X), True = ATR-scaled (N_atr)
-    N_atr=3.0,            # ATR multiplier for trailing stop (used when use_atr_stop=True)
-    atr_window=20,        # Rolling window for close-only ATR estimate (days)
-    # -------------------------------------------------------
-    fast_mode=True,
+    initial_state=None,       # NEW: accept carry-over state from prior window,
+    warmup_df=None,    # NEW: pre-window data for indicator warm-up
+    fund_signal=None,   # NEW: precomputed pd.Series from compute_fund_breadth_signal
+    entry_gate=None,        # ADD — pre-sliced gate for this training window
+    fast_mode=True,    # NEW: True = numpy array access (~3-5x faster loop)
+                        #      False = original iterrows (stable default)
 ):
+
+
     """
     Run the trend-following strategy on a single price series and return
     the equity curve, performance metrics, and trade log.
 
-    TRAILING STOP MODES
-    -------------------
-    use_atr_stop=False (default, backward-compatible):
-        stop_level = (1 - X) * M
-        X is the fixed fraction below the running peak. Identical to the
-        original implementation. X is searched over X_grid in walk_forward.
+    ---------------------------------------------------------------
+    STRATEGY LOGIC
+    ---------------------------------------------------------------
+    The strategy is a breakout/trend filter system. It enters long
+    when two conditions are simultaneously met:
 
-    use_atr_stop=True (ATR-scaled Chandelier exit):
-        stop_level = M - N_atr * ATR
-        ATR is the rolling mean of |close_t - close_{t-1}| over atr_window
-        bars, expressed in price units (close-only ATR). The stop distance
-        adapts to the current volatility regime: wider during high-vol
-        periods to avoid whipsaws, tighter during low-vol periods to lock
-        in gains faster. N_atr is searched over N_atr_grid in walk_forward.
+      Breakout  : price rises more than Y% above the running minimum
+                  since the last exit (or start of data).
+      Filter    : the fast moving average is above the slow moving
+                  average (golden cross), AND momentum > 0 if enabled.
 
-    The absolute stop (stop_loss, ABSOLUTE_STOP exit) is always a fixed
-    fraction below entry price regardless of ATR mode — it is a backstop
-    for gap-down events and is not made volatility-adaptive.
+    It exits on the first of three conditions:
 
-    All other parameters and the carry-state mechanism are unchanged.
+      TRAIL_STOP    : price falls more than X% below the running maximum
+                      since entry.
+      ABSOLUTE_STOP : price falls more than stop_loss% below entry price.
+                      This limits the nominal loss on any single trade
+                      independently of the trailing stop.
+      FILTER_EXIT   : the trend/momentum filter turns off.
+
+    When flat, capital earns the cash return (money market fund or
+    safe_rate). When invested, the position fraction earns the index
+    return and (1 - position) earns cash.
+
+    ---------------------------------------------------------------
+    WARMUP MECHANISM
+    ---------------------------------------------------------------
+    If warmup_df is provided, it is prepended to df before computing
+    indicators. Warmup rows are tagged with _warmup=True and are used
+    solely to initialise the rolling windows (MA, vol, momentum).
+    During the main loop, warmup rows update the equity curve but
+    suppress all entry/exit logic. After the loop, warmup rows are
+    stripped from the output so the returned equity curve covers only
+    the actual test period.
+
+    This eliminates the data gaps that would otherwise appear at the
+    start of each walk-forward test window due to rolling window
+    initialisation consuming the first slow+vol_window bars.
+
+    ---------------------------------------------------------------
+    CARRY STATE MECHANISM
+    ---------------------------------------------------------------
+    If initial_state is provided, the strategy resumes an open position
+    carried over from the previous walk-forward window. The position
+    size, entry price, entry date, running maximum (M), running minimum
+    (m), and cross-window flag are all restored from initial_state.
+
+    At the end of the window, if a position is still open, end_state
+    is returned containing the current position details. The caller
+    (walk_forward) passes this into the next window's initial_state,
+    ensuring seamless position continuity across window boundaries.
+
+    Positions that span window boundaries are marked CrossWindow=True
+    in the trade log. CARRY records (window-boundary snapshots of open
+    positions) are written to the trade log for completeness but should
+    be excluded from trade statistics — they are not real exits.
+
+    ---------------------------------------------------------------
+    EQUITY RENORMALISATION
+    ---------------------------------------------------------------
+    The equity curve is renormalised to start at 1.0 at the first test
+    row (after warmup stripping). This is necessary for correct chain-
+    linking in walk_forward, which assumes each window's equity slice
+    begins at 1.0 and scales it to continue from the previous window's
+    endpoint. Warmup-period P&L on carried positions is excluded from
+    the OOS equity curve because warmup rows cover training-period dates,
+    not OOS dates.
+
+    ---------------------------------------------------------------
+    PARAMETERS
+    ---------------------------------------------------------------
+    df            : DataFrame  — price series for the test period
+    price_col     : str        — column name containing prices
+    X             : float      — trailing stop threshold from peak (e.g. 0.10 = 10%)
+    Y             : float      — breakout threshold from trough (e.g. 0.10 = 10%)
+    stop_loss     : float      — absolute stop from entry price
+    fast          : int        — fast MA window (bars)
+    slow          : int        — slow MA window (bars)
+    vol_window    : int        — rolling window for volatility estimate (bars)
+    target_vol    : float      — target annualised volatility for position sizing
+    max_leverage  : float      — maximum allowed position size (1.0 = no leverage)
+    position_mode : str        — 'full', 'vol_entry', or 'vol_dynamic'
+    use_momentum  : bool       — whether use momentum as the filter or MA cross
+    cash_df       : DataFrame  — money market fund price series (optional)
+    safe_rate     : float      — fallback annual cash rate if cash_df is None
+    initial_state : dict|None  — carry-over position state from prior window
+    warmup_df     : DataFrame|None — price rows to prepend for indicator warm-up
+    fund_signal   : DataFrame  - series of signals computed from fund panel
+
+    ---------------------------------------------------------------
+    RETURNS
+    ---------------------------------------------------------------
+    df         : DataFrame  — test-period data with equity curve appended
+    metrics    : dict       — CAGR, Vol, Sharpe, MaxDD, CalMAR
+    trades_df  : DataFrame  — trade log including CARRY boundary records
+    end_state  : dict|None  — open position state to carry into next window,
+                              or None if flat at end of window
     """
+
 
     df = df.copy()
     df["price"] = df[price_col]
 
+
+    # If warmup data is provided, prepend it for indicator calculation
+    # but tag it so we can strip it from the equity curve after
     if warmup_df is not None:
         warmup = warmup_df.copy()
         warmup["price"] = warmup[price_col]
@@ -584,18 +850,22 @@ def run_strategy_with_trades(
     else:
         df["_warmup"] = False
     
+    # After df construction and warmup prepend (around line 850),
+    # align gate to df index:
     if entry_gate is not None:
         gate_aligned = entry_gate.reindex(df.index, method="ffill").fillna(1).astype(int)
     else:
         gate_aligned = None
     
-    test_start = df[~df["_warmup"]].index[0]
+    test_start = df[~df["_warmup"]].index[0]  # capture before stripping
 
     if cash_df is not None:
         cash = prepare_cash_returns(cash_df)
         df = df.merge(cash, left_index=True, right_index=True, how="left")
         if df["cash_ret"].isna().any():
             df["cash_ret"] = df["cash_ret"].ffill()
+            
+            
     else:
         df["cash_ret"] = safe_rate / 252
 
@@ -603,6 +873,8 @@ def run_strategy_with_trades(
         logging.info("Cash series missing — falling back to flat safe_rate")
         df["cash_ret"] = safe_rate / 252
 
+    # Compute risk-free rate from OOS cash returns only (exclude warmup)
+    # Used for Sharpe calculation — MMF CAGR over the relevant period
     oos_cash = df.loc[~df["_warmup"], "cash_ret"]
     if len(oos_cash) > 0 and oos_cash.notna().any():
         cumulative = (1 + oos_cash).prod()
@@ -611,6 +883,7 @@ def run_strategy_with_trades(
     else:
         rf_rate = safe_rate
 
+    # Merge fund breadth signal if provided
     if fund_signal is not None:
         df = df.merge(
             fund_signal.rename("fund_filter"),
@@ -620,7 +893,8 @@ def run_strategy_with_trades(
         )
         df["fund_filter"] = df["fund_filter"].ffill().fillna(0)
     else:
-        df["fund_filter"] = 1
+        df["fund_filter"] = 1   # always on if not provided
+        
         
     df["ret"] = df["price"].pct_change()
     vol = df["ret"].rolling(vol_window).std() * np.sqrt(252)
@@ -634,16 +908,7 @@ def run_strategy_with_trades(
     else:
         df["MOM"] = 1
 
-    # -------------------------------------------------------
-    # ATR series — rolling mean of |daily price change|
-    # Expressed in price units (PLN), shifted by 1 so today's
-    # stop uses yesterday's ATR estimate (no look-ahead).
-    # Computed regardless of use_atr_stop so it is available
-    # in the pre-extracted numpy arrays without branching.
-    # -------------------------------------------------------
-    df["atr"] = df["price"].diff().abs().rolling(atr_window).mean().shift(1)
-
-    df.dropna(inplace=True)
+    df.dropna(inplace=True) # dropna now hits warmup rows, not test rows
 
     # -----------------------
     # Initialise state
@@ -654,6 +919,7 @@ def run_strategy_with_trades(
     trades = []
 
     if initial_state is not None:
+        # Restore carry-over position from previous window
         position    = initial_state["position"]
         entry_price = initial_state["entry_price"]
         entry_date  = initial_state["entry_date"]
@@ -661,7 +927,7 @@ def run_strategy_with_trades(
         entry_pos   = initial_state["entry_pos"]
         M           = initial_state["M"]
         m           = initial_state["m"]
-        entry_carried = True
+        entry_carried = True    # this position was carried in from previous window
         rebal_count      = initial_state.get("rebal_count", 0)
         rebal_cost_total = initial_state.get("rebal_cost_total", 0.0)
     else:
@@ -676,6 +942,8 @@ def run_strategy_with_trades(
         rebal_count      = 0
         rebal_cost_total = 0.0    
     
+    
+    # Determine filter mode once before the loop
     if fund_signal is not None:
         filter_mode_active = "fund"
     elif use_momentum:
@@ -683,6 +951,9 @@ def run_strategy_with_trades(
     else:
         filter_mode_active = "ma"
 
+    # --- fast_mode: pre-extract numpy arrays for O(1) per-row access -------
+    # Only allocated when fast_mode=True. The slow-path (iterrows) is
+    # completely unchanged and never references these variables.
     if fast_mode:
         _prices    = df["price"].to_numpy()
         _rets      = df["ret"].to_numpy()
@@ -690,7 +961,6 @@ def run_strategy_with_trades(
         _trends    = df["trend"].to_numpy()
         _moms      = df["MOM"].to_numpy()
         _vols      = df["vol"].to_numpy()
-        _atrs      = df["atr"].to_numpy()   # ATR array — always extracted
         _warmups   = df["_warmup"].to_numpy(dtype=bool)
         _gate_vals = (
             gate_aligned.reindex(df.index).fillna(1).to_numpy().astype(int)
@@ -700,22 +970,30 @@ def run_strategy_with_trades(
             df["fund_filter"].to_numpy()
             if "fund_filter" in df.columns else None
         )
-        _index = df.index
+        _index = df.index    # DatetimeIndex — needed for trade date recording
+    # -------------------------------------------------------------------------
+
+    
+
+    # -----------------------
+    # Main loop — track warmup rows separately
+
+    
 
     if fast_mode:
         # ------------------------------------------------------------------
         # Fast path: integer loop over pre-extracted numpy arrays.
+        # Logic is identical to the slow path; only row access differs.
         # ------------------------------------------------------------------
         for _n in range(len(_prices)):
 
-            i        = _index[_n]
+            i        = _index[_n]           # Timestamp — for trade records
             price    = float(_prices[_n])
             ret      = float(_rets[_n])
             cash_ret = float(_cash_rets[_n])
             trend    = int(_trends[_n])
             mom      = float(_moms[_n])
             vol      = float(_vols[_n])
-            atr_val  = float(_atrs[_n])    # current ATR value in price units
 
             if filter_mode_active == "fund":
                 filter_on = bool(_fund_vals[_n]) if _fund_vals is not None else True
@@ -729,6 +1007,7 @@ def run_strategy_with_trades(
                 equity_curve.append(equity)
                 continue
 
+            # Update equity — standard daily P&L
             if position > 0:
                 equity *= (1 + position * ret + (1 - position) * cash_ret)
             else:
@@ -741,6 +1020,7 @@ def run_strategy_with_trades(
                 if dd < -stop_loss:
                     exit_reasons.append("ABSOLUTE_STOP")
 
+            # Dynamic volatility rebalancing with transaction cost
             if position > 0 and position_mode == "vol_dynamic":
                 new_pos = calc_position(vol, position_mode, target_vol, max_leverage)
                 size_change = abs(new_pos - position)
@@ -753,24 +1033,7 @@ def run_strategy_with_trades(
 
             if position > 0:
                 M = max(M, price) if M is not None else price
-                # -------------------------------------------------------
-                # TRAILING STOP — branch on stop mode
-                # -------------------------------------------------------
-                if use_atr_stop:
-                    # ATR-scaled Chandelier exit
-                    # stop_level = M - N_atr * ATR (price units)
-                    # Fall back to fixed-% stop if ATR is NaN (insufficient
-                    # history at start of window — treated as no stop breach)
-                    if np.isfinite(atr_val) and atr_val > 0:
-                        stop_level = M - N_atr * atr_val
-                        trail_breached = price < stop_level
-                    else:
-                        trail_breached = False
-                else:
-                    # Fixed percentage trailing stop (original behaviour)
-                    trail_breached = price < (1 - X) * M
-
-                if trail_breached:
+                if price < (1 - X) * M:
                     if "ABSOLUTE_STOP" not in exit_reasons:
                         exit_reasons.append("TRAIL_STOP")
                 elif not filter_on:
@@ -819,7 +1082,7 @@ def run_strategy_with_trades(
 
     else:
         # ------------------------------------------------------------------
-        # Slow path: original iterrows loop.
+        # Slow path: original iterrows loop — unchanged, stable, default.
         # ------------------------------------------------------------------
         for i, row in df.iterrows():
 
@@ -829,7 +1092,7 @@ def run_strategy_with_trades(
             trend    = row["trend"]
             mom      = row["MOM"]
             vol      = row["vol"]
-            atr_val  = row["atr"]    # current ATR value in price units
+
 
             if filter_mode_active == "fund":
                 filter_on = bool(row["fund_filter"])
@@ -838,11 +1101,13 @@ def run_strategy_with_trades(
             else:
                 filter_on = (trend == 1)
 
+
             is_warmup_row = row["_warmup"]
             if is_warmup_row:
                 equity_curve.append(equity)
                 continue
 
+            # Update equity — standard daily P&L
             if position > 0:
                 equity *= (1 + position * ret + (1 - position) * cash_ret)
             else:
@@ -855,6 +1120,7 @@ def run_strategy_with_trades(
                 if dd < -stop_loss:
                     exit_reasons.append("ABSOLUTE_STOP")
 
+            # Dynamic volatility rebalancing with transaction cost
             if position > 0 and position_mode == "vol_dynamic":
                 new_pos = calc_position(vol, position_mode, target_vol, max_leverage)
                 size_change = abs(new_pos - position)
@@ -862,25 +1128,15 @@ def run_strategy_with_trades(
                 if size_change > 0.1:
                     REBAL_COST = 0.0005
                     equity *= (1 - size_change * REBAL_COST)
+
                     position = new_pos
+
                     rebal_count  += 1
                     rebal_cost_total += size_change * REBAL_COST
 
             if position > 0:
                 M = max(M, price) if M is not None else price
-                # -------------------------------------------------------
-                # TRAILING STOP — branch on stop mode
-                # -------------------------------------------------------
-                if use_atr_stop:
-                    if np.isfinite(atr_val) and atr_val > 0:
-                        stop_level = M - N_atr * atr_val
-                        trail_breached = price < stop_level
-                    else:
-                        trail_breached = False
-                else:
-                    trail_breached = price < (1 - X) * M
-
-                if trail_breached:
+                if price < (1 - X) * M:
                     if "ABSOLUTE_STOP" not in exit_reasons:
                         exit_reasons.append("TRAIL_STOP")
                 elif not filter_on:
@@ -889,9 +1145,10 @@ def run_strategy_with_trades(
             exit_reason = " + ".join(exit_reasons) if exit_reasons else None
 
             if position > 0 and exit_reason:
-                COST = 0.0020
+                COST = 0.0020  # 20 bps
                 trade_ret = price / entry_price - 1 - COST
                 days = (i - entry_date).days
+                
                 
                 trades.append({
                     "EntryDate":    entry_date,
@@ -913,6 +1170,7 @@ def run_strategy_with_trades(
                 M           = None
                 m           = None
                 entry_pos   = None
+                entry_pos   = None
                 entry_carried = False
 
             if position == 0:
@@ -925,7 +1183,7 @@ def run_strategy_with_trades(
                     entry_date   = i
                     entry_pos    = position
                     M            = price
-                    entry_carried   = False
+                    entry_carried   = False   # new entry in this window, not carried
 
             equity_curve.append(equity)
     
@@ -938,6 +1196,16 @@ def run_strategy_with_trades(
             rebal_cost_total * 100,
             rebal_cost_total * 10000
             )
+    # -----------------------
+    # End of window — build end_state instead of force-exiting
+    # -----------------------
+
+    # If position is still open, do NOT force exit.
+    # Instead, package the current state so walk_forward can
+    # pass it into the next window's initial_state.
+    # We still record a provisional SAMPLE_END trade for the
+    # equity curve to be complete, but flag it so callers can
+    # exclude it from trade statistics.
 
     end_state = None
 
@@ -955,6 +1223,7 @@ def run_strategy_with_trades(
                 entry_date, test_start
                 )
         
+        # Mark as CARRY — not a real exit, just a window boundary
         trades.append({
             "EntryDate":    entry_date,
             "ExitDate":     last_date,
@@ -964,8 +1233,8 @@ def run_strategy_with_trades(
             "Return":       trade_ret,
             "Days":         days,
             "Entry Reason": entry_reason,
-            "Exit Reason":  "CARRY",
-            "CrossWindow":  entry_carried
+            "Exit Reason":  "CARRY",          # distinguish from SAMPLE_END
+            "CrossWindow":  entry_carried   # preserve flag for boundary record
         })
 
         end_state = {
@@ -976,19 +1245,27 @@ def run_strategy_with_trades(
             "entry_pos":    entry_pos,
             "M":            M,
             "m":            m,
-            "rebal_count":       rebal_count,
-            "rebal_cost_total":  rebal_cost_total
+            "rebal_count":       rebal_count,       # cumulative across windows
+            "rebal_cost_total":  rebal_cost_total   # cumulative across windows            
             }
 
-    df["equity"] = equity_curve
+    # Assign equity to full df (warmup + test rows) while lengths match
+    df["equity"] = equity_curve   # safe here — same length
+
+    # NOW strip warmup rows
     df = df[~df["_warmup"]].copy()
     df.drop(columns=["_warmup"], inplace=True)
     
     if "fund_filter" in df.columns:
         df.drop(columns=["fund_filter"], inplace=True)
         
+    # After strip, all remaining rows are test rows — just check directly
     if df.isnull().any().any():
         logging.warning("NaN values remain in test rows after dropna — check cash merge")
+    
+    # Renormalise equity so each window starts at 1.0
+    # (warmup period may have drifted equity away from 1.0
+    # if carry_state brought in an open position)
     
     first_val = df["equity"].iloc[0]
     if initial_state is not None and abs(first_val - 1.0) > 0.001:
@@ -999,7 +1276,9 @@ def run_strategy_with_trades(
     if first_val != 0:
             df["equity"] = df["equity"] / first_val
     
-    metrics = compute_metrics(df["equity"], risk_free_rate=rf_rate)
+            
+        
+    metrics = compute_metrics(df["equity"],risk_free_rate=rf_rate)
     metrics = {k: float(v) for k, v in metrics.items()}
     trades_df = pd.DataFrame(trades)
 
@@ -1014,22 +1293,110 @@ def run_strategy_with_trades(
 def evaluate_params(
     filter_mode, fund_idx, fund_params, X, Y, fast, slow, tv, stop_loss,
     train, cash_train, vol_window, selected_mode, funds_df, train_start, train_end,
-    objective="calmar",
+    objective="calmar",   # <-- new parameter, default preserves v0.1 behaviour,
     mom_lookback=252,
-    entry_gate=None,
-    fast_mode=True,
-    # ATR stop parameters
-    use_atr_stop=False,
-    N_atr=3.0,
-    atr_window=20,
+    entry_gate=None,        # ADD — pre-sliced gate for this training window       
+    fast_mode=True,    # ADD
 ):
     """
     Evaluate a single parameter combination on the training window.
 
-    When use_atr_stop=True, X is not used by run_strategy_with_trades
-    (N_atr is used instead). X is still passed as part of the key tuple
-    in position 2, but in ATR mode walk_forward substitutes N_atr values
-    from N_atr_grid into that position so the key structure is consistent.
+    This function is the unit of work dispatched to each parallel worker
+    by joblib.Parallel during the walk-forward grid search. It is designed
+    to be fully self-contained — it carries all required inputs as arguments
+    and has no dependency on shared mutable state, making it safe to run
+    concurrently across multiple processes or threads.
+
+    ---------------------------------------------------------------
+    FILTER MODES
+    ---------------------------------------------------------------
+    The function handles all three filter modes transparently:
+
+      'ma'   — MA cross filter. fast/slow MA parameters are used.
+               fund_signal is None.
+
+      'mom'  — Momentum filter. fast/slow are dummy values (ignored
+               inside run_strategy_with_trades when use_momentum=True).
+               fund_signal is None.
+
+      'fund' — Fund breadth filter. The fund signal is computed from
+               scratch over the training window using fund_params.
+               fast/slow are dummy values, ignored by the strategy
+               engine since fund_signal takes precedence over both
+               MA cross and momentum when provided.
+
+    ---------------------------------------------------------------
+    FUND SIGNAL COMPUTATION
+    ---------------------------------------------------------------
+    When filter_mode='fund', compute_fund_breadth_signal is called
+    with the training-period slice of funds_df. The signal is
+    initialised to OUT (state=0) at the start of the training window.
+    No warmup is applied here — training runs are always clean starts
+    without carry state, so the cold-start bias at the beginning of
+    the training window is acceptable. Warmup is applied only for
+    OOS runs in walk_forward, where signal continuity matters.
+
+    ---------------------------------------------------------------
+    RETURN VALUE
+    ---------------------------------------------------------------
+    Returns a (key, calmar) tuple if the evaluation succeeds, or None
+    if run_strategy_with_trades returns no metrics or if MaxDD is zero
+    (which would cause division by zero in the CalMAR calculation).
+
+    None results are filtered out by the caller before building
+    param_scores — they represent parameter combinations that produced
+    degenerate results (e.g. no trades, flat equity) on the training
+    window and should be excluded from the stability-penalised selection.
+
+    The key tuple structure is:
+      (filter_mode, fund_idx, X, Y, fast, slow, tv, stop_loss)
+
+    fund_idx is an integer index into fund_params_grid (or None for
+    non-fund modes) rather than the params dict itself, ensuring the
+    key is hashable for use in param_scores.
+
+    ---------------------------------------------------------------
+    PARALLELISATION NOTES
+    ---------------------------------------------------------------
+    Called via joblib.Parallel with backend='loky' (multiprocessing)
+    or 'threading'. All arguments must be serialisable for loky.
+    DataFrames (train, cash_train, funds_df) are serialised via pickle
+    for each worker — for very large DataFrames this overhead can
+    reduce the parallelisation benefit. If serialisation becomes a
+    bottleneck, switch to backend='threading' which shares memory
+    directly but is subject to Python's GIL (largely released during
+    numpy/pandas operations).
+
+    ---------------------------------------------------------------
+    PARAMETERS
+    ---------------------------------------------------------------
+    filter_mode  : str          — 'ma', 'mom', or 'fund'
+    fund_idx     : int|None     — index into fund_params_grid, or None
+    fund_params  : dict|None    — parameters for compute_fund_breadth_signal,
+                                  or None for non-fund modes
+    X            : float        — trailing stop threshold from peak
+    Y            : float        — breakout threshold from trough
+    fast         : int          — fast MA window (bars)
+    slow         : int          — slow MA window (bars)
+    tv           : float        — target volatility for position sizing
+    stop_loss    : float        — absolute stop from entry price
+    train        : DataFrame    — training window price series
+    cash_train   : DataFrame    — training window cash/money market series
+    vol_window   : int          — rolling volatility window (bars)
+    selected_mode: str          — position mode ('full', 'vol_entry',
+                                  'vol_dynamic')
+    funds_df     : DataFrame|None — full fund NAV panel; sliced to
+                                  training window inside this function
+    train_start  : Timestamp    — start date of training window
+    train_end    : Timestamp    — end date of training window
+    objective    :  str         - sets objective function
+ 
+    ---------------------------------------------------------------
+    RETURNS
+    ---------------------------------------------------------------
+    tuple (key, obj_value) if evaluation succeeds, None otherwise.
+    key     : tuple — hashable parameter identifier for param_scores
+    calmar  : float — objective fctn val on the training window
     """
 
     use_mom = (filter_mode == "mom")
@@ -1057,10 +1424,7 @@ def evaluate_params(
         use_momentum=use_mom,
         mom_lookback=mom_lookback,    
         fund_signal=train_fund_signal,
-        fast_mode=fast_mode,
-        use_atr_stop=use_atr_stop,
-        N_atr=N_atr,
-        atr_window=atr_window,
+        fast_mode=fast_mode
     )
 
     if metrics is None:
@@ -1075,28 +1439,29 @@ def evaluate_params(
         if calmar is None:
             return None
         obj_value = calmar
+
     elif objective == "sharpe":
         obj_value = sharpe
+
     elif objective == "sortino":
         obj_value = sortino
+
     elif objective == "calmar_sharpe":
+        # Equal-weight blend — penalises both drawdown and vol-adjusted return
         if calmar is None:
             return None
         obj_value = 0.5 * calmar + 0.5 * sharpe
+
     elif objective == "calmar_sortino":
+        # Blend preferring downside-only vol penalty over symmetric Sharpe
         if calmar is None:
             return None
         obj_value = 0.5 * calmar + 0.5 * sortino
+
     else:
         raise ValueError(f"Unknown objective: {objective!r}")
 
-    # Key tuple: position 2 holds the stop parameter.
-    # In fixed mode: X (a fraction).
-    # In ATR mode:   N_atr (a multiplier).
-    # walk_forward uses the same convention when building param_combinations,
-    # so the key is consistent across both modes.
-    stop_key_val = N_atr if use_atr_stop else X
-    key = (filter_mode, fund_idx, stop_key_val, Y, fast, slow, tv, stop_loss, mom_lookback)
+    key = (filter_mode, fund_idx, X, Y, fast, slow, tv, stop_loss, mom_lookback)
     return key, obj_value
 
 
@@ -1108,10 +1473,11 @@ def walk_forward(
     train_years=8,
     test_years=2,
     vol_window  = 20,
-    funds_df=None,
-    fund_params_grid=None,
+    funds_df=None,          # NEW: panel of fund NAV series
+    fund_params_grid=None,    # NEW, # NEW: dict of params for compute_fund_breadth_signal
     selected_mode="full",
-    filter_modes_override=None,
+    filter_modes_override=None,    # NEW
+    #DEFAULT VALUES FOR GRIDS
     X_grid = [0.08, 0.10, 0.12, 0.15, 0.20],
     Y_grid = [0.02, 0.03, 0.05, 0.07, 0.10],
     fast_grid   = [50, 75, 100],
@@ -1121,65 +1487,183 @@ def walk_forward(
     mom_lookback_grid = [126, 252],    
     objective = "calmar",
     n_jobs=1,
-    entry_gate_series=None,
-    fast_mode=True,
-    # -------------------------------------------------------
-    # ATR trailing stop parameters
-    # -------------------------------------------------------
-    use_atr_stop=False,       # False = fixed % X, True = ATR-scaled N_atr
-    N_atr_grid=None,          # ATR multiplier grid; replaces X_grid when
-                              # use_atr_stop=True. Default: [2.0,3.0,4.0,5.0,6.0]
-    atr_window=20,            # Rolling window for ATR estimate (days)
+    entry_gate_series=None,   # NEW — pd.Series of 0/1, applied as entry gate
+    fast_mode=True
+    
 ):
+
     """
     Run a rolling walk-forward optimisation and return a stitched
     out-of-sample equity curve.
 
-    ATR STOP MODE
-    -------------
-    When use_atr_stop=True, the trailing stop parameter searched over is
-    N_atr (ATR multiplier) rather than X (fixed fraction). N_atr_grid
-    replaces X_grid in the parameter combinations loop. The key tuple
-    structure is unchanged — position 2 simply holds N_atr instead of X.
-    neighbour_mean receives N_atr_grid as the stop_grid argument.
+    ---------------------------------------------------------------
+    METHODOLOGY
+    ---------------------------------------------------------------
+    Walk-forward optimisation simulates live trading as faithfully as
+    possible by ensuring that no future information influences parameter
+    selection. Each iteration:
 
-    All other walk-forward mechanics (carry state, warmup, stability
-    penalty, OOS stitching) are identical to the fixed-stop mode.
+      1. TRAIN  : Run a grid search over all parameter combinations on
+                  the training window. Score each combination by objective function,
+                  then apply a stability penalty that blends the raw
+                  score with the mean score of neighbouring X/Y values.
+                  This prefers parameter sets on broad performance
+                  plateaus over narrow spikes, reducing overfitting.
 
-    Backward compatibility: use_atr_stop defaults to False. Existing
-    callers that do not pass ATR parameters are completely unaffected.
+      2. TEST   : Apply the best parameters to the OOS test window.
+                  Parameters are fixed before the test window opens —
+                  no peeking at test-period results.
+
+      3. STITCH : Chain-link the OOS equity slice to the previous
+                  slice so the combined curve compounds continuously.
+                  Each slice is renormalised to start at 1.0 and then
+                  scaled by the endpoint of the previous slice.
+
+      4. ADVANCE: Move the training start forward by test_years and
+                  repeat.
+
+    The final reported result is the stitched OOS equity curve. This
+    is the only honest performance measure — per-window metrics in
+    wf_results are useful for diagnosing parameter stability but
+    understate drawdowns that span window boundaries.
+
+    ---------------------------------------------------------------
+    PARAMETER GRIDS
+    ---------------------------------------------------------------
+    All search grids are defined once at the top of the function and
+    passed explicitly to neighbour_mean. This guarantees the stability
+    penalty always uses the same grid as the search loop — changing
+    one automatically changes the other.
+
+    When selected_mode='full', target_vol has no effect on position
+    sizing and is excluded from the search grid and best_params to
+    avoid misleading output.
+
+    ---------------------------------------------------------------
+    CARRY STATE
+    ---------------------------------------------------------------
+    Open positions are carried across window boundaries rather than
+    being force-closed. At the end of each OOS window, if a position
+    is open, its state (entry price, entry date, running max/min,
+    position size) is packaged into carry_state and passed into the
+    next window's initial_state. This avoids artificial stop-outs at
+    arbitrary calendar dates and produces a more realistic simulation
+    of how the strategy would actually be managed.
+
+    CARRY records in the trade log mark window-boundary snapshots of
+    open positions. They are excluded from trade statistics but retained
+    for transparency.
+
+    ---------------------------------------------------------------
+    LAST WINDOW EXTENSION
+    ---------------------------------------------------------------
+    If there is insufficient data for a further full test window after
+    the current one (fewer than test_years * 252 rows remaining), the
+    current test window is extended to the end of available data. This
+    prevents the final months of data from being silently ignored.
+
+    ---------------------------------------------------------------
+    WARMUP
+    ---------------------------------------------------------------
+    Each OOS run receives the last WARMUP_BARS rows of its training
+    window as warmup_df. WARMUP_BARS = slow + vol_window + 10 (padding),
+    using the best_params slow value for that window. This ensures
+    indicators are fully initialised at the start of each test window,
+    eliminating gaps in the stitched equity curve.
+    
+    ---------------------------------------------------------------
+    PARALLELISATION
+    ---------------------------------------------------------------
+    Grid search combinations are evaluated in parallel using
+    joblib.Parallel. The number of jobs is computed at call time
+    from os.cpu_count(): all cores are used on 2-core machines
+    (e.g. GitHub Actions), and cpu_count-1 cores are used on
+    machines with more than 2 cores, leaving one core free for
+    system processes.
+
+    The unit of parallel work is evaluate_params() — one call per
+    parameter combination. Each call is fully self-contained with
+    no shared mutable state, making it safe for concurrent execution.
+    The loky backend (multiprocessing) is used by default. If loky
+    fails (e.g. in Spyder/IPython environments on Windows), execution
+    falls back to sequential evaluation automatically.
+
+    Walk-forward windows are NOT parallelised — each window depends
+    on the carry_state from the previous window and must run
+    sequentially.
+    
+    Parallelisation uses a three-tier fallback:
+        1. loky (multiprocessing) — default, best isolation
+        2. threading — fallback if loky fails (e.g. Spyder/IPython)
+        3. sequential — final fallback, always succeeds
+        The successful backend is logged for each window.
+
+    ---------------------------------------------------------------
+    FUND BREADTH FILTER
+    ---------------------------------------------------------------
+    If funds_df and fund_params_grid are provided, a third filter
+    mode 'fund' is added to the grid search alongside 'ma' and 'mom'.
+    For fund filter combinations, compute_fund_breadth_signal is
+    called inside evaluate_params with the training-period slice of
+    funds_df. For the OOS run, the signal is computed over the
+    combined warmup+test period and warmup rows are stripped before
+    passing to run_strategy_with_trades, ensuring the signal state
+    is correctly initialised at the test window start.
+
+    fund_params_grid entries are referenced by integer index in the
+    parameter key tuple rather than by dict value, ensuring keys
+    remain hashable for use in param_scores.
+    ---------------------------------------------------------------
+    PARAMETERS
+    ---------------------------------------------------------------
+    df            : DataFrame — full price series covering all windows
+    cash_df       : DataFrame — money market fund price series
+    train_years   : int       — length of each training window in years
+    test_years    : int       — length of each test window in years
+    vol_window    : int       — rolling volatility window passed to strategy
+    selected_mode : str       — position mode passed to strategy engine
+    
+    funds_df         : DataFrame|None — panel of fund NAV series, one column
+                                    per fund, date-indexed. None disables
+                                    the fund breadth filter mode.
+    fund_params_grid : list[dict]|None — list of parameter dicts passed to
+                                    compute_fund_breadth_signal during
+                                    grid search. None disables fund mode.
+    ---------------------------------------------------------------
+    RETURNS
+    ---------------------------------------------------------------
+    oos_equity    : pd.Series   — stitched chain-linked OOS equity curve
+    results_df    : pd.DataFrame — per-window params and OOS metrics
+    oos_trades_df : pd.DataFrame — all OOS trades concatenated with
+                                   WF_Window and CrossWindow columns
     """
 
-    # Resolve ATR grid default
-    if N_atr_grid is None:
-        N_atr_grid = [2.0, 3.0, 4.0, 5.0, 6.0]
 
-    # The stop grid for neighbour_mean: X_grid in fixed mode, N_atr_grid in ATR mode
-    stop_grid = N_atr_grid if use_atr_stop else X_grid
-
-    data_end = df.index.max()
+    
+    data_end          = df.index.max()   # capture once
     logging.info("walk_forward received data from %s to %s (%d rows)",
              df.index.min(), data_end, len(df))
+    
     logging.info("Objective function: %s", objective)
-    logging.info(
-        "Trailing stop mode: %s  (ATR window=%d)",
-        "ATR-scaled (Chandelier)" if use_atr_stop else "fixed percentage",
-        atr_window
-    )
 
+    
+
+    
     oos_equity_slices = []
     results           = []
     all_oos_trades    = []
 
     start       = df.index.min()
-    carry_state = None
+    carry_state = None          # state carried from previous OOS window
     
+    
+    # Override for diagnostic runs
     if filter_modes_override is not None:
         logging.info("filter_modes overridden to: %s", filter_modes_override)
 
     while True:
-        gate_train = None
-        gate_oos   = None
+        gate_train = None   # reset each iteration
+        gate_oos   = None   # reset each iteration
         train_start = start
         train_end   = train_start + pd.DateOffset(years=train_years)
         test_end    = train_end   + pd.DateOffset(years=test_years)
@@ -1194,6 +1678,7 @@ def walk_forward(
 
         test = df.loc[(df.index >= train_end) & (df.index < test_end)]
 
+        # --- DIAGNOSTIC: log every iteration ---
         logging.info(
             "Iteration: train=%s to %s (%d rows) | test=%s to %s (%d rows) | "
             "next_window_has_enough=%s | data_end=%s",
@@ -1211,40 +1696,43 @@ def walk_forward(
             (cash_df.index >= train_start) & (cash_df.index < train_end)
             ]
         
+        # Around line 1564, after cash_train is sliced:
         gate_train = None
         if entry_gate_series is not None:
             gate_train = entry_gate_series.reindex(
                 train.index, method="ffill"
                 ).fillna(1).astype(int)
-
         # -------------------------------------------------------
-        # Build parameter combinations
-        # In ATR mode: iterate over N_atr_grid instead of X_grid.
-        # The loop variable is named stop_val in both cases and placed
-        # at key position 2 — consistent with evaluate_params key tuple.
+        # Grid search — always runs WITHOUT carry state
         # -------------------------------------------------------
         param_scores = {}
 
+        # Determine which filter modes to search
+        # "ma"   — MA cross filter (fast/slow grid)
+        # "mom"  — momentum filter (fixed MA params, ignored)
+        # "fund" — fund breadth filter (fund_params_grid)
         filter_modes = ["ma", "mom"]
         if funds_df is not None:
             filter_modes.append("fund")
         
+        
+        # Override for diagnostic runs
         if filter_modes_override is not None:
             filter_modes = filter_modes_override
-
+            
+            
+        # Build list of all parameter combinations to evaluate
         param_combinations = []
 
         for filter_mode in filter_modes:
-            fast_iter     = fast_grid if filter_mode == "ma" else [50]
-            slow_iter     = slow_grid if filter_mode == "ma" else [200]
-            mom_lb_iter   = mom_lookback_grid if filter_mode == "mom" else [252]
-            fund_iter     = (list(enumerate(fund_params_grid))
-                             if filter_mode == "fund" else [(None, None)])
-            # Stop grid: N_atr_grid in ATR mode, X_grid in fixed mode
-            stop_iter     = N_atr_grid if use_atr_stop else X_grid
+            fast_iter = fast_grid if filter_mode == "ma" else [50]
+            slow_iter = slow_grid if filter_mode == "ma" else [200]
+            mom_lb_iter   = mom_lookback_grid if filter_mode == "mom" else [252]  # ADD
+            fund_iter = (list(enumerate(fund_params_grid))
+                         if filter_mode == "fund" else [(None, None)])
 
             for fund_idx, fund_params in fund_iter:
-                for stop_val in stop_iter:           # stop_val = N_atr or X
+                for X in X_grid:
                     for Y in Y_grid:
                         for fast in fast_iter:
                             for slow in slow_iter:
@@ -1252,80 +1740,73 @@ def walk_forward(
                                     continue
                                 for tv in tv_grid if selected_mode != "full" else [0.10]:
                                     for stop_loss in sl_grid:
-                                        # In fixed mode: stop_loss must be < X
-                                        # In ATR mode: no equivalent constraint
-                                        # (absolute stop fraction is independent
-                                        # of the ATR multiplier)
-                                        if not use_atr_stop and stop_loss >= stop_val:
+                                        if stop_loss >= X:
                                             continue
-                                        for mom_lookback in mom_lb_iter:
+                                        for mom_lookback in mom_lb_iter:    # ADD
                                             param_combinations.append((
                                                 filter_mode, fund_idx, fund_params,
-                                                stop_val, Y, fast, slow, tv,
-                                                stop_loss, mom_lookback
-                                            ))
+                                                X, Y, fast, slow, tv, stop_loss,mom_lookback 
+                                                ))
 
-        for backend, n_jobs_inner, label in [
+        # Evaluate all combinations in parallel
+        
+        for backend, n_jobs, label in [
                 ("loky",      n_jobs, "multiprocessing"),
                 ("threading", n_jobs, "threading"),
                 (None,        1,      "sequential"),
                 ]:
             try:
                 if backend is None:
+                    # Sequential fallback — plain list comprehension
                     results_list = [
                         evaluate_params(
                             filter_mode, fund_idx, fund_params,
-                            stop_val, Y, fast, slow, tv, stop_loss,
+                            X, Y, fast, slow, tv, stop_loss,
                             train, cash_train, vol_window, selected_mode,
-                            funds_df, train_start, train_end,
-                            objective=objective, mom_lookback=mom_lookback,
-                            entry_gate=gate_train,
+                            funds_df, train_start, train_end, objective=objective, mom_lookback=mom_lookback,
+                            entry_gate=gate_train,        # ADD
                             fast_mode=fast_mode,
-                            use_atr_stop=use_atr_stop,
-                            N_atr=stop_val,
-                            atr_window=atr_window,
                             )
                         for (filter_mode, fund_idx, fund_params,
-                             stop_val, Y, fast, slow, tv, stop_loss, mom_lookback)
+                             X, Y, fast, slow, tv, stop_loss, mom_lookback)
                         in param_combinations
                         ]
                 else:
-                    results_list = Parallel(n_jobs=n_jobs_inner, backend=backend)(
+                    results_list = Parallel(n_jobs=n_jobs, backend=backend)(
                         delayed(evaluate_params)(
                             filter_mode, fund_idx, fund_params,
-                            stop_val, Y, fast, slow, tv, stop_loss,
+                            X, Y, fast, slow, tv, stop_loss,
                             train, cash_train, vol_window, selected_mode,
-                            funds_df, train_start, train_end,
-                            objective=objective, mom_lookback=mom_lookback,
+                            funds_df, train_start, train_end, objective=objective, mom_lookback=mom_lookback,
                             entry_gate=gate_train, fast_mode=fast_mode,
-                            use_atr_stop=use_atr_stop,
-                            N_atr=stop_val,
-                            atr_window=atr_window,
                             )
                         for (filter_mode, fund_idx, fund_params,
-                             stop_val, Y, fast, slow, tv, stop_loss, mom_lookback)
+                             X, Y, fast, slow, tv, stop_loss, mom_lookback)
                         in param_combinations
                         )
 
                 logging.info(
                     "Grid search completed using %s backend (%d jobs).",
-                    label, n_jobs_inner
+                    label, n_jobs
                     )
-                break
+                break   # success — exit the fallback loop
 
             except Exception as e:
                 logging.warning(
                     "Grid search backend '%s' failed: %s — trying next option.",
                     label, e
                     )
-                results_list = None
+                results_list = None   # ensure next iteration starts clean
 
         if results_list is None:
-            logging.error("All grid search backends failed. Skipping window.")
+            logging.error(
+                "All grid search backends failed. Skipping window."
+                )
             start += pd.DateOffset(years=test_years)
             carry_state = None
             continue
             
+        # Collect results — filter out None (failed evaluations)
         param_scores = {
             key: score
             for result in results_list
@@ -1333,30 +1814,32 @@ def walk_forward(
             for key, score in [result]
         }
 
-        if not param_scores:
+        if not param_scores:   # <- correctly outside all for loops, inside while
             start += pd.DateOffset(years=test_years)
             carry_state = None
             continue
 
         # -------------------------------------------------------
         # Stability-penalised selection
-        # pass stop_grid (X_grid or N_atr_grid) to neighbour_mean
         # -------------------------------------------------------
-        best_score      = -np.inf
-        best_params     = None
-        best_raw_score  = -np.inf
+        # neighbour_mean only varies X and Y — filter_mode, fund_params,
+        # fast, slow, tv, stop_loss are all held fixed when finding neighbours
+        
+        best_score  = -np.inf
+        best_params = None
+        best_raw_score  = -np.inf   # raw objective — logged for transparency
         
         for key, raw_score in param_scores.items():
             same_mode_scores = {
                 k: v for k, v in param_scores.items()
-                if k[0] == key[0]
+                if k[0] == key[0]   # same filter_mode
                 }
-            stability = neighbour_mean(key, same_mode_scores, stop_grid, Y_grid)
+            stability = neighbour_mean(key, same_mode_scores, X_grid, Y_grid)
             combined  = 0.5 * raw_score + 0.5 * stability
             if combined > best_score:
-                best_score     = combined
+                best_score  = combined
                 best_raw_score = raw_score
-                fund_idx = key[1]
+                fund_idx = key[1]   # read from key, not loop variable
 
                 best_params = {
                     "filter_mode":  key[0],
@@ -1364,16 +1847,12 @@ def walk_forward(
                     "fund_params":  (fund_params_grid[fund_idx]
                                      if fund_idx is not None and fund_params_grid is not None
                                      else None),
-                    # key[2] is stop parameter: X in fixed mode, N_atr in ATR mode
-                    "X":            key[2] if not use_atr_stop else X_grid[0],
-                    "N_atr":        key[2] if use_atr_stop else N_atr_grid[0],
+                    "X":            key[2],
                     "Y":            key[3],
                     "fast":         key[4],
                     "slow":         key[5],
                     "stop_loss":    key[7],
-                    "mom_lookback": key[8],
-                    "use_atr_stop": use_atr_stop,
-                    "atr_window":   atr_window,
+                    "mom_lookback": key[8]
                 }
                 if selected_mode != "full":
                     best_params["target_vol"] = key[6]
@@ -1381,17 +1860,14 @@ def walk_forward(
         if best_params is None:
             break
         else:
-            stop_label = (f"N_atr={best_params['N_atr']:.1f}"
-                          if use_atr_stop else f"X={best_params['X']:.2f}")
             logging.info(
                 "Window %s: best raw_%s=%.4f | penalised_%s=%.4f | filter=%s | "
-                "%s Y=%.2f fast=%d slow=%d sl=%.2f tv=%s mom_lookback=%s",
+                "X=%.2f Y=%.2f fast=%d slow=%d sl=%.2f tv=%s mom_lookback=%s",
                 train_start.date(),
                 objective, best_raw_score,
                 objective, best_score,
                 best_params["filter_mode"],
-                stop_label,
-                best_params["Y"],
+                best_params["X"], best_params["Y"],
                 best_params["fast"], best_params["slow"],
                 best_params["stop_loss"],
                 best_params.get("target_vol", "N/A"),
@@ -1400,18 +1876,26 @@ def walk_forward(
         
         
         # -------------------------------------------------------
-        # OOS run — pass carry_state and ATR parameters
+        # OOS run — pass carry_state from previous window
         # -------------------------------------------------------
         
-        WARMUP_BARS = best_params["slow"] + vol_window + 10
+        WARMUP_BARS = best_params["slow"] + vol_window + 10 # 10 is padding
         warmup      = train.iloc[-WARMUP_BARS:]
         
+        
+        
+        # cash for OOS run must cover both warmup and test periods
+        
+        # Find the actual start date of the warmup slice directly
         warmup_start = warmup.index.min()
         cash_warmup_and_test = cash_df.loc[
             (cash_df.index >= warmup_start) &
             (cash_df.index < test_end)
             ]
         
+        
+        # In the OOS run section, after best_params selection:
+
         oos_fund_signal = None
         if best_params["filter_mode"] == "fund" and best_params["fund_params"] is not None:
             funds_warmup_and_test = funds_df.loc[
@@ -1422,21 +1906,18 @@ def walk_forward(
                 funds_warmup_and_test,
                 **best_params["fund_params"]
             )
+            # Strip warmup rows — state at test start inherits warmup computation
             oos_fund_signal = full_fund_signal.loc[
                 full_fund_signal.index >= train_end
             ]
+        # Before the run_strategy_with_trades call at line 1768,
+        # slice gate to warmup+test period:
             gate_oos = None
             if entry_gate_series is not None:
                 gate_oos = entry_gate_series.reindex(
                     test.index, method="ffill"
                     ).fillna(1).astype(int)
 
-        # Build kwargs for run_strategy_with_trades — exclude meta keys
-        _strategy_keys_to_exclude = {
-            "filter_mode", "fund_params", "fund_idx",
-            "use_momentum", "target_vol", "use_atr_stop",
-            "atr_window", "N_atr","mom_lookback"
-        }
 
         bt_oos, test_metrics, oos_trades, end_state = run_strategy_with_trades(
             test,
@@ -1446,16 +1927,13 @@ def walk_forward(
             vol_window=vol_window,
             initial_state=carry_state,
             warmup_df=warmup,
-            entry_gate=gate_oos if 'gate_oos' in dir() else None,
+            entry_gate=gate_oos,
             fund_signal=oos_fund_signal,
             fast_mode=fast_mode,
             use_momentum=(best_params["filter_mode"] == "mom"),
-            mom_lookback=best_params["mom_lookback"],
-            use_atr_stop=best_params["use_atr_stop"],
-            N_atr=best_params["N_atr"],
-            atr_window=best_params["atr_window"],
+            mom_lookback=best_params["mom_lookback"],    # ADD
             **{k: v for k, v in best_params.items()
-               if k not in _strategy_keys_to_exclude}
+               if k not in ("filter_mode", "fund_params", "fund_idx",  "mom_lookback")}  # add fund_idx
             )
 
         if test_metrics is None or bt_oos is None:
@@ -1463,8 +1941,10 @@ def walk_forward(
             carry_state = None
             continue
 
-        carry_state = end_state
+        # Thread state forward to next window
+        carry_state = end_state   # None if flat at window end
 
+        # Chain-link equity
         equity_slice = bt_oos["equity"].copy()
         if oos_equity_slices:
             prev_end     = oos_equity_slices[-1].iloc[-1]
@@ -1472,33 +1952,36 @@ def walk_forward(
 
         oos_equity_slices.append(equity_slice)
 
+        # Collect trades — exclude CARRY boundary records from stats
+        # but keep them so the trade log is complete
         if not oos_trades.empty:
             oos_trades = oos_trades.copy()
             oos_trades["WF_Window"] = train_start
             all_oos_trades.append(oos_trades)
 
         results.append({
-            "TrainStart":   train_start,
-            "TrainEnd":     train_end,
-            "TestStart":    train_end,
-            "TestEnd":      test_end,
-            "filter_mode":  best_params["filter_mode"],
-            "fund_idx":     best_params["fund_idx"],
-            "fund_params":  str(best_params["fund_params"]),
+            "TrainStart":  train_start,
+            "TrainEnd":    train_end,
+            "TestStart":   train_end,
+            "TestEnd":     test_end,
+            "filter_mode": best_params["filter_mode"],
+            "fund_idx":    best_params["fund_idx"],
+            "fund_params": str(best_params["fund_params"]),
             **{k: v for k, v in best_params.items()
                if k not in ("filter_mode", "fund_params", "fund_idx",
-                    "use_momentum", "target_vol", "use_atr_stop",
-                    "atr_window")},
-            "target_vol":   best_params.get("target_vol", "N/A"),
-            "mom_lookback": best_params.get("mom_lookback", 252),
-            "use_atr_stop": best_params["use_atr_stop"],
-            "atr_window":   best_params["atr_window"],
+                    "use_momentum", "target_vol")},
+                    "target_vol":  best_params.get("target_vol", "N/A"),
+            "mom_lookback": best_params.get("mom_lookback", 252),    # ADD
             **test_metrics
             })
         
+        # Advance start before checking if this was the last window
         start += pd.DateOffset(years=test_years)
         
+        # --- stop after extending the last window ---
         if not next_window_has_enough:
+            
+            # --- DIAGNOSTIC ---
             logging.info(
                 "Window: train=%s to %s | test=%s to %s | rows in test=%d | "
                 "data_end=%s | next_window_data_rows=%d | next_window_has_enough=%s",
@@ -1509,9 +1992,13 @@ def walk_forward(
                 len(df.loc[df.index >= test_end]),
                 next_window_has_enough
             )
+            # --- END DIAGNOSTIC ---
+            
             logging.info("Final OOS window extended to %s (end of data).", data_end)
             break
 
+    # Final forced exit for any position still open at end of last window
+    # This only fires once, at the very end of the entire OOS period.
     if carry_state is not None and all_oos_trades:
         logging.info(
             "Position still open at end of final window. "
@@ -1525,6 +2012,8 @@ def walk_forward(
     oos_equity    = pd.concat(oos_equity_slices).sort_index()
     results_df    = pd.DataFrame(results)
     oos_trades_df = pd.concat(all_oos_trades) if all_oos_trades else pd.DataFrame()
+
+
 
     return oos_equity, results_df, oos_trades_df
         
@@ -1540,14 +2029,42 @@ def walk_forward(
 def analyze_trades(trades, 
                    boundary_exits= {"CARRY", "SAMPLE_END"}):
     
+    """
+    Compute summary statistics from a completed trade log.
+
+    Boundary records (CARRY, SAMPLE_END) are excluded before computing
+    statistics — these are window-management artefacts, not real strategy
+    decisions. For cross-window trades, the closing record in the later
+    window already contains the correct full return from the original
+    entry price, so no deduplication is needed once CARRY records are
+    excluded.
+
+    Parameters
+    ----------
+    trades         : DataFrame         — trade log from walk_forward
+    boundary_exits : set               — exit reason codes to exclude
+
+    Returns
+    -------
+    dict with keys: Trades, WinRate, AvgWin, AvgLoss, ProfitFactor,
+                    AvgDays, CrossWindow
+    Returns None if no qualifying trades remain after filtering.
+    """
+
     if trades.empty:
         return None
 
+    # Drop window-boundary snapshots entirely
     trades = trades[~trades["Exit Reason"].isin(boundary_exits)].copy()
 
     if trades.empty:
         return None
 
+    # For cross-window trades, the closing record in window 2 already
+    # contains the correct full return from original entry price.
+    # No deduplication needed as long as CARRY records are excluded.
+    # But log how many cross-window trades there were for transparency.
+    
     n_cross = trades["CrossWindow"].sum() if "CrossWindow" in trades.columns else 0
     if n_cross > 0:
         logging.info("%d trades carried across window boundaries", n_cross)
@@ -1581,6 +2098,30 @@ def print_backtest_report(metrics,
                           filter_modes_override=None  
                           ):
 
+    """
+    Write a formatted backtest report to the log.
+
+    Sections:
+      1. Per-window parameter table (from wf_results) or single
+         best_params if walk-forward was not used.
+      2. Aggregate performance metrics (CAGR, Vol, Sharpe, MaxDD, CalMAR, Sortino).
+      3. Trade statistics (win rate, avg win/loss, profit factor, avg days).
+      4. Full trade log with returns formatted as percentages.
+      5. Open position summary if the last trade is a CARRY record,
+         showing entry date, entry price, current mark, and unrealised
+         return.
+
+    Parameters
+    ----------
+    metrics       : dict        — output of compute_metrics
+    trades        : DataFrame   — full trade log including CARRY records
+    trade_stats   : dict|None   — output of analyze_trades
+    best_params   : dict|None   — single parameter set (non-WF use)
+    wf_results    : DataFrame|None — per-window results from walk_forward
+    position_mode : str         — mode label for report header
+    filter_modes_override    : str - which trend filter was forced if any
+    """
+
     logging.info("="*80)
     logging.info(f"WALK-FORWARD OOS BACKTEST REPORT   mode = {position_mode}")
     if filter_modes_override is not None:
@@ -1589,29 +2130,14 @@ def print_backtest_report(metrics,
         logging.info("Filter mode selection set to automatic")
     logging.info("="*80)
 
+    # --- show per-window params if available, else single best_params ---
     if wf_results is not None and not wf_results.empty:
-        # Determine which stop column to show based on what is in wf_results
-        use_atr = (
-            "use_atr_stop" in wf_results.columns
-            and wf_results["use_atr_stop"].any()
-        )
-        stop_col = "N_atr" if use_atr else "X"
-
         cols = ["TrainStart", "TestStart", "filter_mode",
-                stop_col, "Y", "fast", "slow", "target_vol",
-                "stop_loss", "mom_lookback"]
-        # Only include columns that actually exist (graceful fallback)
-        cols = [c for c in cols if c in wf_results.columns]
-
+                "X", "Y", "fast", "slow", "target_vol", "stop_loss", "mom_lookback"]
+        # Only show fund_params if fund filter was ever selected
         if "fund_params" in wf_results.columns and \
            wf_results["filter_mode"].eq("fund").any():
             cols.insert(3, "fund_params")
-
-        if use_atr and "atr_window" in wf_results.columns:
-            # Show atr_window once as a header note, not per-row
-            aw = wf_results["atr_window"].iloc[0]
-            logging.info("ATR trailing stop mode active (atr_window=%d)", aw)
-
         logging.info("\n%s", wf_results[cols].to_string(index=False))
 
     logging.info("-"*80)
@@ -1629,6 +2155,7 @@ def print_backtest_report(metrics,
     )
     logging.info("-"*80)
 
+    # Trade Statistics
     if trade_stats:
         logging.info("TRADE STATISTICS:")
         logging.info(
@@ -1646,6 +2173,9 @@ def print_backtest_report(metrics,
         logging.info("No trades executed in the backtest.")
         logging.info("-"*80)
 
+    # Trade Log
+    # Initialise carry_trades here so it's always defined for the
+    # open position block below, regardless of whether trade_stats exists
     carry_trades = pd.DataFrame()
 
     if not trades.empty and "Exit Reason" in trades.columns:
@@ -1665,6 +2195,8 @@ def print_backtest_report(metrics,
         logging.info("TRADE LOG:")
         logging.info("\n%s", trades_fmt.to_string(index=False))
 
+    # Open position summary — only if there is a CARRY record
+    # Open position summary — only if there is a CARRY record
     if not trades.empty and trades.iloc[-1]["Exit Reason"] == "CARRY":
         last_carry = trades.iloc[-1]
         logging.info(
@@ -1685,20 +2217,57 @@ def print_backtest_report(metrics,
 
 
 def prepare_regime_inputs(df, wf_results, wf_equity, bh_equity):
+    """
+    Prepare all inputs required by run_regime_decomposition from the
+    standard walk-forward outputs.
+
+    Parameters
+    ----------
+    df          : pd.DataFrame  — full price DataFrame with columns
+                  "Zamkniecie" (close), "Najwyzszy" (high), "Najnizszy" (low)
+    wf_results  : pd.DataFrame  — walk-forward results, must contain
+                  "TestStart" and "TestEnd" columns
+    wf_equity   : pd.Series     — stitched OOS equity curve, normalised to 1.0,
+                  DatetimeIndex, produced by walk_forward()
+    bh_equity   : pd.Series     — buy-and-hold equity curve, normalised to 1.0,
+                  DatetimeIndex, produced by compute_buy_and_hold()
+
+    Returns
+    -------
+    dict with keys:
+        close               pd.Series  — OOS close prices
+        high                pd.Series  — OOS high prices
+        low                 pd.Series  — OOS low prices
+        daily_returns_strat pd.Series  — daily strategy returns over OOS
+        daily_returns_bh    pd.Series  — daily B&H returns over OOS
+        equity_strat        pd.Series  — wf_equity aligned to OOS window
+        equity_bh           pd.Series  — bh_equity aligned to OOS window
+        oos_start           pd.Timestamp
+        oos_end             pd.Timestamp
+    """
     oos_start = pd.Timestamp(wf_results["TestStart"].min())
     oos_end   = pd.Timestamp(wf_results["TestEnd"].max())
 
+    # ── Price series: cut df to OOS window ──────────────────────────────────
     mask = (df.index >= oos_start) & (df.index <= oos_end)
     close = df.loc[mask, "Zamkniecie"].copy()
     high  = df.loc[mask, "Najwyzszy"].copy()
     low   = df.loc[mask, "Najnizszy"].copy()
 
+    # ── Align equity curves to the same OOS index ────────────────────────────
+    # wf_equity may start/end a day off from the price df due to stitching;
+    # reindex to close's index so all three series share exactly the same dates.
     equity_strat = wf_equity.reindex(close.index).ffill()
     equity_bh    = bh_equity.reindex(close.index).ffill()
 
+    # ── Convert normalised equity levels → daily returns ────────────────────
+    # pct_change() on a normalised equity curve gives the correct daily P&L
+    # including MMF days for the strategy and index days for B&H.
+    # Drop the first NaN so the returns series aligns with regime labels.
     daily_returns_strat = equity_strat.pct_change().dropna()
     daily_returns_bh    = equity_bh.pct_change().dropna()
 
+    # ── Trim price series to match (loses the first day, same as returns) ────
     close = close.reindex(daily_returns_strat.index)
     high  = high.reindex(daily_returns_strat.index)
     low   = low.reindex(daily_returns_strat.index)
@@ -1716,7 +2285,12 @@ def prepare_regime_inputs(df, wf_results, wf_equity, bh_equity):
     )
 
 
+
+
+# ── Regime labellers ─────────────────────────────────────────────────────────
+
 def compute_adx(high, low, close, period=20):
+    """Average Directional Index."""
     delta_high = high.diff()
     delta_low  = -low.diff()
     plus_dm  = np.where((delta_high > delta_low) & (delta_high > 0), delta_high, 0.0)
@@ -1758,7 +2332,14 @@ def label_regime_vol(close, window=21, hi_pct=0.67, lo_pct=0.33):
     return regime.rename("regime_vol")
 
 
+# ── Performance breakdown ────────────────────────────────────────────────────
+
 def regime_stats(daily_returns_strat, daily_returns_bh, regime_series, label="regime"):
+    """
+    daily_returns_strat : pd.Series of daily strategy returns (including MMF days)
+    daily_returns_bh    : pd.Series of daily buy-and-hold returns
+    regime_series       : pd.Series of regime labels, same index
+    """
     df = pd.DataFrame({
         "strat": daily_returns_strat,
         "bh"   : daily_returns_bh,
@@ -1798,7 +2379,10 @@ def regime_stats(daily_returns_strat, daily_returns_bh, regime_series, label="re
     return pd.DataFrame(rows).set_index(label)
 
 
+# ── Regime transition matrix ─────────────────────────────────────────────────
+
 def regime_transition_matrix(regime_series):
+    """Fraction of days where regime i is followed by regime j."""
     s = regime_series.dropna()
     regimes = sorted(s.unique())
     mat = pd.DataFrame(0.0, index=regimes, columns=regimes)
@@ -1808,13 +2392,15 @@ def regime_transition_matrix(regime_series):
     return mat.round(3)
 
 
+# ── Visualisation ────────────────────────────────────────────────────────────
+
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
 REGIME_COLOURS = {
-    "uptrend"   : "#c6efce",
-    "downtrend" : "#ffc7ce",
-    "sideways"  : "#ffeb9c",
+    "uptrend"   : "#c6efce",  # green
+    "downtrend" : "#ffc7ce",  # red
+    "sideways"  : "#ffeb9c",  # amber
     "high_vol"  : "#ffc7ce",
     "normal_vol": "#c6efce",
     "low_vol"   : "#deebf7",
@@ -1825,6 +2411,7 @@ def plot_regime_overlay(close, regime_series, equity_strat, equity_bh,
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8),
                                     sharex=True, gridspec_kw={"height_ratios": [1, 2]})
 
+    # top panel: regime bands
     prev_regime = None
     prev_date   = regime_series.index[0]
     for date, reg in regime_series.items():
@@ -1866,6 +2453,7 @@ def plot_regime_bar_comparison(stats_df, title="Performance by regime"):
     x = np.arange(len(stats_df))
     w = 0.35
 
+    # Returns
     ax = axes[0]
     ax.bar(x - w/2, stats_df["strat_cagr"], w, label="Strategy",   color=colours[0])
     ax.bar(x + w/2, stats_df["bh_cagr"],    w, label="Buy & Hold", color=colours[1])
@@ -1876,6 +2464,7 @@ def plot_regime_bar_comparison(stats_df, title="Performance by regime"):
     ax.set_title("CAGR by regime")
     ax.legend()
 
+    # Drawdowns
     ax = axes[1]
     ax.bar(x - w/2, stats_df["strat_maxdd"], w, label="Strategy",   color=colours[2])
     ax.bar(x + w/2, stats_df["bh_maxdd"],    w, label="Buy & Hold", color=colours[3])
@@ -1890,9 +2479,16 @@ def plot_regime_bar_comparison(stats_df, title="Performance by regime"):
     return fig
 
 
+# ── Top-level runner ─────────────────────────────────────────────────────────
+
 def run_regime_decomposition(close, high, low,
                               daily_returns_strat, daily_returns_bh,
                               equity_strat, equity_bh):
+    """
+    close, high, low            : pd.Series, full price history
+    daily_returns_strat/bh      : pd.Series, OOS period only
+    equity_strat/bh             : pd.Series, cumulative equity, OOS period only
+    """
     results = {}
 
     for name, regime_fn in [
@@ -1923,3 +2519,4 @@ def run_regime_decomposition(close, high, low,
         print(f"\nTransition matrix:\n{trans.to_string()}")
 
     return results
+

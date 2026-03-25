@@ -35,3 +35,4 @@ dev_single_asset_monitoring/__pycache__/strategy_test_library.cpython-314.pyc
 /dev_single_asset_monitoring/sweep_outputs
 *.png
 /strategy_freeze_0_2/outputs
+/multiasset_development/__pycache__
