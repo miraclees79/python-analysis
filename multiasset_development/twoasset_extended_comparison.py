@@ -174,12 +174,12 @@ FAST_MODE = True
 # WIG (Mode A only): daily continuous trading started 1994-10-03.
 #   Earlier data has multi-day gaps that distort the breakout trough
 #   calculation and MA windows.  Clipped after download in Phase 2.
-WIG_DATA_FLOOR = "1994-10-03"
+WIG_DATA_FLOOR = "1995-01-02"
  
 # MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
 #   date. Ensures IS windows starting before 1999 have realistic cash returns
 #   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
-MMF_FLOOR = "1994-10-03"
+MMF_FLOOR = "1995-01-02"
 DATA_START = "1990-01-01"  # hard floor for all series
 
 
