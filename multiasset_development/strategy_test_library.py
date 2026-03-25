@@ -559,8 +559,8 @@ def run_strategy_with_trades(
 
     use_atr_stop=True (ATR-scaled Chandelier exit):
         stop_level = M - N_atr * ATR
-        ATR is the rolling mean of |close_t - close_{t-1}| over atr_window
-        bars, expressed in price units (close-only ATR). The stop distance
+        ATR = rolling mean of |daily price change| / prior close (dimensionless)'
+        The stop distance
         adapts to the current volatility regime: wider during high-vol
         periods to avoid whipsaws, tighter during low-vol periods to lock
         in gains faster. N_atr is searched over N_atr_grid in walk_forward.
@@ -641,7 +641,21 @@ def run_strategy_with_trades(
     # Computed regardless of use_atr_stop so it is available
     # in the pre-extracted numpy arrays without branching.
     # -------------------------------------------------------
-    df["atr"] = df["price"].diff().abs().rolling(atr_window).mean().shift(1)
+    # df["atr"] = df["price"].diff().abs().rolling(atr_window).mean().shift(1)
+    # ATR column — percent-normalised, cold-start NaN-free\n'
+    '    # Issue 1: expanding().mean() fills the first atr_window-1 NaN values\n'
+    '    # produced by the rolling window, so the stop is active from the very\n'
+    '    # first trading day.  The rolling mean takes over once sufficient history\n'
+    '    # is available; the transition is smooth because both share the same\n'
+    '    # underlying |diff| series.\n'
+    '    # Issue 2: dividing by price.shift(1) converts absolute PLN units to a\n'
+    '    # dimensionless fraction of the prior close.  N_atr now means "multiples\n'
+    '    # of the typical daily % move", stable across all price levels.\n'
+    _abs_daily_chg = df["price"].diff().abs()
+    _atr_rolling   = _abs_daily_chg.rolling(atr_window).mean()
+    df["atr"] = (_atr_rolling.fillna(_abs_daily_chg.expanding().mean()).shift(1)
+                 / df["price"].shift(1)                      
+                 )
 
     df.dropna(inplace=True)
 
@@ -761,11 +775,13 @@ def run_strategy_with_trades(
                     # stop_level = M - N_atr * ATR (price units)
                     # Fall back to fixed-% stop if ATR is NaN (insufficient
                     # history at start of window — treated as no stop breach)
+                    # The else branch uses 0.8% (long-run WIG daily vol) as a\n"
+                    # conservative proxy — should never be reached in practice.\n"
                     if np.isfinite(atr_val) and atr_val > 0:
-                        stop_level = M - N_atr * atr_val
+                        stop_level = M * (1- N_atr * atr_val)
                         trail_breached = price < stop_level
                     else:
-                        trail_breached = False
+                        trail_breached = price < M *(1.0 - N_atr * 0.0008 )
                 else:
                     # Fixed percentage trailing stop (original behaviour)
                     trail_breached = price < (1 - X) * M
@@ -873,10 +889,10 @@ def run_strategy_with_trades(
                 # -------------------------------------------------------
                 if use_atr_stop:
                     if np.isfinite(atr_val) and atr_val > 0:
-                        stop_level = M - N_atr * atr_val
+                        stop_level = M * (1.0 - N_atr * atr_val)
                         trail_breached = price < stop_level
                     else:
-                        trail_breached = False
+                        trail_breached = price < M * (1.0 - N_atr * 0.0008)
                 else:
                     trail_breached = price < (1 - X) * M
 

@@ -580,7 +580,6 @@ def extract_windows_from_wf_results(wf_results, train_years=8):
         })
     return windows
 
-
 def extract_best_params_from_wf_results(wf_results):
     """
     Extract best_params dict from the wf_results DataFrame.
@@ -588,10 +587,57 @@ def extract_best_params_from_wf_results(wf_results):
     Reads both X and N_atr columns (whichever are present) and includes
     use_atr_stop and atr_window so run_universe can forward them correctly
     to run_strategy_with_trades.
+
+    Issue 7 fix: if use_atr_stop column is absent (results from an older run),
+    the function emits a WARNING and applies a secondary inference heuristic
+    rather than silently defaulting to fixed-% mode.  Inference: ATR mode is
+    assumed when the N_atr column is present and the X column holds the dummy
+    value 0.10 (written by walk_forward when use_atr_stop=True), which is a
+    reliable indicator that the run used ATR stops.  In all other ambiguous
+    cases the function falls back to fixed-% mode and logs a warning.
     """
     best_params = {}
+    atr_col_present     = "use_atr_stop" in wf_results.columns
+    n_atr_col_present   = "N_atr" in wf_results.columns
+
+    if not atr_col_present:
+        logging.warning(
+            "extract_best_params_from_wf_results: 'use_atr_stop' column absent "
+            "from wf_results — results were produced before the ATR feature was "
+            "added.  Applying inference heuristic to determine stop mode."
+        )
+
     for i, row in wf_results.iterrows():
-        use_atr = bool(row.get("use_atr_stop", False))
+
+        if atr_col_present:
+            # Normal path: column present, read directly.
+            use_atr = bool(row["use_atr_stop"])
+        elif n_atr_col_present:
+            # Heuristic: N_atr column exists.  If X == 0.10 (the dummy value
+            # walk_forward writes when use_atr_stop=True) and N_atr is not the
+            # default 3.0 sentinel, infer ATR mode.
+            x_is_dummy   = abs(float(row.get("X", 0.0)) - 0.10) < 1e-9
+            n_atr_nondefault = abs(float(row.get("N_atr", 3.0)) - 3.0) > 1e-9
+            use_atr = x_is_dummy and n_atr_nondefault
+            if use_atr:
+                logging.warning(
+                    "extract_best_params_from_wf_results: window %s — "
+                    "inferred ATR mode (X=0.10 dummy, N_atr=%.2f).  "
+                    "Verify this matches the original run configuration.",
+                    i, float(row.get("N_atr", 3.0))
+                )
+            else:
+                logging.warning(
+                    "extract_best_params_from_wf_results: window %s — "
+                    "cannot infer ATR mode; defaulting to fixed-%% stop. "
+                    "Re-run walk_forward with the current codebase to avoid "
+                    "this ambiguity.",
+                    i
+                )
+        else:
+            # No ATR columns at all — unambiguously a pre-ATR results file.
+            use_atr = False
+
         p = {
             "filter_mode":  row["filter_mode"],
             "fund_idx":     row.get("fund_idx"),
@@ -608,7 +654,6 @@ def extract_best_params_from_wf_results(wf_results):
         }
         best_params[i] = p
     return best_params
-
 
 #=====================================================================
 # DATA HISTORY BOOTSTRAP

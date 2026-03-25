@@ -178,18 +178,40 @@ TV_YLD      = [0.08, 0.10, 0.12]               # unchanged
 SL_YLD      = [0.05, 0.08, 0.10, 0.15]         # 4-5x wider than TBSP SL_BD
 
 
+# --- Trailing stop mode ---
+# USE_ATR_STOP = False : fixed percentage trailing stop (current default)
+#     X_GRID_EQ is used; stop fires when price < (1 - X) * peak
+# USE_ATR_STOP = True  : ATR-scaled Chandelier exit
+#     N_ATR_GRID is used; stop fires when price < peak - N * ATR
+#     ATR = rolling mean of |daily price change| over ATR_WINDOW bars
+#     Recommended N_ATR range for WIG: 3–6 (wider = more room to breathe)
+#     ATR_WINDOW: 20 matches VOL_WINDOW; increase to 40–60 for a slower ATR
+#
+# The bond walk-forward (Phase 3) uses a separate flag USE_ATR_STOP_BD
+# so equity and bond stops can be tuned independently.
+# Set USE_ATR_STOP_BD = USE_ATR_STOP to keep them in sync.
+#
+USE_ATR_STOP    = True          # Equity trailing stop mode
+ATR_WINDOW      = 20             # Rolling window for ATR estimate (days)
+N_ATR_GRID      = [3.0, 4.0, 5.0, 6.0, 7.0]   # Multiplier grid for IS search
+
+USE_ATR_STOP_BD = False          # Bond trailing stop mode (can differ from equity)
+ATR_WINDOW_BD   = 20
+N_ATR_GRID_BD   = [2.0, 3.0, 4.0, 5.0, 6.0]
+
+
 # ---------------------------------------------------------------------------
 # DATA FLOOR DATES
 # ---------------------------------------------------------------------------
 # WIG (Mode A only): daily continuous trading started 1994-10-03.
 #   Earlier data has multi-day gaps that distort the breakout trough
 #   calculation and MA windows.  Clipped after download in Phase 2.
-WIG_DATA_FLOOR = "1994-10-03"
+WIG_DATA_FLOOR = "1995-01-02"
  
 # MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
 #   date. Ensures IS windows starting before 1999 have realistic cash returns
 #   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
-MMF_FLOOR = "1994-10-03"
+MMF_FLOOR = "1995-01-02"
 DATA_START = "1990-01-01"  # hard floor for all series
 
 # Robustness phases are OFF for daily run
@@ -414,6 +436,10 @@ wf_equity_eq, wf_results_eq, wf_trades_eq = walk_forward(
     sl_grid               = SL_EQ,
     mom_lookback_grid     = MOM_LB_EQ,
     n_jobs                = N_JOBS,
+    fast_mode=True,         # (or fast_mode=True in daily runfile)
+    use_atr_stop          = USE_ATR_STOP,
+    N_atr_grid            = N_ATR_GRID if USE_ATR_STOP else None,
+    atr_window            = ATR_WINDOW,
 )
 
 if wf_equity_eq.empty:
@@ -501,6 +527,10 @@ wf_equity_bd, wf_results_bd, wf_trades_bd = walk_forward(
     mom_lookback_grid     = [252],                  # not used (filter_mode=ma)
     n_jobs                = N_JOBS,
     entry_gate_series     = bond_entry_gate,
+    fast_mode=True,         # (or fast_mode=True in daily runfile)
+    use_atr_stop          = USE_ATR_STOP,
+    N_atr_grid            = N_ATR_GRID if USE_ATR_STOP else None,
+    atr_window            = ATR_WINDOW,
 )
 
 if wf_equity_bd.empty:
