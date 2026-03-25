@@ -178,7 +178,7 @@ FAST_MODE = True
 # Both can be disabled independently. When both are False the script
 # produces only OOS portfolio metrics (original behaviour).
 #
-RUN_MC         = False   # MC parameter perturbation per config
+RUN_MC         = True   # MC parameter perturbation per config
 N_MC           = 1000    # MC samples (set to 10 for smoke test)
 RUN_BOOTSTRAP  = False   # Block bootstrap per config (requires RUN_MC=True)
 N_BOOTSTRAP    = 500     # Bootstrap samples (set to 10 for smoke test)

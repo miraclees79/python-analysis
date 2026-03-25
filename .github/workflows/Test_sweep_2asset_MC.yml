@@ -1,0 +1,55 @@
+name: Two asset sweep - optional robustness check Monte Carlo
+
+on:
+  workflow_dispatch:  # Allows manual trigger
+ # schedule: ONLY MANUAL
+ #   - cron: "0 0 * * *"  # Runs daily at midn UTC
+
+jobs: 
+  process_stooq_data:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.14'
+
+      - name: Install python deps
+        run: |
+          pip install  pandas numpy requests  google-api-python-client matplotlib joblib yfinance
+          pip install -r multiasset_development/requirements.txt
+      
+      - name: Create Google Credentials File
+        run: |
+          echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
+        
+          
+     
+      - name: Validate JSON Format
+        run: |
+          python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
+          
+   
+
+      - name: run Python script
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          
+        run: |
+          python multiasset_development/twoasset_extended_comparison.py 
+      
+
+      
+      #- name: Upload log file and chart as artifact
+      #  uses: actions/upload-artifact@v4
+      #  with:
+      #    name: download-logs
+      #    path: |
+      #     Mu.log
+      #      
+      #    retention-days: 30
+
