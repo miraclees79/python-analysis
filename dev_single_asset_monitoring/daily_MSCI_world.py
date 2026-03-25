@@ -87,6 +87,7 @@ OUTPUT_PREFIX = "msci_world"
 TRAIN_YEARS   = 8
 TEST_YEARS    = 1
 # Set from sweep candidate results.
+# MSCI 8+1 confirmed double ROBUST from single asset run on 24/03/2026
 
 FORCE_FILTER_MODE = ["ma", "mom"]
 # Override to ["ma"] if sweep showed ma-only was consistently dominant
