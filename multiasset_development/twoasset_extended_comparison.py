@@ -142,7 +142,7 @@ MOM_LB_EQ = [126, 252]
 # so equity and bond stops can be tuned independently.
 # Set USE_ATR_STOP_BD = USE_ATR_STOP to keep them in sync.
 #
-USE_ATR_STOP    = False          # Equity trailing stop mode
+USE_ATR_STOP    = True          # Equity trailing stop mode
 ATR_WINDOW      = 20             # Rolling window for ATR estimate (days)
 N_ATR_GRID      = [3.0, 4.0, 5.0, 6.0, 7.0]   # Multiplier grid for IS search
 
