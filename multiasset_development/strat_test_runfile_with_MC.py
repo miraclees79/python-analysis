@@ -118,42 +118,6 @@ USER_AGENTS = [
 
 
 
-## Set global parameters
-chosen_mode = "full"
-# options: "vol_entry", "vol_dynamic", "full"
-VOL_WINDOW = 20
-FORCE_FILTER_MODE = ["ma","mom"]
-# options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
-RUN_MONTE_CARLO = False # MC parameter robustness
-RUN_BLOCK_BOOTSTRAP = False # Run bootstrap robustness test
-
-# OBJECTIVE FUNCTION
-OBJECTIVE = "calmar"   # or "calmar", "sharpe", "sortino", "calmar_sortino", "calmar_sharpe"
-
-#----------------------------------------------
-# Robustness check — shorter sample
-#----------------------------------------------
-USE_SHORTER_SAMPLE = False
-short_sample_start = "2008-01-01"
-short_sample_end   = "2023-12-31"
-
-
-# ---------------------------------------------------------------------------
-# DATA FLOOR DATES
-# ---------------------------------------------------------------------------
-# WIG (Mode A only): daily continuous trading started 1994-10-03.
-#   Earlier data has multi-day gaps that distort the breakout trough
-#   calculation and MA windows.  Clipped after download in Phase 2.
-WIG_DATA_FLOOR = "1995-01-02"
- 
-# MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
-#   date. Ensures IS windows starting before 1999 have realistic cash returns
-#   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
-MMF_FLOOR = "1995-01-02"
-DATA_START = "1990-01-01"  # hard floor for all series
-
-YIELD_PREFILTER_BP   = 50.0
-
 
 # ============================================================
 # PHASE 1 — DOWNLOAD DATA
@@ -253,6 +217,89 @@ def build_derived(WIG, TBSP, MMF, W1M, PL10Y, DE10Y):
 
 
 
+
+
+
+## Set global parameters
+chosen_mode = "full"
+# options: "vol_entry", "vol_dynamic", "full"
+VOL_WINDOW = 20
+FORCE_FILTER_MODE = ["ma","mom"]
+# options ["ma","mom"] ["ma"] ["mom"] ["fund"] None (fully auto)
+RUN_MONTE_CARLO = False # MC parameter robustness
+RUN_BLOCK_BOOTSTRAP = False # Run bootstrap robustness test
+
+# OBJECTIVE FUNCTION
+OBJECTIVE = "calmar"   # or "calmar", "sharpe", "sortino", "calmar_sortino", "calmar_sharpe"
+
+
+TRAIN_YEARS = 9
+TEST_YEARS = 2
+
+#----------------------------------------------
+# Robustness check — shorter sample
+#----------------------------------------------
+USE_SHORTER_SAMPLE = False
+short_sample_start = "2008-01-01"
+short_sample_end   = "2023-12-31"
+
+
+# ---------------------------------------------------------------------------
+# DATA FLOOR DATES
+# ---------------------------------------------------------------------------
+# WIG (Mode A only): daily continuous trading started 1994-10-03.
+#   Earlier data has multi-day gaps that distort the breakout trough
+#   calculation and MA windows.  Clipped after download in Phase 2.
+WIG_DATA_FLOOR = "1995-01-02"
+ 
+# MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
+#   date. Ensures IS windows starting before 1999 have realistic cash returns
+#   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
+MMF_FLOOR = "1995-01-02"
+DATA_START = "1990-01-01"  # hard floor for all series
+
+YIELD_PREFILTER_BP   = 50.0
+
+
+
+    
+#============================
+
+#===========GRIDS============
+# Define search grids once — passed to both the loop and neighbour_mean
+# so they are guaranteed to stay in sync
+X_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
+Y_grid = [0.02, 0.03, 0.05, 0.07, 0.10]
+fast_grid   = [50, 75, 100]
+slow_grid = [150, 200, 250 ]
+tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
+sl_grid     = [0.05, 0.08, 0.10, 0.15]
+mom_lookback_grid = [126, 252]           # [126, 252]    # ADD
+    
+#============================
+
+
+# --- Trailing stop mode ---
+# USE_ATR_STOP = False : fixed percentage trailing stop (current default)
+#     X_GRID_EQ is used; stop fires when price < (1 - X) * peak
+# USE_ATR_STOP = True  : ATR-scaled Chandelier exit
+#     N_ATR_GRID is used; stop fires when price < peak - N * ATR
+#     ATR = rolling mean of |daily price change| over ATR_WINDOW bars
+#     Recommended N_ATR range for WIG: 3–6 (wider = more room to breathe)
+#     ATR_WINDOW: 20 matches VOL_WINDOW; increase to 40–60 for a slower ATR
+#
+# The bond walk-forward (Phase 3) uses a separate flag USE_ATR_STOP_BD
+# so equity and bond stops can be tuned independently.
+# Set USE_ATR_STOP_BD = USE_ATR_STOP to keep them in sync.
+#
+USE_ATR_STOP    = True # Equity trailing stop mode
+ATR_WINDOW      = 20             # Rolling window for ATR estimate (days)
+N_ATR_GRID      = [6.0, 7.0, 8.0, 9.0, 10.0, 12, 14]   # Multiplier grid for IS search
+
+
+
+
+
 # Main function to process the data
 logging.info("RUN START: %s", dt.datetime.now())
 logging.info("=" * 80)
@@ -270,6 +317,8 @@ MMF_EXT, bond_gate, ret_eq, ret_bd, ret_mmf = build_derived(WIG, TBSP, MMF, W1M,
 
 df = WIG
 CASH = MMF
+
+
 
 # -------------------------------------------------------
 # Fund NAV downloads for breadth filter
@@ -393,47 +442,6 @@ else:
     FUNDS      = None 
     FUND_PARAMS_GRID = None
     
-    
-#============================
-
-#===========GRIDS============
-    # Define search grids once — passed to both the loop and neighbour_mean
-    # so they are guaranteed to stay in sync
-    X_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
-    Y_grid = [0.02, 0.03, 0.05, 0.07, 0.10]
-    fast_grid   = [50, 75, 100]
-    slow_grid = [150, 200, 250 ]
-    tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
-    sl_grid     = [0.05, 0.08, 0.10, 0.15]
-    mom_lookback_grid = [252]           # [126, 252]    # ADD
-    
-#============================
-
-
-# --- Trailing stop mode ---
-# USE_ATR_STOP = False : fixed percentage trailing stop (current default)
-#     X_GRID_EQ is used; stop fires when price < (1 - X) * peak
-# USE_ATR_STOP = True  : ATR-scaled Chandelier exit
-#     N_ATR_GRID is used; stop fires when price < peak - N * ATR
-#     ATR = rolling mean of |daily price change| over ATR_WINDOW bars
-#     Recommended N_ATR range for WIG: 3–6 (wider = more room to breathe)
-#     ATR_WINDOW: 20 matches VOL_WINDOW; increase to 40–60 for a slower ATR
-#
-# The bond walk-forward (Phase 3) uses a separate flag USE_ATR_STOP_BD
-# so equity and bond stops can be tuned independently.
-# Set USE_ATR_STOP_BD = USE_ATR_STOP to keep them in sync.
-#
-USE_ATR_STOP    = False # Equity trailing stop mode
-ATR_WINDOW      = 20             # Rolling window for ATR estimate (days)
-N_ATR_GRID      = [3.0, 4.0, 5.0, 6.0, 7.0]   # Multiplier grid for IS search
-
-
-
-
-
-
-
-
 #----------------------------------------------
 # Robustness check — shorter sample
 #----------------------------------------------
@@ -506,8 +514,8 @@ logging.info(
 wf_equity, wf_results, wf_trades = walk_forward(
     df,
     cash_df=CASH,
-    train_years=9,
-    test_years=1,
+    train_years=TRAIN_YEARS,
+    test_years=TEST_YEARS,
     selected_mode=chosen_mode,
     vol_window=VOL_WINDOW,
     funds_df=FUNDS, #DIAG RUN - None             if not using fund filter  FUNDS if using fund filter

@@ -772,7 +772,7 @@ def run_strategy_with_trades(
                 # -------------------------------------------------------
                 if use_atr_stop:
                     # ATR-scaled Chandelier exit
-                    # stop_level = M - N_atr * ATR (price units)
+                    
                     # Fall back to fixed-% stop if ATR is NaN (insufficient
                     # history at start of window — treated as no stop breach)
                     # The else branch uses 0.8% (long-run WIG daily vol) as a\n"
