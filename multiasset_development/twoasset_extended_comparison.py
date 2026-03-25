@@ -106,12 +106,10 @@ OOS_START = "2011-01-04"
 OOS_END   = "2026-03-23"   # update to today's date when running
 
 # Window configurations to evaluate
-#WINDOW_CONFIGS = [    (6, 1), (7, 1), (7, 2), (8, 1), (8, 2), (9, 1), (9, 2),]
+WINDOW_CONFIGS = [    (6, 1), (7, 1), (7, 2), (8, 1), (8, 2), (9, 1), (9, 2),]
 
 
-WINDOW_CONFIGS = [
-  (8, 2), (9, 1), (9, 2),
-]
+#WINDOW_CONFIGS = [  (8, 2), (9, 1), (9, 2),]
 
 
 # Strategy settings — must match production
@@ -199,9 +197,9 @@ DATA_START = "1990-01-01"  # hard floor for all series
 # produces only OOS portfolio metrics (original behaviour).
 #
 RUN_MC         = True   # MC parameter perturbation per config
-N_MC           = 500    # MC samples (set to 10 for smoke test)
-RUN_BOOTSTRAP  = True   # Block bootstrap per config (requires RUN_MC=True)
-N_BOOTSTRAP    = 100     # Bootstrap samples (set to 10 for smoke test)
+N_MC           = 500    # MC samples (set to 10 for smoke test) 1000 base
+RUN_BOOTSTRAP  = False   # Block bootstrap per config (requires RUN_MC=True)
+N_BOOTSTRAP    = 100     # Bootstrap samples (set to 10 for smoke test) 500 base
 
 
 # Sweep Mode B results for comparison (from global_equity_sweep_results.csv)
