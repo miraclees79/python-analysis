@@ -281,7 +281,7 @@ def build_derived(WIG, TBSP, MMF, W1M, PL10Y, DE10Y):
 
     # Extended MMF
     if W1M is not None:
-        MMF_EXT = build_mmf_extended(MMF, W1M, floor_date="MMF_FLOOR")
+        MMF_EXT = build_mmf_extended(MMF, W1M, floor_date="1995-01-02")
         log.info("MMF extended back to %s", MMF_EXT.index.min().date())
     else:
         MMF_EXT = MMF
