@@ -197,9 +197,9 @@ DATA_START = "1990-01-01"  # hard floor for all series
 # produces only OOS portfolio metrics (original behaviour).
 #
 RUN_MC         = True   # MC parameter perturbation per config
-N_MC           = 500    # MC samples (set to 10 for smoke test) 1000 base
+N_MC           = 1000    # MC samples (set to 10 for smoke test) 1000 base
 RUN_BOOTSTRAP  = False   # Block bootstrap per config (requires RUN_MC=True)
-N_BOOTSTRAP    = 100     # Bootstrap samples (set to 10 for smoke test) 500 base
+N_BOOTSTRAP    = 500     # Bootstrap samples (set to 10 for smoke test) 500 base
 
 
 # Sweep Mode B results for comparison (from global_equity_sweep_results.csv)
