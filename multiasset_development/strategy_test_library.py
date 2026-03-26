@@ -655,8 +655,11 @@ def run_strategy_with_trades(
 
     # -------------------------------------------------------
     # ATR series — rolling mean of |daily return| (close-only,
-    # normalised to price, i.e. |ΔP / P_prev| * 100).
-    # Expressed as a dimensionless fraction so that
+    # normalised to price, i.e. |ΔP / P_prev| * 100 as fallback, if
+    # high and low are available - use high-low ATR: 
+    #    [max(high, close(-1)) - min(low, close(-1))]/close(-1) * 100
+    # 
+    # Expressed as a dimensionless fraction in pct pts so that
     #   stop_level = M * (1 - N_atr * atr_val)
     # is directly comparable to the fixed-% stop
     #   stop_level = M * (1 - X)
@@ -664,7 +667,7 @@ def run_strategy_with_trades(
     #
     # This means N_ATR_GRID values are directly comparable to
     # X_GRID values:  N_atr=0.10 trails by 10% of M when
-    # the average daily move equals 10% — and more in high-vol
+    # the average daily move equals 1% — and more in high-vol
     # regimes, less in low-vol regimes (the adaptive benefit).
     #
     # Shifted by 1 so today's stop uses yesterday's ATR estimate
@@ -689,10 +692,10 @@ def run_strategy_with_trades(
             .shift(1)            # avoid lookahead
             * 100
             )
-        logging.info("High-low ATR used")
+        
 
     else:
-        # fallback: absolute daily % move
+        # fallback: absolute daily % move * 100 to use 0.08 etc grid
         df["atr"] = (
             (df["price"].diff().abs() / df["price"].shift(1))
             .rolling(atr_window)
@@ -700,7 +703,7 @@ def run_strategy_with_trades(
             .shift(1)
             * 100
             )
-    
+        
     df.dropna(inplace=True)
 
     # -----------------------
