@@ -164,11 +164,13 @@ MOM_LB_EQ = [126, 252]
 #
 USE_ATR_STOP    = False          # Equity trailing stop mode
 ATR_WINDOW      = 20             # Rolling window for ATR estimate (days)
-N_ATR_GRID      = [ 3.0, 4.0, 5.0, 6.0, 7.0]   # Multiplier grid for IS search
+N_ATR_GRID      = [0.08, 0.10, 0.12, 0.15, 0.20]   # Normalised ATR grid (same scale as X_GRID_EQ)
  
 USE_ATR_STOP_BD = False          # Bond trailing stop mode (can differ from equity)
 ATR_WINDOW_BD   = 20
-N_ATR_GRID_BD   = [2.0, 3.0, 4.0, 5.0, 6.0]
+N_ATR_GRID_BD   = [0.05, 0.08, 0.10, 0.15]          # Normalised ATR grid (same scale as X_GRID_BD)
+
+
 # Bond grids
 X_GRID_BD = [0.05, 0.08, 0.10, 0.15]
 Y_GRID_BD = [0.001]

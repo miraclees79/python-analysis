@@ -103,14 +103,12 @@ TBSP_EXTENDED_PATH = os.getenv(
 
 # OOS period to match the sweep
 OOS_START = "2011-01-04"
-OOS_END   = "2026-03-23"   # update to today's date when running
+OOS_END   = "2026-03-20"   # update to today's date when running
 
 # Window configurations to evaluate
-WINDOW_CONFIGS = [    (6, 1), (7, 1), (7, 2), (8, 1), (8, 2), (9, 1), (9, 2),]
-
-
-#WINDOW_CONFIGS = [  (8, 2), (9, 1), (9, 2),]
-
+WINDOW_CONFIGS = [
+    (6, 1), (7, 1), (7, 2), (8, 1), (8, 2), (9, 1), (9, 2),
+]
 
 # Strategy settings — must match production
 POSITION_MODE        = "full"
@@ -134,23 +132,26 @@ MOM_LB_EQ = [126, 252]
 # --- Trailing stop mode ---
 # USE_ATR_STOP = False : fixed percentage trailing stop (current default)
 #     X_GRID_EQ is used; stop fires when price < (1 - X) * peak
-# USE_ATR_STOP = True  : ATR-scaled Chandelier exit
-#     N_ATR_GRID is used; stop fires when price < peak - N * ATR
-#     ATR = rolling mean of |daily price change| over ATR_WINDOW bars
-#     Recommended N_ATR range for WIG: 3–6 (wider = more room to breathe)
-#     ATR_WINDOW: 20 matches VOL_WINDOW; increase to 40–60 for a slower ATR
+# USE_ATR_STOP = True  : normalised ATR Chandelier exit
+#     N_ATR_GRID is used; stop fires when price < peak * (1 - N_atr * ATR_pct)
+#     where ATR_pct = rolling mean of |daily return| over ATR_WINDOW bars.
+#     N_atr is dimensionless and directly comparable to X:
+#       N_atr=0.10 gives ~10% stop width at average vol, wider in high-vol
+#       regimes and tighter in low-vol regimes.
+#     N_ATR_GRID values should match X_GRID_EQ in order of magnitude.
+#     ATR_WINDOW: 20 matches VOL_WINDOW; increase to 40–60 for a slower ATR.
 #
 # The bond walk-forward (Phase 3) uses a separate flag USE_ATR_STOP_BD
 # so equity and bond stops can be tuned independently.
 # Set USE_ATR_STOP_BD = USE_ATR_STOP to keep them in sync.
 #
-USE_ATR_STOP    = True          # Equity trailing stop mode
+USE_ATR_STOP    = False          # Equity trailing stop mode
 ATR_WINDOW      = 20             # Rolling window for ATR estimate (days)
-N_ATR_GRID      = [3.0, 4.0, 5.0, 6.0, 7.0]   # Multiplier grid for IS search
+N_ATR_GRID      = [0.08, 0.10, 0.12, 0.15, 0.20]   # Normalised ATR grid (same scale as X_GRID_EQ)
 
 USE_ATR_STOP_BD = False          # Bond trailing stop mode (can differ from equity)
 ATR_WINDOW_BD   = 20
-N_ATR_GRID_BD   = [2.0, 3.0, 4.0, 5.0, 6.0]
+N_ATR_GRID_BD   = [0.05, 0.08, 0.10, 0.15]          # Normalised ATR grid (same scale as X_GRID_BD)
 
 # Bond grids
 X_GRID_BD = [0.05, 0.08, 0.10, 0.15]
@@ -166,22 +167,6 @@ N_JOBS = max(1, _cpu - 1) if _cpu > 3 and sys.platform == "win32" else _cpu
 
 FAST_MODE = True
 
-# ---------------------------------------------------------------------------
-# DATA FLOOR DATES
-# ---------------------------------------------------------------------------
-# WIG (Mode A only): daily continuous trading started 1994-10-03.
-#   Earlier data has multi-day gaps that distort the breakout trough
-#   calculation and MA windows.  Clipped after download in Phase 2.
-WIG_DATA_FLOOR = "1995-01-02"
- 
-# MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
-#   date. Ensures IS windows starting before 1999 have realistic cash returns
-#   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
-MMF_FLOOR = "1995-01-02"
-DATA_START = "1990-01-01"  # hard floor for all series
-
-
-
 # ── MC / Bootstrap robustness settings ──────────────────────────────────────
 #
 # RUN_MC=True  : run MC parameter perturbation for each window config.
@@ -196,10 +181,10 @@ DATA_START = "1990-01-01"  # hard floor for all series
 # Both can be disabled independently. When both are False the script
 # produces only OOS portfolio metrics (original behaviour).
 #
-RUN_MC         = True   # MC parameter perturbation per config
-N_MC           = 1000    # MC samples (set to 10 for smoke test) 1000 base
+RUN_MC         = False   # MC parameter perturbation per config
+N_MC           = 1000    # MC samples (set to 10 for smoke test)
 RUN_BOOTSTRAP  = False   # Block bootstrap per config (requires RUN_MC=True)
-N_BOOTSTRAP    = 500     # Bootstrap samples (set to 10 for smoke test) 500 base
+N_BOOTSTRAP    = 500     # Bootstrap samples (set to 10 for smoke test)
 
 
 # Sweep Mode B results for comparison (from global_equity_sweep_results.csv)
@@ -241,7 +226,6 @@ def download_all(tmp_dir):
         return df
 
     WIG   = _get("wig",       "WIG")
-    WIG = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
     MMF   = _get("2720.n",    "MMF")
     W1M   = _get("plopln1m",  "WIBOR1M", mandatory=False)
     PL10Y = _get("10yply.b",  "PL10Y")
@@ -281,7 +265,7 @@ def build_derived(WIG, TBSP, MMF, W1M, PL10Y, DE10Y):
 
     # Extended MMF
     if W1M is not None:
-        MMF_EXT = build_mmf_extended(MMF, W1M, floor_date="1995-01-02")
+        MMF_EXT = build_mmf_extended(MMF, W1M, floor_date="1994-10-03")
         log.info("MMF extended back to %s", MMF_EXT.index.min().date())
     else:
         MMF_EXT = MMF
