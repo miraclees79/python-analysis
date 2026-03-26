@@ -576,10 +576,27 @@ def run_strategy_with_trades(
 
     df = df.copy()
     df["price"] = df[price_col]
-
+    
+    # Detect if high/low columns exist (and not entirely NaN)
+    has_hl = ("Najwyzszy" in df.columns 
+          and "Najnizszy" in df.columns
+          and not df["Najwyzszy"].isna().all()
+          and not df["Najnizszy"].isna().all())
+    if has_hl:
+        df["high"] = df["Najwyzszy"]
+        df["low"]  = df["Najnizszy"]    
+        
     if warmup_df is not None:
         warmup = warmup_df.copy()
         warmup["price"] = warmup[price_col]
+        warmup_has_hl = ("Najwyzszy" in warmup.columns 
+              and "Najnizszy" in warmup.columns
+              and not warmup["Najwyzszy"].isna().all()
+              and not warmup["Najnizszy"].isna().all())
+        if warmup_has_hl:
+            warmup["high"] = warmup["Najwyzszy"]
+            warmup["low"]  = warmup["Najnizszy"]
+            
         warmup["_warmup"] = True
         df["_warmup"] = False
         df = pd.concat([warmup, df])
@@ -638,7 +655,7 @@ def run_strategy_with_trades(
 
     # -------------------------------------------------------
     # ATR series — rolling mean of |daily return| (close-only,
-    # normalised to price, i.e. |ΔP / P_prev|).
+    # normalised to price, i.e. |ΔP / P_prev| * 100).
     # Expressed as a dimensionless fraction so that
     #   stop_level = M * (1 - N_atr * atr_val)
     # is directly comparable to the fixed-% stop
@@ -654,10 +671,36 @@ def run_strategy_with_trades(
     # (no look-ahead). Computed regardless of use_atr_stop so it
     # is always available in the pre-extracted numpy arrays.
     # -------------------------------------------------------
-    df["atr"] = (
-        df["price"].diff().abs() / df["price"].shift(1)
-    ).rolling(atr_window).mean().shift(1)
+    
+    if has_hl:
+        prev_close = df["price"].shift(1)
 
+        tr = (
+            np.maximum(df["high"], prev_close)
+            - np.minimum(df["low"], prev_close)
+            )
+
+        df["relative_tr"] = tr / prev_close
+
+        df["atr"] = (
+            df["relative_tr"]
+            .rolling(atr_window)
+            .mean()
+            .shift(1)            # avoid lookahead
+            * 100
+            )
+        logging.info("High-low ATR used")
+
+    else:
+        # fallback: absolute daily % move
+        df["atr"] = (
+            (df["price"].diff().abs() / df["price"].shift(1))
+            .rolling(atr_window)
+            .mean()
+            .shift(1)
+            * 100
+            )
+    
     df.dropna(inplace=True)
 
     # -----------------------
@@ -1452,7 +1495,7 @@ def walk_forward(
         # Build kwargs for run_strategy_with_trades — exclude meta keys
         _strategy_keys_to_exclude = {
             "filter_mode", "fund_params", "fund_idx",
-            "use_momentum", "target_vol", "use_atr_stop",
+            "use_momentum", "target_vol", "use_atr_stop", "mom_lookback",
             "atr_window", "N_atr",
         }
 

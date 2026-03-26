@@ -293,11 +293,9 @@ mom_lookback_grid = [126, 252]           # [126, 252]    # ADD
 # Set USE_ATR_STOP_BD = USE_ATR_STOP to keep them in sync.
 USE_ATR_STOP    = True          # Equity trailing stop mode
 ATR_WINDOW      = 20             # Rolling window for ATR estimate (days)
-N_ATR_GRID      = [0.08, 0.10, 0.12, 0.15, 0.20]   # Normalised ATR grid (same scale as X_GRID_EQ)
+N_ATR_GRID      = [0.08, 0.10, 0.12, 0.15, 0.20]  # Normalised ATR grid (same scale as X_GRID_EQ)
  
-USE_ATR_STOP_BD = False          # Bond trailing stop mode (can differ from equity)
-ATR_WINDOW_BD   = 20
-N_ATR_GRID_BD   = [0.05, 0.08, 0.10, 0.15]          # Normalised ATR grid (same scale as X_GRID_BD)
+
 
 # Main function to process the data
 logging.info("RUN START: %s", dt.datetime.now())

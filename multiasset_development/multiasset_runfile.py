@@ -298,23 +298,43 @@ logging.info("WIG loaded: %d rows  (%s to %s)",
 tmp_dir = tempfile.gettempdir()
 
 def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
-    """Download a stooq series, clip to DATA_START, exit if mandatory and missing."""
-    url  = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
-    path = os.path.join(tmp_dir, f"ge_{label}.csv")
-    ok   = download_csv(url, path)
-    if not ok:
-        if mandatory:
-            logging.error("FAIL: %s (%s) — exiting.", label, ticker)
-            sys.exit(1)
-        logging.warning("WARN: %s (%s) — not available, skipping.", label, ticker)
-        return None
-    df = load_csv(path)
-    if df is None:
-        if mandatory:
-            logging.error("FAIL: load_csv returned None for %s — exiting.", label)
-            sys.exit(1)
-        return None
+    """
+    Download a stooq series, clip to DATA_START.
+    If download fails, fall back to loading CSV from current working directory.
+    """
+    url         = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
+    tmp_path    = os.path.join(tmp_dir, f"ge_{label}.csv")
+    local_path  = os.path.join(os.getcwd(), f"{label}.csv")  # fallback filename
+
+    # === Attempt online download ===
+    ok = download_csv(url, tmp_path)
+    if ok:
+        logging.info("INFO: %s — downloaded from Stooq", label)
+        df = load_csv(tmp_path)
+    else:
+        logging.warning("WARN: %s — download failed, trying local CSV: %s", label, local_path)
+
+        # === Fallback: try loading local file ===
+        if os.path.exists(local_path):
+            df = load_csv(local_path)
+            if df is not None:
+                logging.info("INFO: %s — loaded from local CSV", label)
+            else:
+                logging.error("FAIL: %s — local CSV exists but load_csv returned None", label)
+                if mandatory:
+                    sys.exit(1)
+                return None
+        else:
+            # No fallback available
+            if mandatory:
+                logging.error("FAIL: %s — neither online nor local CSV available, exiting.", label)
+                sys.exit(1)
+            logging.warning("WARN: %s — optional series missing, skipping.", label)
+            return None
+
+    # === Post-loading logic ===
     df = df.loc[df.index >= pd.Timestamp(DATA_START)]
+
     logging.info(
         "OK  : %-14s  %5d rows  %s to %s",
         label, len(df), df.index.min().date(), df.index.max().date(),
