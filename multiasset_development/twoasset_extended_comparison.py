@@ -973,14 +973,14 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
             if r["wig_mc_verdict"] == "FRAGILE" and r["wig_mc_failures"]:
                 has_failure  = True
                 any_failures = True
-                logging.info(f"\n  {config_label}  MC-WIG  FRAGILE:")
+                logging.info(f"  {config_label}  MC-WIG  FRAGILE:")
                 for f in r["wig_mc_failures"]:
                     logging.info(f"    - {f}")
 
             if r["tbsp_mc_verdict"] == "FRAGILE" and r["tbsp_mc_failures"]:
                 has_failure  = True
                 any_failures = True
-                logging.info(f"\n  {config_label}  MC-TBSP  FRAGILE:")
+                logging.info(f"  {config_label}  MC-TBSP  FRAGILE:")
                 for f in r["tbsp_mc_failures"]:
                     logging.info(f"    - {f}")
 
@@ -989,14 +989,14 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
                 if r["wig_bb_verdict"] == "FRAGILE" and r["wig_bb_failures"]:
                     has_failure  = True
                     any_failures = True
-                    logging.info(f"\n  {config_label}  BB-WIG  FRAGILE:")
+                    logging.info(f"  {config_label}  BB-WIG  FRAGILE:")
                     for f in r["wig_bb_failures"]:
                         logging.info(f"    - {f}")
 
                 if r["tbsp_bb_verdict"] == "FRAGILE" and r["tbsp_bb_failures"]:
                     has_failure  = True
                     any_failures = True
-                    logging.info(f"\n  {config_label}  BB-TBSP  FRAGILE:")
+                    logging.info(f"  {config_label}  BB-TBSP  FRAGILE:")
                     for f in r["tbsp_bb_failures"]:
                         logging.info(f"    - {f}")
 
