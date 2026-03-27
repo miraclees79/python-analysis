@@ -846,7 +846,7 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
     sep  = "=" * 110
     sep2 = "-" * 110
 
-    logging.info()
+    
     logging.info(sep)
     logging.info("  2-ASSET (WIG+TBSP) STRATEGY  vs  SWEEP MODE B  vs  BUY-AND-HOLD")
     logging.info(f"  OOS: {OOS_START} to {OOS_END}  |  Extended TBSP + MMF")
@@ -857,7 +857,7 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
         logging.info(f"  MC: n={N_MC} samples per asset per config"
               + (f"  |  Bootstrap: n={N_BOOTSTRAP}" if RUN_BOOTSTRAP else ""))
     logging.info(sep)
-    logging.info()
+    
 
     # B&H reference
     logging.info("  BUY-AND-HOLD BENCHMARKS (same OOS period):")
@@ -865,7 +865,7 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
     logging.info(f"    TBSP B&H: CAGR={bh_tbsp_cagr*100:.2f}%  Sharpe={bh_tbsp_sharpe:.3f}")
     static_70_30 = 0.70 * bh_wig_cagr + 0.30 * bh_tbsp_cagr
     logging.info(f"    70/30 static mix (approx): CAGR≈{static_70_30*100:.2f}%")
-    logging.info()
+    
 
     # ── OOS Performance table ──────────────────────────────────────────────
     hdr = (
@@ -891,7 +891,7 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
             f"[OOS from {r['oos_start']}]"
         )
 
-    logging.info()
+    
     logging.info("  -- Sweep Mode B (WIG+MSCI_World+TBSP, MSCI_World≈0) --")
     for r in SWEEP_MODEB:
         wig_flag = "✓" if r["wig_mc"] == "ROBUST" else "✗"
@@ -908,7 +908,7 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
             f"WIG_MC={wig_flag} TBSP_MC=✓"
         )
 
-    logging.info()
+    
     logging.info("  -- B&H references --")
     for label, cagr, sharpe in [
         ("WIG B&H",  bh_wig_cagr,  bh_wig_sharpe),
@@ -923,7 +923,7 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
 
     # ── Robustness table (only when MC was run) ────────────────────────────
     if RUN_MC:
-        logging.info()
+        
         logging.info(sep2)
         logging.info("  ROBUSTNESS VERDICTS")
         logging.info(sep2)
@@ -959,7 +959,7 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
             )
 
         # ── Failure reason detail ──────────────────────────────────────────
-        logging.info()
+        
         logging.info(sep2)
         logging.info("  FAILURE DETAIL  (FRAGILE configs only)")
         logging.info(sep2)
@@ -1004,7 +1004,7 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
             logging.info("  (none — all configs passed all checks)")
 
     # ── Key findings ───────────────────────────────────────────────────────
-    logging.info()
+    
     logging.info(sep)
     logging.info("  KEY FINDINGS:")
     best_2a = max(results, key=lambda x: x["calmar"]) if results else None

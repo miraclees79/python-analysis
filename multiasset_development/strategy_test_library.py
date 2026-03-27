@@ -590,7 +590,7 @@ def run_strategy_with_trades(
     target_vol=0.10,
     max_leverage=1.0,
     position_mode="vol_entry",
-    use_momentum=False,
+    filter_mode="ma",
     mom_lookback=252,
     cash_df=None,
     safe_rate=0.0,
@@ -709,8 +709,13 @@ def run_strategy_with_trades(
     df["ma_slow"] = df["price"].rolling(slow).mean().shift(1)
     df["trend"] = (df["ma_fast"] > df["ma_slow"]).astype(int)
 
-    if use_momentum:
-        df["MOM"] = compute_momentum(df["price"], lookback=mom_lookback).shift(1)
+    if filter_mode == "mom":
+        df["MOM"] = compute_momentum(df["price"], 
+                        lookback=mom_lookback,
+                        blend = False).shift(1)
+    elif filter_mode == "mom_blend":
+        df["MOM"] = compute_momentum(df["price"], 
+                        blend = True).shift(1)
     else:
         df["MOM"] = 1
 
@@ -800,8 +805,10 @@ def run_strategy_with_trades(
     
     if fund_signal is not None:
         filter_mode_active = "fund"
-    elif use_momentum:
+    elif filter_mode == "mom":
         filter_mode_active = "mom"
+    elif filter_mode == "mom_blend":
+        filter_mode_active = "mom_blend"
     else:
         filter_mode_active = "ma"
 
@@ -841,7 +848,7 @@ def run_strategy_with_trades(
 
             if filter_mode_active == "fund":
                 filter_on = bool(_fund_vals[_n]) if _fund_vals is not None else True
-            elif filter_mode_active == "mom":
+            elif filter_mode_active == "mom" or filter_mode_active == "mom_blend":
                 filter_on = mom > 0
             else:
                 filter_on = (trend == 1)
@@ -958,7 +965,7 @@ def run_strategy_with_trades(
 
             if filter_mode_active == "fund":
                 filter_on = bool(row["fund_filter"])
-            elif filter_mode_active == "mom":
+            elif filter_mode_active == "mom" or filter_mode_active == "mom_blend":
                 filter_on = mom > 0
             else:
                 filter_on = (trend == 1)
@@ -1157,7 +1164,7 @@ def evaluate_params(
     from N_atr_grid into that position so the key structure is consistent.
     """
 
-    use_mom = (filter_mode == "mom")
+    #use_mom = (filter_mode == "mom")
 
     train_fund_signal = None
     if filter_mode == "fund" and fund_params is not None:
@@ -1179,7 +1186,7 @@ def evaluate_params(
         target_vol=tv,
         vol_window=vol_window,
         position_mode=selected_mode,
-        use_momentum=use_mom,
+        filter_mode=filter_mode,
         mom_lookback=mom_lookback,    
         fund_signal=train_fund_signal,
         fast_mode=fast_mode,
@@ -1350,7 +1357,7 @@ def walk_forward(
         # -------------------------------------------------------
         param_scores = {}
 
-        filter_modes = ["ma", "mom"]
+        filter_modes = ["ma", "mom", "mom_blend"]
         if funds_df is not None:
             filter_modes.append("fund")
         
@@ -1559,7 +1566,7 @@ def walk_forward(
         # Build kwargs for run_strategy_with_trades — exclude meta keys
         _strategy_keys_to_exclude = {
             "filter_mode", "fund_params", "fund_idx",
-            "use_momentum", "target_vol", "use_atr_stop", "mom_lookback",
+             "target_vol", "use_atr_stop", "mom_lookback",
             "atr_window", "N_atr",
         }
 
@@ -1574,7 +1581,7 @@ def walk_forward(
             entry_gate=gate_oos if 'gate_oos' in dir() else None,
             fund_signal=oos_fund_signal,
             fast_mode=fast_mode,
-            use_momentum=(best_params["filter_mode"] == "mom"),
+            filter_mode=best_params["filter_mode"],
             mom_lookback=best_params["mom_lookback"],
             use_atr_stop=best_params["use_atr_stop"],
             N_atr=best_params["N_atr"],
@@ -1612,7 +1619,7 @@ def walk_forward(
             "fund_params":  str(best_params["fund_params"]),
             **{k: v for k, v in best_params.items()
                if k not in ("filter_mode", "fund_params", "fund_idx",
-                    "use_momentum", "target_vol", "use_atr_stop",
+                     "target_vol", "use_atr_stop",
                     "atr_window")},
             "target_vol":   best_params.get("target_vol", "N/A"),
             "mom_lookback": best_params.get("mom_lookback", 252),

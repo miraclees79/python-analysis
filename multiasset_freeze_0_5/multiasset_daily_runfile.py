@@ -258,6 +258,10 @@ MMF_FLOOR = "1995-01-02"
 DATA_START = "1990-01-01"  # hard floor for all series
 
 GDRIVE_FOLDER_ID_DEFAULT = None
+
+# Output directory
+OUTPUT_DIR = "outputs"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 # ============================================================
 # PHASE 1 — DATA DOWNLOAD
 # ============================================================
