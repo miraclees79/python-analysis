@@ -846,26 +846,26 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
     sep  = "=" * 110
     sep2 = "-" * 110
 
-    print()
-    print(sep)
-    print("  2-ASSET (WIG+TBSP) STRATEGY  vs  SWEEP MODE B  vs  BUY-AND-HOLD")
-    print(f"  OOS: {OOS_START} to {OOS_END}  |  Extended TBSP + MMF")
+    logging.info()
+    logging.info(sep)
+    logging.info("  2-ASSET (WIG+TBSP) STRATEGY  vs  SWEEP MODE B  vs  BUY-AND-HOLD")
+    logging.info(f"  OOS: {OOS_START} to {OOS_END}  |  Extended TBSP + MMF")
     stop_mode = "ATR-scaled" if USE_ATR_STOP else "fixed %"
-    print(f"  Equity trailing stop: {stop_mode}"
+    logging.info(f"  Equity trailing stop: {stop_mode}"
           + (f"  (ATR window={ATR_WINDOW})" if USE_ATR_STOP else ""))
     if RUN_MC:
-        print(f"  MC: n={N_MC} samples per asset per config"
+        logging.info(f"  MC: n={N_MC} samples per asset per config"
               + (f"  |  Bootstrap: n={N_BOOTSTRAP}" if RUN_BOOTSTRAP else ""))
-    print(sep)
-    print()
+    logging.info(sep)
+    logging.info()
 
     # B&H reference
-    print("  BUY-AND-HOLD BENCHMARKS (same OOS period):")
-    print(f"    WIG  B&H: CAGR={bh_wig_cagr*100:.2f}%  Sharpe={bh_wig_sharpe:.3f}")
-    print(f"    TBSP B&H: CAGR={bh_tbsp_cagr*100:.2f}%  Sharpe={bh_tbsp_sharpe:.3f}")
+    logging.info("  BUY-AND-HOLD BENCHMARKS (same OOS period):")
+    logging.info(f"    WIG  B&H: CAGR={bh_wig_cagr*100:.2f}%  Sharpe={bh_wig_sharpe:.3f}")
+    logging.info(f"    TBSP B&H: CAGR={bh_tbsp_cagr*100:.2f}%  Sharpe={bh_tbsp_sharpe:.3f}")
     static_70_30 = 0.70 * bh_wig_cagr + 0.30 * bh_tbsp_cagr
-    print(f"    70/30 static mix (approx): CAGR≈{static_70_30*100:.2f}%")
-    print()
+    logging.info(f"    70/30 static mix (approx): CAGR≈{static_70_30*100:.2f}%")
+    logging.info()
 
     # ── OOS Performance table ──────────────────────────────────────────────
     hdr = (
@@ -873,12 +873,12 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
         f"{'CalMAR':>8} {'Sortino':>8} {'Realloc':>8} "
         f"{'w_EQ':>6} {'w_BD':>6} {'Source'}"
     )
-    print(hdr)
-    print(sep2)
+    logging.info(hdr)
+    logging.info(sep2)
 
-    print("  -- 2-asset signal strategy (this script) --")
+    logging.info("  -- 2-asset signal strategy (this script) --")
     for r in sorted(results, key=lambda x: -x["calmar"]):
-        print(
+        logging.info(
             f"  {'2A '+r['config']:<10} "
             f"{r['cagr']*100:>6.2f}% "
             f"{r['sharpe']:>8.3f} "
@@ -891,11 +891,11 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
             f"[OOS from {r['oos_start']}]"
         )
 
-    print()
-    print("  -- Sweep Mode B (WIG+MSCI_World+TBSP, MSCI_World≈0) --")
+    logging.info()
+    logging.info("  -- Sweep Mode B (WIG+MSCI_World+TBSP, MSCI_World≈0) --")
     for r in SWEEP_MODEB:
         wig_flag = "✓" if r["wig_mc"] == "ROBUST" else "✗"
-        print(
+        logging.info(
             f"  {'Sw '+r['config']:<10} "
             f"{r['cagr']*100:>6.2f}% "
             f"{r['sharpe']:>8.3f} "
@@ -908,13 +908,13 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
             f"WIG_MC={wig_flag} TBSP_MC=✓"
         )
 
-    print()
-    print("  -- B&H references --")
+    logging.info()
+    logging.info("  -- B&H references --")
     for label, cagr, sharpe in [
         ("WIG B&H",  bh_wig_cagr,  bh_wig_sharpe),
         ("TBSP B&H", bh_tbsp_cagr, bh_tbsp_sharpe),
     ]:
-        print(
+        logging.info(
             f"  {label:<10} "
             f"{cagr*100:>6.2f}% "
             f"{sharpe:>8.3f} "
@@ -923,18 +923,18 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
 
     # ── Robustness table (only when MC was run) ────────────────────────────
     if RUN_MC:
-        print()
-        print(sep2)
-        print("  ROBUSTNESS VERDICTS")
-        print(sep2)
+        logging.info()
+        logging.info(sep2)
+        logging.info("  ROBUSTNESS VERDICTS")
+        logging.info(sep2)
 
         # Header
         bb_cols = "  BB-WIG   BB-TBSP" if RUN_BOOTSTRAP else ""
-        print(
+        logging.info(
             f"  {'Config':<10}  {'MC-WIG':<9}  {'MC-TBSP':<9}{bb_cols}  "
             f"{'Both ROBUST'}"
         )
-        print("  " + "-" * 75)
+        logging.info("  " + "-" * 75)
 
         for r in sorted(results, key=lambda x: x["config"]):
             wig_mc  = _fmt_verdict(r["wig_mc_verdict"])
@@ -953,16 +953,16 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
                 both_all = both_mc
 
             flag = "*** BOTH ROBUST ***" if both_all else ""
-            print(
+            logging.info(
                 f"  {'2A '+r['config']:<10}  {wig_mc:<9}  {tbsp_mc:<9}"
                 f"{bb_str}  {flag}"
             )
 
         # ── Failure reason detail ──────────────────────────────────────────
-        print()
-        print(sep2)
-        print("  FAILURE DETAIL  (FRAGILE configs only)")
-        print(sep2)
+        logging.info()
+        logging.info(sep2)
+        logging.info("  FAILURE DETAIL  (FRAGILE configs only)")
+        logging.info(sep2)
 
         any_failures = False
         for r in sorted(results, key=lambda x: x["config"]):
@@ -973,60 +973,60 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
             if r["wig_mc_verdict"] == "FRAGILE" and r["wig_mc_failures"]:
                 has_failure  = True
                 any_failures = True
-                print(f"\n  {config_label}  MC-WIG  FRAGILE:")
+                logging.info(f"\n  {config_label}  MC-WIG  FRAGILE:")
                 for f in r["wig_mc_failures"]:
-                    print(f"    - {f}")
+                    logging.info(f"    - {f}")
 
             if r["tbsp_mc_verdict"] == "FRAGILE" and r["tbsp_mc_failures"]:
                 has_failure  = True
                 any_failures = True
-                print(f"\n  {config_label}  MC-TBSP  FRAGILE:")
+                logging.info(f"\n  {config_label}  MC-TBSP  FRAGILE:")
                 for f in r["tbsp_mc_failures"]:
-                    print(f"    - {f}")
+                    logging.info(f"    - {f}")
 
             # Bootstrap failures
             if RUN_BOOTSTRAP:
                 if r["wig_bb_verdict"] == "FRAGILE" and r["wig_bb_failures"]:
                     has_failure  = True
                     any_failures = True
-                    print(f"\n  {config_label}  BB-WIG  FRAGILE:")
+                    logging.info(f"\n  {config_label}  BB-WIG  FRAGILE:")
                     for f in r["wig_bb_failures"]:
-                        print(f"    - {f}")
+                        logging.info(f"    - {f}")
 
                 if r["tbsp_bb_verdict"] == "FRAGILE" and r["tbsp_bb_failures"]:
                     has_failure  = True
                     any_failures = True
-                    print(f"\n  {config_label}  BB-TBSP  FRAGILE:")
+                    logging.info(f"\n  {config_label}  BB-TBSP  FRAGILE:")
                     for f in r["tbsp_bb_failures"]:
-                        print(f"    - {f}")
+                        logging.info(f"    - {f}")
 
         if not any_failures:
-            print("  (none — all configs passed all checks)")
+            logging.info("  (none — all configs passed all checks)")
 
     # ── Key findings ───────────────────────────────────────────────────────
-    print()
-    print(sep)
-    print("  KEY FINDINGS:")
+    logging.info()
+    logging.info(sep)
+    logging.info("  KEY FINDINGS:")
     best_2a = max(results, key=lambda x: x["calmar"]) if results else None
     if best_2a:
-        print(f"  Best 2-asset config: {best_2a['config']}  "
+        logging.info(f"  Best 2-asset config: {best_2a['config']}  "
               f"CalMAR={best_2a['calmar']:.3f}  CAGR={best_2a['cagr']*100:.2f}%")
         if RUN_MC:
             wig_v  = _fmt_verdict(best_2a["wig_mc_verdict"])
             tbsp_v = _fmt_verdict(best_2a["tbsp_mc_verdict"])
-            print(f"    MC robustness: WIG={wig_v}  TBSP={tbsp_v}")
+            logging.info(f"    MC robustness: WIG={wig_v}  TBSP={tbsp_v}")
             if RUN_BOOTSTRAP:
                 wig_b  = _fmt_verdict(best_2a["wig_bb_verdict"])
                 tbsp_b = _fmt_verdict(best_2a["tbsp_bb_verdict"])
-                print(f"    Bootstrap:     WIG={wig_b}  TBSP={tbsp_b}")
+                logging.info(f"    Bootstrap:     WIG={wig_b}  TBSP={tbsp_b}")
 
     best_B = max(SWEEP_MODEB, key=lambda x: x["calmar"])
-    print(f"  Best sweep Mode B:   {best_B['config']}  "
+    logging.info(f"  Best sweep Mode B:   {best_B['config']}  "
           f"CalMAR={best_B['calmar']:.3f}  CAGR={best_B['cagr']*100:.2f}%")
     if best_2a:
         calmar_diff = best_2a["calmar"] - best_B["calmar"]
         cagr_diff   = best_2a["cagr"]   - best_B["cagr"]
-        print(f"  2-asset vs Mode B (best vs best): "
+        logging.info(f"  2-asset vs Mode B (best vs best): "
               f"CalMAR {calmar_diff:+.3f}  CAGR {cagr_diff*100:+.2f}pp")
 
     if RUN_MC:
@@ -1039,11 +1039,11 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
         ]
         label = "MC+Bootstrap" if RUN_BOOTSTRAP else "MC"
         if robust_configs:
-            print(f"  {label}-robust configs: {', '.join(robust_configs)}")
+            logging.info(f"  {label}-robust configs: {', '.join(robust_configs)}")
         else:
-            print(f"  No configs passed all {label} checks.")
+            logging.info(f"  No configs passed all {label} checks.")
 
-    print(sep)
+    logging.info(sep)
 
 
 # ============================================================

@@ -317,8 +317,69 @@ def prepare_cash_returns(cash_df, price_col="Zamkniecie"):
 # Indicators
 # ============================
 
-def compute_momentum(series, lookback=252, skip=21):
-    return series.shift(skip) / series.shift(lookback) - 1
+def compute_momentum(
+    series,
+    lookback=252,
+    skip=21,
+    blend=False,
+    blend_lookbacks=(21, 63, 126, 252),
+    blend_skip=5,
+):
+    """
+    Compute a momentum signal from a price series.
+
+    Single-horizon mode (blend=False, default — preserves existing behaviour):
+        momentum = series.shift(skip) / series.shift(lookback) - 1
+        Returns the return from lookback days ago to skip days ago.
+        lookback and skip parameters are used exactly as before.
+
+    Blended multi-horizon mode (blend=True):
+        Computes momentum over each horizon in blend_lookbacks, applies a
+        uniform blend_skip to all horizons as a microstructure buffer, then
+        returns the equally-weighted average signal.
+
+        A short skip (default 5 days) is used for all horizons rather than
+        the standard 21-day skip. Using skip=21 on a 21-day lookback would
+        skip the entire signal window; 5 days avoids microstructure noise
+        while preserving meaningful short-horizon signal.
+
+        The blend_lookbacks tuple should cover the range of horizons you
+        want to combine. Default (21, 63, 126, 252) covers 1m, 3m, 6m, 12m.
+        The composite is the unweighted mean — each horizon contributes
+        equally regardless of its own vol, keeping interpretation simple
+        and avoiding an extra estimation step.
+
+        When blend=True, the lookback and skip parameters are ignored;
+        blend_lookbacks and blend_skip govern the calculation instead.
+
+    Parameters
+    ----------
+    series          : pd.Series  — price series (DatetimeIndex)
+    lookback        : int        — single-horizon lookback (days); ignored when blend=True
+    skip            : int        — single-horizon skip (days); ignored when blend=True
+    blend           : bool       — False = single horizon (default), True = multi-horizon blend
+    blend_lookbacks : tuple[int] — lookback horizons for blend mode
+    blend_skip      : int        — microstructure skip applied to all blend horizons
+
+    Returns
+    -------
+    pd.Series — momentum signal, same index as series
+    """
+    if not blend:
+        # Original single-horizon behaviour — unchanged
+        return series.shift(skip) / series.shift(lookback) - 1
+
+    # Multi-horizon blend: compute one signal per horizon, average them
+    signals = []
+    for lb in blend_lookbacks:
+        sig = series.shift(blend_skip) / series.shift(lb) - 1
+        signals.append(sig)
+
+    # Equal-weight average across horizons
+    import pandas as pd
+    blended = pd.concat(signals, axis=1).mean(axis=1)
+    blended.name = series.name
+    return blended
 
 
 # ============================
