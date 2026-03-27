@@ -124,9 +124,9 @@ logging.info("=" * 80)
 POSITION_MODE = "full"
 
 # --- Walk-forward window lengths (years) ---
-TRAIN_YEARS_EQ = 9     # equity signal training window
+TRAIN_YEARS_EQ = 7     # equity signal training window
 TEST_YEARS_EQ  = 2     # equity signal test window
-TRAIN_YEARS_BD = 9     # bond signal training window
+TRAIN_YEARS_BD = 7     # bond signal training window
 TEST_YEARS_BD  = 2     # bond signal test window
 
 # --- Volatility window (days) ---
@@ -175,7 +175,7 @@ MOM_LB_EQ   = [126, 252]
 # so equity and bond stops can be tuned independently.
 # Set USE_ATR_STOP_BD = USE_ATR_STOP to keep them in sync.
 #
-USE_ATR_STOP    = False          # Equity trailing stop mode
+USE_ATR_STOP    = True          # Equity trailing stop mode
 ATR_WINDOW      = 20             # Rolling window for ATR estimate (days)
 N_ATR_GRID      = [0.08, 0.10, 0.12, 0.15, 0.20]   # Normalised ATR grid (same scale as X_GRID_EQ)
  
