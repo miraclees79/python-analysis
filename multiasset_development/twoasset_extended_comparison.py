@@ -864,7 +864,7 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
     logging.info(f"    WIG  B&H: CAGR={bh_wig_cagr*100:.2f}%  Sharpe={bh_wig_sharpe:.3f}")
     logging.info(f"    TBSP B&H: CAGR={bh_tbsp_cagr*100:.2f}%  Sharpe={bh_tbsp_sharpe:.3f}")
     static_70_30 = 0.70 * bh_wig_cagr + 0.30 * bh_tbsp_cagr
-    logging.info(f"    70/30 static mix (approx): CAGR≈{static_70_30*100:.2f}%")
+    logging.info(f"    70/30 static mix (approx): CAGR = {static_70_30*100:.2f}%")
     
 
     # ── OOS Performance table ──────────────────────────────────────────────
@@ -892,9 +892,9 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
         )
 
     
-    logging.info("  -- Sweep Mode B (WIG+MSCI_World+TBSP, MSCI_World≈0) --")
+    logging.info("  -- Sweep Mode B (WIG+MSCI_World+TBSP, MSCI_World = approx 0) --")
     for r in SWEEP_MODEB:
-        wig_flag = "✓" if r["wig_mc"] == "ROBUST" else "✗"
+        wig_flag = "OK" if r["wig_mc"] == "ROBUST" else "FAIL"
         logging.info(
             f"  {'Sw '+r['config']:<10} "
             f"{r['cagr']*100:>6.2f}% "
@@ -905,7 +905,7 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
             f"{'N/A':>8} "
             f"{'N/A':>5}  "
             f"{'N/A':>4}  "
-            f"WIG_MC={wig_flag} TBSP_MC=✓"
+            f"WIG_MC={wig_flag} TBSP_MC=OK"
         )
 
     

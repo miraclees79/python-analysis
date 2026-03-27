@@ -1972,7 +1972,7 @@ def plot_regime_overlay(close, regime_series, equity_strat, equity_bh,
     ax2.axvspan(prev_date, regime_series.index[-1],
                 color=REGIME_COLOURS.get(prev_regime, "#eeeeee"), alpha=0.3)
 
-    ax1.plot(close / close.iloc[0], color="steelblue", linewidth=1, label="WIG20TR (normalised)")
+    ax1.plot(close / close.iloc[0], color="steelblue", linewidth=1, label="Equity (normalised)")
     ax1.set_ylabel("Index level")
     ax1.legend(fontsize=9)
     ax1.set_title(title)
@@ -2048,10 +2048,10 @@ def run_regime_decomposition(close, high, low,
             "fig_overlay": fig_overlay,
             "fig_bars"   : fig_bars,
         }
-        print(f"\n{'─'*60}")
-        print(f"  {name} regime decomposition")
-        print(f"{'─'*60}")
-        print(stats.to_string())
-        print(f"\nTransition matrix:\n{trans.to_string()}")
+        logging.info(f"\n{'─'*60}")
+        logging.info(f"  {name} regime decomposition")
+        logging.info(f"{'─'*60}")
+        logging.info(stats.to_string())
+        logging.info(f"\nTransition matrix:\n{trans.to_string()}")
 
     return results
