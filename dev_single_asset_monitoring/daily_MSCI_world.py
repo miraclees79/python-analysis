@@ -137,7 +137,7 @@ ASSET_REGISTRY = {
     "MSCI_World": {
         "source": "drive",
         "drive_kwargs": {
-            "raw_filename":      "msci_world_synthetic.csv",
+            "raw_filename":      "msci_world_wsj_raw.csv",
             "combined_filename": "msci_world_combined.csv",
             "extension_ticker":  "URTH",
             "extension_source":  "yfinance",
