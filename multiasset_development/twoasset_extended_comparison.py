@@ -54,12 +54,34 @@ import pandas as pd
 
 # ── Logging ─────────────────────────────────────────────────────────────────
 
-logging.basicConfig(
-    format="%(asctime)s  %(levelname)-8s  %(message)s",
-    level=logging.INFO,
-    datefmt="%H:%M:%S",
+
+
+
+LOG_FILE = "Two_asset_sweep.log"
+os.environ["PYTHONIOENCODING"] = "utf-8"
+
+root_logger = logging.getLogger()
+root_logger.handlers.clear()
+root_logger.setLevel(logging.INFO)
+
+file_handler = logging.FileHandler(LOG_FILE, mode="w")
+file_handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 )
-log = logging.getLogger(__name__)
+root_logger.addHandler(file_handler)
+
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+)
+root_logger.addHandler(console_handler)
+
+logging.info("=" * 80)
+logging.info("TWO-ASSET WINDOW SWEEP RUNFILE START: %s", dt.datetime.now())
+logging.info("=" * 80)
+
+
+
 
 # ── Imports from freeze ──────────────────────────────────────────────────────
 
@@ -132,14 +154,11 @@ MOM_LB_EQ = [126, 252]
 # --- Trailing stop mode ---
 # USE_ATR_STOP = False : fixed percentage trailing stop (current default)
 #     X_GRID_EQ is used; stop fires when price < (1 - X) * peak
-# USE_ATR_STOP = True  : normalised ATR Chandelier exit
-#     N_ATR_GRID is used; stop fires when price < peak * (1 - N_atr * ATR_pct)
-#     where ATR_pct = rolling mean of |daily return| over ATR_WINDOW bars.
-#     N_atr is dimensionless and directly comparable to X:
-#       N_atr=0.10 gives ~10% stop width at average vol, wider in high-vol
-#       regimes and tighter in low-vol regimes.
-#     N_ATR_GRID values should match X_GRID_EQ in order of magnitude.
-#     ATR_WINDOW: 20 matches VOL_WINDOW; increase to 40–60 for a slower ATR.
+# USE_ATR_STOP = True  : ATR-scaled Chandelier exit
+#     N_ATR_GRID is used; stop fires when price < peak - N * ATR
+#     ATR = rolling mean of |daily price change| over ATR_WINDOW bars
+#     Recommended N_ATR range for WIG: 3–6 (wider = more room to breathe)
+#     ATR_WINDOW: 20 matches VOL_WINDOW; increase to 40–60 for a slower ATR
 #
 # The bond walk-forward (Phase 3) uses a separate flag USE_ATR_STOP_BD
 # so equity and bond stops can be tuned independently.
@@ -160,6 +179,22 @@ FAST_BD   = [50, 100, 150]
 SLOW_BD   = [200, 300, 400, 500]
 TV_BD     = [0.08, 0.10, 0.12]
 SL_BD     = [0.01, 0.02, 0.03]
+
+
+# ---------------------------------------------------------------------------
+# DATA FLOOR DATES
+# ---------------------------------------------------------------------------
+# WIG (Mode A only): daily continuous trading started 1994-10-03.
+#   Earlier data has multi-day gaps that distort the breakout trough
+#   calculation and MA windows.  Clipped after download in Phase 2.
+WIG_DATA_FLOOR = "1995-01-02"
+ 
+# MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
+#   date. Ensures IS windows starting before 1999 have realistic cash returns
+#   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
+MMF_FLOOR = "1995-01-02"
+DATA_START = "1990-01-01"  # hard floor for all series
+
 
 # Parallelism
 _cpu = os.cpu_count() or 1
@@ -204,32 +239,60 @@ SWEEP_MODEB = [
 # ============================================================
 
 def download_all(tmp_dir):
-    log.info("=" * 70)
-    log.info("DOWNLOADING DATA")
-    log.info("=" * 70)
+    logging.info("=" * 70)
+    logging.info("DOWNLOADING DATA")
+    logging.info("=" * 70)
 
-    def _get(ticker, label, mandatory=True):
-        url  = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
-        path = os.path.join(tmp_dir, f"{label}.csv")
-        ok   = download_csv(url, path)
-        if not ok:
-            if mandatory:
-                log.error("FAIL: %s", label); sys.exit(1)
-            return None
-        df = load_csv(path)
-        if df is None and mandatory:
-            log.error("FAIL load_csv: %s", label); sys.exit(1)
-        if df is not None:
-            log.info("OK  %-10s  %5d rows  %s to %s",
-                     label, len(df),
-                     df.index.min().date(), df.index.max().date())
+    def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
+        """
+        Download a stooq series, clip to DATA_START.
+        If download fails, fall back to loading CSV from current working directory.
+        """
+        url         = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
+        tmp_path    = os.path.join(tmp_dir, f"ge_{label}.csv")
+        #local_path  = os.path.join(os.getcwd(), f"{label}.csv")  # fallback filename
+        local_path = os.path.join(os.getcwd(), "data", f"{label}.csv")
+        # === Attempt online download ===
+        ok = download_csv(url, tmp_path)
+        if ok:
+            logging.info("INFO: %s — downloaded from Stooq", label)
+            df = load_csv(tmp_path)
+        else:
+            logging.warning("WARN: %s — download failed, trying local CSV: %s", label, local_path)
+
+            # === Fallback: try loading local file ===
+            if os.path.exists(local_path):
+                df = load_csv(local_path)
+                if df is not None:
+                    logging.info("INFO: %s — loaded from local CSV", label)
+                else:
+                    logging.error("FAIL: %s — local CSV exists but load_csv returned None", label)
+                    if mandatory:
+                        sys.exit(1)
+                    return None
+            else:
+                # No fallback available
+                if mandatory:
+                    logging.error("FAIL: %s — neither online nor local CSV available, exiting.", label)
+                    sys.exit(1)
+                logging.warning("WARN: %s — optional series missing, skipping.", label)
+                return None
+
+        # === Post-loading logic ===
+        df = df.loc[df.index >= pd.Timestamp(DATA_START)]
+
+        logging.info(
+            "OK  : %-14s  %5d rows  %s to %s",
+            label, len(df), df.index.min().date(), df.index.max().date(),
+        )
         return df
 
-    WIG   = _get("wig",       "WIG")
-    MMF   = _get("2720.n",    "MMF")
-    W1M   = _get("plopln1m",  "WIBOR1M", mandatory=False)
-    PL10Y = _get("10yply.b",  "PL10Y")
-    DE10Y = _get("10ydey.b",  "DE10Y")
+    WIG   = _stooq("wig",       "WIG")
+    WIG = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
+    MMF   = _stooq("2720.n",    "MMF")
+    W1M   = _stooq("plopln1m",  "WIBOR1M", mandatory=False)
+    PL10Y = _stooq("10yply.b",  "PL10Y")
+    DE10Y = _stooq("10ydey.b",  "DE10Y")
 
     folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip()
 
@@ -242,8 +305,10 @@ def download_all(tmp_dir):
     )
 
     if TBSP is None:
-        logging.error("FAIL: TBSP build/update failed.")
-        sys.exit(1)
+        TBSP = _stooq("^tbsp",  "TBSP")
+        if TBSP is None:
+            logging.error("FAIL: TBSP build/update failed.")
+            sys.exit(1)
     logging.info("OK  %-14s  %5d rows  %s to %s",
                  "TBSP", len(TBSP),
                  TBSP.index.min().date(), TBSP.index.max().date())
@@ -253,23 +318,22 @@ def download_all(tmp_dir):
 
     return WIG, TBSP, MMF, W1M, PL10Y, DE10Y
 
-
 # ============================================================
 # PHASE 2 — DERIVED SERIES
 # ============================================================
 
 def build_derived(WIG, TBSP, MMF, W1M, PL10Y, DE10Y):
-    log.info("=" * 70)
-    log.info("BUILDING DERIVED SERIES")
-    log.info("=" * 70)
+    logging.info("=" * 70)
+    logging.info("BUILDING DERIVED SERIES")
+    logging.info("=" * 70)
 
     # Extended MMF
     if W1M is not None:
         MMF_EXT = build_mmf_extended(MMF, W1M, floor_date="1994-10-03")
-        log.info("MMF extended back to %s", MMF_EXT.index.min().date())
+        logging.info("MMF extended back to %s", MMF_EXT.index.min().date())
     else:
         MMF_EXT = MMF
-        log.warning("WIBOR1M unavailable — using standard MMF (starts ~1999)")
+        logging.warning("WIBOR1M unavailable — using standard MMF (starts ~1999)")
 
     # Bond entry gate (spread + yield pre-filter)
     spread_pf = build_spread_prefilter(PL10Y, DE10Y)
@@ -282,7 +346,7 @@ def build_derived(WIG, TBSP, MMF, W1M, PL10Y, DE10Y):
     bond_gate   = (spread_gate & yield_gate).astype(int)
     bond_gate.name = "bond_entry_gate"
 
-    log.info(
+    logging.info(
         "Bond entry gate: %.1f%% days pass  (spread %.1f%% | yield %.1f%%)",
         bond_gate.mean()*100, spread_gate.mean()*100, yield_gate.mean()*100,
     )
@@ -461,7 +525,7 @@ def run_robustness_for_config(
         return result
 
     # ── MC: WIG ─────────────────────────────────────────────────────────────
-    log.info("  [MC WIG %s] n=%d", label, N_MC)
+    logging.info("  [MC WIG %s] n=%d", label, N_MC)
     windows_eq     = extract_windows_from_wf_results(wf_results_eq, train_years=train_years)
     best_params_eq = extract_best_params_from_wf_results(wf_results_eq)
 
@@ -487,7 +551,7 @@ def run_robustness_for_config(
     )
 
     # ── MC: TBSP ────────────────────────────────────────────────────────────
-    log.info("  [MC TBSP %s] n=%d", label, N_MC)
+    logging.info("  [MC TBSP %s] n=%d", label, N_MC)
     windows_bd     = extract_windows_from_wf_results(wf_results_bd, train_years=train_years)
     best_params_bd = extract_best_params_from_wf_results(wf_results_bd)
 
@@ -516,7 +580,7 @@ def run_robustness_for_config(
         return result
 
     # ── Bootstrap: WIG ──────────────────────────────────────────────────────
-    log.info("  [Bootstrap WIG %s] n=%d", label, N_BOOTSTRAP)
+    logging.info("  [Bootstrap WIG %s] n=%d", label, N_BOOTSTRAP)
     bb_eq = run_block_bootstrap_robustness(
         df                    = WIG,
         cash_df               = MMF_EXT,
@@ -549,7 +613,7 @@ def run_robustness_for_config(
     )
 
     # ── Bootstrap: TBSP ─────────────────────────────────────────────────────
-    log.info("  [Bootstrap TBSP %s] n=%d", label, N_BOOTSTRAP)
+    logging.info("  [Bootstrap TBSP %s] n=%d", label, N_BOOTSTRAP)
     bb_bd = run_block_bootstrap_robustness(
         df                    = TBSP,
         cash_df               = MMF_EXT,
@@ -593,8 +657,8 @@ def run_config(train_years, test_years, WIG, TBSP, MMF_EXT,
                bond_gate, ret_eq, ret_bd, ret_mmf):
 
     label = f"{train_years}+{test_years}"
-    log.info("")
-    log.info("--- Config %s ---", label)
+    logging.info("")
+    logging.info("--- Config %s ---", label)
 
     # Equity walk-forward
     wf_eq_eq, wf_res_eq, wf_tr_eq = walk_forward(
@@ -617,7 +681,7 @@ def run_config(train_years, test_years, WIG, TBSP, MMF_EXT,
         atr_window            = ATR_WINDOW,
     )
     if wf_eq_eq.empty:
-        log.warning("Empty equity WF for %s", label)
+        logging.warning("Empty equity WF for %s", label)
         return None
 
     # Bond walk-forward
@@ -642,14 +706,14 @@ def run_config(train_years, test_years, WIG, TBSP, MMF_EXT,
         atr_window            = ATR_WINDOW_BD,
     )
     if wf_eq_bd.empty:
-        log.warning("Empty bond WF for %s", label)
+        logging.warning("Empty bond WF for %s", label)
         return None
 
     m_eq = compute_metrics(wf_eq_eq)
     m_bd = compute_metrics(wf_eq_bd)
-    log.info("  WIG  OOS: CAGR=%.2f%%  Sharpe=%.2f  MaxDD=%.2f%%  CalMAR=%.3f",
+    logging.info("  WIG  OOS: CAGR=%.2f%%  Sharpe=%.2f  MaxDD=%.2f%%  CalMAR=%.3f",
              m_eq["CAGR"]*100, m_eq["Sharpe"], m_eq["MaxDD"]*100, m_eq["CalMAR"])
-    log.info("  TBSP OOS: CAGR=%.2f%%  Sharpe=%.2f  MaxDD=%.2f%%  CalMAR=%.3f",
+    logging.info("  TBSP OOS: CAGR=%.2f%%  Sharpe=%.2f  MaxDD=%.2f%%  CalMAR=%.3f",
              m_bd["CAGR"]*100, m_bd["Sharpe"], m_bd["MaxDD"]*100, m_bd["CalMAR"])
 
     # Build signals
@@ -684,7 +748,7 @@ def run_config(train_years, test_years, WIG, TBSP, MMF_EXT,
     )
 
     if port_eq.empty:
-        log.warning("Empty portfolio for %s", label)
+        logging.warning("Empty portfolio for %s", label)
         return None
 
     # Trim portfolio to sweep OOS period for fair comparison
@@ -696,7 +760,7 @@ def run_config(train_years, test_years, WIG, TBSP, MMF_EXT,
     ]
 
     if port_trimmed.empty:
-        log.warning(
+        logging.warning(
             "Config %s: portfolio has no data in target OOS %s–%s. "
             "Actual OOS: %s–%s. Extended TBSP needed for this window.",
             label, OOS_START, OOS_END,
@@ -715,7 +779,7 @@ def run_config(train_years, test_years, WIG, TBSP, MMF_EXT,
     w_bd_mean  = alloc_oos["w_bond"].mean()   if "w_bond"   in alloc_oos else float("nan")
     w_mmf_mean = alloc_oos["w_mmf"].mean()    if "w_mmf"    in alloc_oos else float("nan")
 
-    log.info(
+    logging.info(
         "  Portfolio [%s–%s]: CAGR=%.2f%%  Sharpe=%.3f  MaxDD=%.2f%%  CalMAR=%.3f  "
         "Realloc=%d  w_eq=%.0f%%  w_bd=%.0f%%",
         port_trimmed.index.min().date(), port_trimmed.index.max().date(),
@@ -987,20 +1051,20 @@ def print_comparison(results, bh_wig_cagr, bh_tbsp_cagr,
 # ============================================================
 
 def main():
-    log.info("=" * 70)
-    log.info("2-ASSET EXTENDED COMPARISON  START: %s", dt.datetime.now())
-    log.info("OOS target: %s to %s", OOS_START, OOS_END)
-    log.info("Window configs: %s", WINDOW_CONFIGS)
-    log.info("Trailing stop: %s%s",
+    logging.info("=" * 70)
+    logging.info("2-ASSET EXTENDED COMPARISON  START: %s", dt.datetime.now())
+    logging.info("OOS target: %s to %s", OOS_START, OOS_END)
+    logging.info("Window configs: %s", WINDOW_CONFIGS)
+    logging.info("Trailing stop: %s%s",
              "ATR-scaled" if USE_ATR_STOP else "fixed %",
              f" (window={ATR_WINDOW}, grid={N_ATR_GRID})" if USE_ATR_STOP else "")
-    log.info("RUN_MC=%s (n=%d)  RUN_BOOTSTRAP=%s (n=%d)",
+    logging.info("RUN_MC=%s (n=%d)  RUN_BOOTSTRAP=%s (n=%d)",
              RUN_MC, N_MC, RUN_BOOTSTRAP, N_BOOTSTRAP)
     if TBSP_EXTENDED_PATH:
-        log.info("Extended TBSP: %s", TBSP_EXTENDED_PATH)
+        logging.info("Extended TBSP: %s", TBSP_EXTENDED_PATH)
     else:
-        log.warning("No extended TBSP path set — OOS will start later than 2011")
-    log.info("=" * 70)
+        logging.warning("No extended TBSP path set — OOS will start later than 2011")
+    logging.info("=" * 70)
 
     tmp_dir = tempfile.mkdtemp()
 
@@ -1026,12 +1090,12 @@ def main():
     m_wig_bh   = compute_metrics(bh_wig_eq)
     m_tbsp_bh  = compute_metrics(bh_tbsp_eq)
 
-    log.info(
+    logging.info(
         "B&H WIG  [%s–%s]: CAGR=%.2f%%  Sharpe=%.3f  MaxDD=%.2f%%",
         OOS_START, OOS_END,
         m_wig_bh["CAGR"]*100, m_wig_bh["Sharpe"], m_wig_bh["MaxDD"]*100,
     )
-    log.info(
+    logging.info(
         "B&H TBSP [%s–%s]: CAGR=%.2f%%  Sharpe=%.3f  MaxDD=%.2f%%",
         OOS_START, OOS_END,
         m_tbsp_bh["CAGR"]*100, m_tbsp_bh["Sharpe"], m_tbsp_bh["MaxDD"]*100,
@@ -1067,9 +1131,9 @@ def main():
                    if not isinstance(v, list)}
             csv_rows.append(row)
         pd.DataFrame(csv_rows).to_csv(out_path, index=False)
-        log.info("Results saved to %s", out_path)
+        logging.info("Results saved to %s", out_path)
 
-    log.info("DONE: %s", dt.datetime.now())
+    logging.info("DONE: %s", dt.datetime.now())
 
 
 if __name__ == "__main__":

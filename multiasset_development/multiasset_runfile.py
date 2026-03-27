@@ -225,7 +225,7 @@ SL_YLD      = [0.05, 0.08, 0.10, 0.15]         # 4-5x wider than TBSP SL_BD
 RUN_MONTE_CARLO_PARAM_SINGLE = True # MC parameter robustness for single asset strategies
 ITERATIONS_MC_PARAM_SINGLE = 1000 # 1000 is the true test variant, 10 for smoke test
 
-RUN_BLOCK_BOOTSTRAP_SINGLE = True # Run bootstrap robustness test for single asset strategies
+RUN_BLOCK_BOOTSTRAP_SINGLE = False # Run bootstrap robustness test for single asset strategies
 ITERATIONS_BOOTSTRAP_SINGLE = 500 # 500 is the true test variant, 10 for smoke test
 # ATTENTION - # ~3-6h on 12-core machine — run overnight
 
@@ -282,112 +282,88 @@ logging.info("=" * 80)
 
 tmp_dir = tempfile.mkdtemp()
 
-# --- Equity: WIG total return index ---
-csv_wig  = os.path.join(tmp_dir, "wig.csv")
-download_csv("https://stooq.pl/q/d/l/?s=wig&i=d", csv_wig)
-WIG = load_csv(csv_wig)
-if WIG is None:
-    logging.error("Failed to load WIG data. Exiting.")
-    sys.exit(1)
-logging.info("WIG loaded: %d rows  (%s to %s)",
-             len(WIG), WIG.index.min().date(), WIG.index.max().date())
+def download_all(tmp_dir):
+    logging.info("=" * 70)
+    logging.info("DOWNLOADING DATA")
+    logging.info("=" * 70)
 
-
-
-
-tmp_dir = tempfile.gettempdir()
-
-def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
-    """
-    Download a stooq series, clip to DATA_START.
-    If download fails, fall back to loading CSV from current working directory.
-    """
-    url         = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
-    tmp_path    = os.path.join(tmp_dir, f"ge_{label}.csv")
-    local_path  = os.path.join(os.getcwd(), f"{label}.csv")  # fallback filename
-
-    # === Attempt online download ===
-    ok = download_csv(url, tmp_path)
-    if ok:
-        logging.info("INFO: %s — downloaded from Stooq", label)
-        df = load_csv(tmp_path)
-    else:
-        logging.warning("WARN: %s — download failed, trying local CSV: %s", label, local_path)
-
-        # === Fallback: try loading local file ===
-        if os.path.exists(local_path):
-            df = load_csv(local_path)
-            if df is not None:
-                logging.info("INFO: %s — loaded from local CSV", label)
-            else:
-                logging.error("FAIL: %s — local CSV exists but load_csv returned None", label)
-                if mandatory:
-                    sys.exit(1)
-                return None
+    def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
+        """
+        Download a stooq series, clip to DATA_START.
+        If download fails, fall back to loading CSV from current working directory.
+        """
+        url         = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
+        tmp_path    = os.path.join(tmp_dir, f"ge_{label}.csv")
+        #local_path  = os.path.join(os.getcwd(), f"{label}.csv")  # fallback filename
+        local_path = os.path.join(os.getcwd(), "data", f"{label}.csv")
+        # === Attempt online download ===
+        ok = download_csv(url, tmp_path)
+        if ok:
+            logging.info("INFO: %s — downloaded from Stooq", label)
+            df = load_csv(tmp_path)
         else:
-            # No fallback available
-            if mandatory:
-                logging.error("FAIL: %s — neither online nor local CSV available, exiting.", label)
-                sys.exit(1)
-            logging.warning("WARN: %s — optional series missing, skipping.", label)
-            return None
+            logging.warning("WARN: %s — download failed, trying local CSV: %s", label, local_path)
 
-    # === Post-loading logic ===
-    df = df.loc[df.index >= pd.Timestamp(DATA_START)]
+            # === Fallback: try loading local file ===
+            if os.path.exists(local_path):
+                df = load_csv(local_path)
+                if df is not None:
+                    logging.info("INFO: %s — loaded from local CSV", label)
+                else:
+                    logging.error("FAIL: %s — local CSV exists but load_csv returned None", label)
+                    if mandatory:
+                        sys.exit(1)
+                    return None
+            else:
+                # No fallback available
+                if mandatory:
+                    logging.error("FAIL: %s — neither online nor local CSV available, exiting.", label)
+                    sys.exit(1)
+                logging.warning("WARN: %s — optional series missing, skipping.", label)
+                return None
 
-    logging.info(
-        "OK  : %-14s  %5d rows  %s to %s",
-        label, len(df), df.index.min().date(), df.index.max().date(),
+        # === Post-loading logic ===
+        df = df.loc[df.index >= pd.Timestamp(DATA_START)]
+
+        logging.info(
+            "OK  : %-14s  %5d rows  %s to %s",
+            label, len(df), df.index.min().date(), df.index.max().date(),
+        )
+        return df
+
+    WIG   = _stooq("wig",       "WIG")
+    WIG = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
+    MMF   = _stooq("2720.n",    "MMF")
+    W1M   = _stooq("plopln1m",  "WIBOR1M", mandatory=False)
+    PL10Y = _stooq("10yply.b",  "PL10Y")
+    DE10Y = _stooq("10ydey.b",  "DE10Y")
+
+    folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip()
+
+    TBSP = build_and_upload(
+        folder_id         = folder_id,
+        raw_filename      = "tbsp_extended_full.csv",
+        combined_filename = "tbsp_extended_combined.csv",
+        extension_ticker  = "^tbsp",
+        extension_source  = "stooq",
     )
-    return df
 
-# --- Shared across both modes ---
+    if TBSP is None:
+        TBSP = _stooq("^tbsp",  "TBSP")
+        if TBSP is None:
+            logging.error("FAIL: TBSP build/update failed.")
+            sys.exit(1)
+    logging.info("OK  %-14s  %5d rows  %s to %s",
+                 "TBSP", len(TBSP),
+                 TBSP.index.min().date(), TBSP.index.max().date())
+    for col in ["Najwyzszy", "Najnizszy"]:
+        if col not in TBSP.columns:
+            TBSP[col] = TBSP["Zamkniecie"]
 
-# TBSP backcast (stooq ^tbsp extension, generic Date/Close format)
-TBSP = build_and_upload(
-      folder_id          = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()
-          or GDRIVE_FOLDER_ID_DEFAULT.strip()),
-      raw_filename       = "tbsp_extended_full.csv",
-      combined_filename  = "tbsp_extended_combined.csv",
-      extension_ticker   = "^tbsp",
-      extension_source   = "stooq",
-  )
+    return WIG, TBSP, MMF, W1M, PL10Y, DE10Y
 
-MMF  = _stooq("2720.n",  "MMF")
+WIG, TBSP, MMF, W1M, PL10Y, DE10Y = download_all(tmp_dir)
 
-# WIBOR 1M — used to extend MMF backwards to MMF_FLOOR
-# Not mandatory: if unavailable the MMF runs from its natural start (~1999)
-WIBOR1M = _stooq("plopln1m", "WIBOR1M", mandatory=False)
-if WIBOR1M is None:
-    logging.warning(
-        "WIBOR1M (plopln1m) unavailable — MMF will not be extended. "
-        "IS windows before 1999 will use ret_mmf=0 for cash returns."
-    )
-
-# --- Extended MMF (both modes) ---
-# Chain-link WIBOR 1M backwards from first real MMF observation to MMF_FLOOR.
-# This gives realistic ~18-25% p.a. cash returns for 1994-1999 IS windows
-# in Mode A (global_equity), where WIG IS data goes back to 1994.
-if WIBOR1M is not None:
-    MMF_EXT = build_mmf_extended(MMF, WIBOR1M, floor_date=MMF_FLOOR)
-    logging.info(
-        "MMF extended: %s to %s (%d rows total; original MMF from %s)",
-        MMF_EXT.index.min().date(), MMF_EXT.index.max().date(),
-        len(MMF_EXT), MMF.index.min().date(),
-    )
-else:
-    MMF_EXT = MMF   # no extension available; falls back to original series
-
-
-
-
-# --- PL-DE spread pre-filter data ---
-csv_pl10y = os.path.join(tmp_dir, "pl10y.csv")
-csv_de10y = os.path.join(tmp_dir, "de10y.csv")
-download_csv("https://stooq.pl/q/d/l/?s=10yply.b&i=d", csv_pl10y)
-download_csv("https://stooq.pl/q/d/l/?s=10ydey.b&i=d", csv_de10y)
-PL10Y = load_csv(csv_pl10y)
-DE10Y = load_csv(csv_de10y)
 if PL10Y is None or DE10Y is None:
     logging.error("Failed to load yield data for spread pre-filter. Exiting.")
     sys.exit(1)
