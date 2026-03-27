@@ -195,7 +195,7 @@ USE_ATR_STOP_BD = False          # Bond trailing stop mode (can differ from equi
 ATR_WINDOW_BD   = 20
 N_ATR_GRID_BD   = [0.05, 0.08, 0.10, 0.15]          # Normalised ATR grid (same scale as X_GRID_BD)
 
-
+FAST_MODE = True
 
 CSV_OUTPUT = "global_equity_sweep_results.csv"
 TXT_REPORT = "global_equity_sweep_report.txt"
@@ -403,6 +403,10 @@ def precompute_shared_wf(raw: dict, derived: dict) -> tuple[dict, dict, dict]:
                 mom_lookback_grid=MOM_LB_EQ,
                 objective="calmar",
                 n_jobs=N_JOBS,
+                fast_mode             = FAST_MODE,
+                use_atr_stop          = USE_ATR_STOP,
+                N_atr_grid            = N_ATR_GRID if USE_ATR_STOP else None,
+                atr_window            = ATR_WINDOW,
             )
             sig = build_signal_series(eq, tr)
             m   = compute_metrics(eq)
@@ -426,6 +430,10 @@ def precompute_shared_wf(raw: dict, derived: dict) -> tuple[dict, dict, dict]:
                 mom_lookback_grid=[252],
                 objective="calmar",
                 n_jobs=N_JOBS,
+                fast_mode             = FAST_MODE,
+                use_atr_stop          = USE_ATR_STOP,
+                N_atr_grid            = N_ATR_GRID if USE_ATR_STOP else None,
+                atr_window            = ATR_WINDOW,
             )
             sig = build_signal_series(eq, tr)
             m   = compute_metrics(eq)
@@ -449,6 +457,10 @@ def precompute_shared_wf(raw: dict, derived: dict) -> tuple[dict, dict, dict]:
                 mom_lookback_grid=MOM_LB_EQ,
                 objective="calmar",
                 n_jobs=N_JOBS,
+                fast_mode             = FAST_MODE,
+                use_atr_stop          = USE_ATR_STOP,
+                N_atr_grid            = N_ATR_GRID if USE_ATR_STOP else None,
+                atr_window            = ATR_WINDOW,
             )
             sig = build_signal_series(eq, tr)
             m   = compute_metrics(eq)
@@ -515,6 +527,10 @@ def _run_equity_wf(price_df, label, mmf_df):
         mom_lookback_grid=MOM_LB_EQ,
         objective="calmar",
         n_jobs=N_JOBS,
+        fast_mode             = FAST_MODE,
+        use_atr_stop          = USE_ATR_STOP,
+        N_atr_grid            = N_ATR_GRID if USE_ATR_STOP else None,
+        atr_window            = ATR_WINDOW,
     )
     sig = build_signal_series(eq, tr)
     m   = compute_metrics(eq)
@@ -701,6 +717,7 @@ def run_one_config(
                 perturb_pct   = 0.20,
                 seed          = 42,
                 price_col     = CLOSE_COL,
+                
             )
             _summary = analyze_robustness(_mc_raw, compute_metrics(wf_eq),
                                           thresholds=thr_mc)
