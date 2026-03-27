@@ -45,7 +45,7 @@ from strategy_test_library import (
     analyze_trades,
     print_backtest_report,
 )
-
+from multiasset_daily_output import build_daily_outputs
 from multiasset_library import (
     build_signal_series,
     allocation_walk_forward,
