@@ -50,24 +50,32 @@ from multiasset_library import (
     build_signal_series,
     allocation_walk_forward,
     print_multiasset_report,
+    allocation_weight_robustness,
+    print_allocation_robustness_report,
     build_spread_prefilter,
     build_yield_price_proxy,
     build_yield_momentum_prefilter,
 )
 
-
-
-
-
-from multiasset_daily_output import build_daily_outputs
+from mc_robustness import (
+    run_monte_carlo_robustness,
+    analyze_robustness,
+    extract_windows_from_wf_results,
+    extract_best_params_from_wf_results,
+    run_block_bootstrap_robustness,
+    analyze_bootstrap,
+    BOND_THRESHOLDS_MC,
+    BOND_THRESHOLDS_BOOTSTRAP,
+    EQUITY_THRESHOLDS_MC,
+    EQUITY_THRESHOLDS_BOOTSTRAP,
+)
 from global_equity_library import build_mmf_extended
 from price_series_builder import build_and_upload, load_combined_from_drive
-
 # ============================================================
 # LOGGING SETUP
 # ============================================================
 
-LOG_FILE = "MultiassetDailyRun.log"
+LOG_FILE = "MultiassetRun.log"
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
 root_logger = logging.getLogger()
@@ -87,7 +95,7 @@ console_handler.setFormatter(
 root_logger.addHandler(console_handler)
 
 logging.info("=" * 80)
-logging.info("MULTI-ASSET DAILY RUNFILE START: %s", dt.datetime.now())
+logging.info("MULTI-ASSET RUNFILE START: %s", dt.datetime.now())
 logging.info("=" * 80)
 
 
@@ -140,6 +148,27 @@ TV_EQ       = [0.08, 0.10, 0.12, 0.15, 0.20]
 SL_EQ       = [0.05, 0.08, 0.10, 0.15]
 MOM_LB_EQ   = [126, 252]
 
+# --- Trailing stop mode ---
+# USE_ATR_STOP = False : fixed percentage trailing stop (current default)
+#     X_GRID_EQ is used; stop fires when price < (1 - X) * peak
+# USE_ATR_STOP = True  : ATR-scaled Chandelier exit
+#     N_ATR_GRID is used; stop fires when price < peak - N * ATR
+#     ATR = rolling mean of |daily price change| over ATR_WINDOW bars
+#     Recommended N_ATR range for WIG: 3–6 (wider = more room to breathe)
+#     ATR_WINDOW: 20 matches VOL_WINDOW; increase to 40–60 for a slower ATR
+#
+# The bond walk-forward (Phase 3) uses a separate flag USE_ATR_STOP_BD
+# so equity and bond stops can be tuned independently.
+# Set USE_ATR_STOP_BD = USE_ATR_STOP to keep them in sync.
+#
+USE_ATR_STOP    = True          # Equity trailing stop mode
+ATR_WINDOW      = 20             # Rolling window for ATR estimate (days)
+N_ATR_GRID      = [0.08, 0.10, 0.12, 0.15, 0.20]   # Normalised ATR grid (same scale as X_GRID_EQ)
+ 
+USE_ATR_STOP_BD = False          # Bond trailing stop mode (can differ from equity)
+ATR_WINDOW_BD   = 20
+N_ATR_GRID_BD   = [0.05, 0.08, 0.10, 0.15]          # Normalised ATR grid (same scale as X_GRID_BD)
+
 
 # --- Bond signal source ---
 # True  = use PL10Y yield-derived constant-maturity bond price as signal source
@@ -178,30 +207,16 @@ TV_YLD      = [0.08, 0.10, 0.12]               # unchanged
 SL_YLD      = [0.05, 0.08, 0.10, 0.15]         # 4-5x wider than TBSP SL_BD
 
 
-# ---------------------------------------------------------------------------
-# DATA FLOOR DATES
-# ---------------------------------------------------------------------------
-# WIG (Mode A only): daily continuous trading started 1994-10-03.
-#   Earlier data has multi-day gaps that distort the breakout trough
-#   calculation and MA windows.  Clipped after download in Phase 2.
-WIG_DATA_FLOOR = "1994-10-03"
- 
-# MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
-#   date. Ensures IS windows starting before 1999 have realistic cash returns
-#   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
-MMF_FLOOR = "1994-10-03"
-DATA_START = "1990-01-01"  # hard floor for all series
+# Monte Carlo robustness checks 
+RUN_MONTE_CARLO_PARAM_SINGLE = True # MC parameter robustness for single asset strategies
+ITERATIONS_MC_PARAM_SINGLE = 1000 # 1000 is the true test variant, 10 for smoke test
 
-# Robustness phases are OFF for daily run
-RUN_MONTE_CARLO_PARAM_SINGLE      = False
-RUN_BLOCK_BOOTSTRAP_SINGLE        = False
-RUN_ROBUSTNESS_ALLOCATION_WEIGHT  = False
+RUN_BLOCK_BOOTSTRAP_SINGLE = False # Run bootstrap robustness test for single asset strategies
+ITERATIONS_BOOTSTRAP_SINGLE = 500 # 500 is the true test variant, 10 for smoke test
+# ATTENTION - # ~3-6h on 12-core machine — run overnight
 
-BOUNDARY_EXITS = {"CARRY", "SAMPLE_END"}
+RUN_ROBUSTNESS_ALLOCATION_WEIGHT = True # Run deterministic perturbations on allocation weights
 
-# Output directory
-OUTPUT_DIR = "outputs"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # --- Bond Spread pre-filter mode ---
 # True  = Option A: hard gate — pre-filter breach forces immediate exit
@@ -225,6 +240,23 @@ YIELD_PREFILTER_HARD_EXIT   = False   # Option B default
 # 50bp ~= one NBP hike cycle move over a quarter
 # 75bp ~= more aggressive — only blocks sustained hiking
 YIELD_PREFILTER_THRESHOLD_BP = 50.0
+
+CLOSE_COL = "Zamkniecie"   # stooq close column name used throughout
+FAST_MODE = True
+# ---------------------------------------------------------------------------
+# DATA FLOOR DATES
+# ---------------------------------------------------------------------------
+# WIG (Mode A only): daily continuous trading started 1994-10-03.
+#   Earlier data has multi-day gaps that distort the breakout trough
+#   calculation and MA windows.  Clipped after download in Phase 2.
+WIG_DATA_FLOOR = "1995-01-02"
+ 
+# MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
+#   date. Ensures IS windows starting before 1999 have realistic cash returns
+#   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
+MMF_FLOOR = "1995-01-02"
+DATA_START = "1990-01-01"  # hard floor for all series
+
 GDRIVE_FOLDER_ID_DEFAULT = None
 # ============================================================
 # PHASE 1 — DATA DOWNLOAD
@@ -236,89 +268,88 @@ logging.info("=" * 80)
 
 tmp_dir = tempfile.mkdtemp()
 
-# --- Equity: WIG total return index ---
-csv_wig  = os.path.join(tmp_dir, "wig.csv")
-download_csv("https://stooq.pl/q/d/l/?s=wig&i=d", csv_wig)
-WIG = load_csv(csv_wig)
-if WIG is None:
-    logging.error("Failed to load WIG data. Exiting.")
-    sys.exit(1)
-logging.info("WIG loaded: %d rows  (%s to %s)",
-             len(WIG), WIG.index.min().date(), WIG.index.max().date())
+def download_all(tmp_dir):
+    logging.info("=" * 70)
+    logging.info("DOWNLOADING DATA")
+    logging.info("=" * 70)
 
-tmp_dir = tempfile.gettempdir()
+    def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
+        """
+        Download a stooq series, clip to DATA_START.
+        If download fails, fall back to loading CSV from current working directory.
+        """
+        url         = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
+        tmp_path    = os.path.join(tmp_dir, f"ge_{label}.csv")
+        #local_path  = os.path.join(os.getcwd(), f"{label}.csv")  # fallback filename
+        local_path = os.path.join(os.getcwd(), "data", f"{label}.csv")
+        # === Attempt online download ===
+        ok = download_csv(url, tmp_path)
+        if ok:
+            logging.info("INFO: %s — downloaded from Stooq", label)
+            df = load_csv(tmp_path)
+        else:
+            logging.warning("WARN: %s — download failed, trying local CSV: %s", label, local_path)
 
-def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
-    """Download a stooq series, clip to DATA_START, exit if mandatory and missing."""
-    url  = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
-    path = os.path.join(tmp_dir, f"ge_{label}.csv")
-    ok   = download_csv(url, path)
-    if not ok:
-        if mandatory:
-            logging.error("FAIL: %s (%s) — exiting.", label, ticker)
+            # === Fallback: try loading local file ===
+            if os.path.exists(local_path):
+                df = load_csv(local_path)
+                if df is not None:
+                    logging.info("INFO: %s — loaded from local CSV", label)
+                else:
+                    logging.error("FAIL: %s — local CSV exists but load_csv returned None", label)
+                    if mandatory:
+                        sys.exit(1)
+                    return None
+            else:
+                # No fallback available
+                if mandatory:
+                    logging.error("FAIL: %s — neither online nor local CSV available, exiting.", label)
+                    sys.exit(1)
+                logging.warning("WARN: %s — optional series missing, skipping.", label)
+                return None
+
+        # === Post-loading logic ===
+        df = df.loc[df.index >= pd.Timestamp(DATA_START)]
+
+        logging.info(
+            "OK  : %-14s  %5d rows  %s to %s",
+            label, len(df), df.index.min().date(), df.index.max().date(),
+        )
+        return df
+
+    WIG   = _stooq("wig",       "WIG")
+    WIG = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
+    MMF   = _stooq("2720.n",    "MMF")
+    W1M   = _stooq("plopln1m",  "WIBOR1M", mandatory=False)
+    PL10Y = _stooq("10yply.b",  "PL10Y")
+    DE10Y = _stooq("10ydey.b",  "DE10Y")
+
+    folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip()
+
+    TBSP = build_and_upload(
+        folder_id         = folder_id,
+        raw_filename      = "tbsp_extended_full.csv",
+        combined_filename = "tbsp_extended_combined.csv",
+        extension_ticker  = "^tbsp",
+        extension_source  = "stooq",
+    )
+
+    if TBSP is None:
+        TBSP = _stooq("^tbsp",  "TBSP")
+        if TBSP is None:
+            logging.error("FAIL: TBSP build/update failed.")
             sys.exit(1)
-        logging.warning("WARN: %s (%s) — not available, skipping.", label, ticker)
-        return None
-    df = load_csv(path)
-    if df is None:
-        if mandatory:
-            logging.error("FAIL: load_csv returned None for %s — exiting.", label)
-            sys.exit(1)
-        return None
-    df = df.loc[df.index >= pd.Timestamp(DATA_START)]
-    logging.info(
-        "OK  : %-14s  %5d rows  %s to %s",
-        label, len(df), df.index.min().date(), df.index.max().date(),
-    )
-    return df
+    logging.info("OK  %-14s  %5d rows  %s to %s",
+                 "TBSP", len(TBSP),
+                 TBSP.index.min().date(), TBSP.index.max().date())
+    for col in ["Najwyzszy", "Najnizszy"]:
+        if col not in TBSP.columns:
+            TBSP[col] = TBSP["Zamkniecie"]
 
-# --- Shared across both modes ---
+    return WIG, TBSP, MMF, W1M, PL10Y, DE10Y
 
-# TBSP backcast (stooq ^tbsp extension, generic Date/Close format)
-TBSP = build_and_upload(
-      folder_id          = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()
-          or GDRIVE_FOLDER_ID_DEFAULT.strip()),
-      raw_filename       = "tbsp_extended_full.csv",
-      combined_filename  = "tbsp_extended_combined.csv",
-      extension_ticker   = "^tbsp",
-      extension_source   = "stooq",
-  )
+WIG, TBSP, MMF, W1M, PL10Y, DE10Y = download_all(tmp_dir)
 
-MMF  = _stooq("2720.n",  "MMF")
-
-# WIBOR 1M — used to extend MMF backwards to MMF_FLOOR
-# Not mandatory: if unavailable the MMF runs from its natural start (~1999)
-WIBOR1M = _stooq("plopln1m", "WIBOR1M", mandatory=False)
-if WIBOR1M is None:
-    logging.warning(
-        "WIBOR1M (plopln1m) unavailable — MMF will not be extended. "
-        "IS windows before 1999 will use ret_mmf=0 for cash returns."
-    )
-
-# --- Extended MMF (both modes) ---
-# Chain-link WIBOR 1M backwards from first real MMF observation to MMF_FLOOR.
-# This gives realistic ~18-25% p.a. cash returns for 1994-1999 IS windows
-# in Mode A (global_equity), where WIG IS data goes back to 1994.
-if WIBOR1M is not None:
-    MMF_EXT = build_mmf_extended(MMF, WIBOR1M, floor_date=MMF_FLOOR)
-    logging.info(
-        "MMF extended: %s to %s (%d rows total; original MMF from %s)",
-        MMF_EXT.index.min().date(), MMF_EXT.index.max().date(),
-        len(MMF_EXT), MMF.index.min().date(),
-    )
-else:
-    MMF_EXT = MMF   # no extension available; falls back to original series
-
-
-
-
-# --- PL-DE spread pre-filter data ---
-csv_pl10y = os.path.join(tmp_dir, "pl10y.csv")
-csv_de10y = os.path.join(tmp_dir, "de10y.csv")
-download_csv("https://stooq.pl/q/d/l/?s=10yply.b&i=d", csv_pl10y)
-download_csv("https://stooq.pl/q/d/l/?s=10ydey.b&i=d", csv_de10y)
-PL10Y = load_csv(csv_pl10y)
-DE10Y = load_csv(csv_de10y)
 if PL10Y is None or DE10Y is None:
     logging.error("Failed to load yield data for spread pre-filter. Exiting.")
     sys.exit(1)
@@ -414,7 +445,11 @@ wf_equity_eq, wf_results_eq, wf_trades_eq = walk_forward(
     sl_grid               = SL_EQ,
     mom_lookback_grid     = MOM_LB_EQ,
     n_jobs                = N_JOBS,
-)
+    fast_mode=FAST_MODE,         # (or fast_mode=True in daily runfile)
+    use_atr_stop          = USE_ATR_STOP,
+    N_atr_grid            = N_ATR_GRID if USE_ATR_STOP else None,
+    atr_window            = ATR_WINDOW,
+     )
 
 if wf_equity_eq.empty:
     logging.error("Equity walk-forward returned empty equity curve. Exiting.")
@@ -501,7 +536,11 @@ wf_equity_bd, wf_results_bd, wf_trades_bd = walk_forward(
     mom_lookback_grid     = [252],                  # not used (filter_mode=ma)
     n_jobs                = N_JOBS,
     entry_gate_series     = bond_entry_gate,
-)
+    fast_mode=FAST_MODE,         # (or fast_mode=True in daily runfile)
+    use_atr_stop          = USE_ATR_STOP_BD,
+    N_atr_grid            = N_ATR_GRID_BD if USE_ATR_STOP_BD else None,
+    atr_window            = ATR_WINDOW_BD,
+    )
 
 if wf_equity_bd.empty:
     logging.error("Bond walk-forward returned empty equity curve. Exiting.")
@@ -654,7 +693,6 @@ print_multiasset_report(
     yield_prefilter  = yield_prefilter,
     sig_bond_post_spread = sig_bond_post_spread 
 )
-
 
 
 # ============================================================

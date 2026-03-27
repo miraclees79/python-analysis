@@ -76,7 +76,13 @@ import random
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
+
+try:
+    import yfinance as yf
+    _YFINANCE_AVAILABLE = True
+except ImportError:
+    _YFINANCE_AVAILABLE = False
+
 
 from strategy_test_library import (
     compute_metrics,
