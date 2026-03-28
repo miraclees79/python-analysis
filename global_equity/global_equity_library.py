@@ -76,14 +76,19 @@ import random
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
+
+try:
+    import yfinance as yf
+    _YFINANCE_AVAILABLE = True
+except ImportError:
+    _YFINANCE_AVAILABLE = False
+
 
 from strategy_test_library import (
     compute_metrics,
     
 )
-from multiasset_library import(build_signal_series,
-                               )
+from multiasset_library import build_signal_series
 
 # ============================================================
 # CONSTANTS
@@ -1340,4 +1345,376 @@ def print_global_equity_report(
         log_df["Year"] = pd.to_datetime(log_df["Date"]).dt.year
         by_year = log_df.groupby("Year").size()
         logging.info("\n%s", by_year.to_string())
+    logging.info(sep)
+
+
+# ============================================================
+# LEVEL 2 ROBUSTNESS — N-ASSET ALLOCATION WEIGHT PERTURBATION
+# ============================================================
+
+def allocation_weight_robustness_n(
+    alloc_results_df:  pd.DataFrame,
+    returns_dict:      dict,
+    mmf_returns:       pd.Series,
+    signals_oos_dict:  dict,
+    asset_keys:        list,
+    baseline_metrics:  dict,
+    perturb_steps:     list  = [-0.2, -0.1, 0.0, 0.1, 0.2],
+    focus_asset:       str   = None,
+    min_weight:        float = 0.0,
+    max_weight:        float = 1.0,
+    cooldown_days:     int   = 10,
+    annual_cap:        int   = 999,
+) -> pd.DataFrame:
+    """
+    Level 2 robustness check: perturb one asset's optimised weight by fixed
+    steps and re-simulate the full OOS portfolio for each perturbation.
+
+    Generalises multiasset_library.allocation_weight_robustness from 2 assets
+    (equity + bond) to N assets.
+
+    For each window in alloc_results_df the optimised weight for focus_asset
+    is shifted by each value in perturb_steps (e.g. ±0.10, ±0.20).
+    All other risky-asset weights are scaled proportionally so that
+    sum(w_i for i != focus_asset) + w_focus stays <= 1.0.  MMF absorbs the
+    remainder.  All windows shift by the same step simultaneously.
+
+    The reallocation gate state is carried continuously across windows,
+    matching the live simulation exactly.
+
+    Design rationale
+    ----------------
+    In the N-asset case, the allocation result is a vector (not a scalar), so
+    we cannot perturb a single "equity weight" as in the 2-asset case.  Instead
+    we pick one asset as the focal point and shift it, proportionally adjusting
+    the others.  This is most useful when called once per asset — the runfile
+    runs it for each equity asset with significant non-zero allocation history.
+
+    Parameters
+    ----------
+    alloc_results_df : pd.DataFrame  — per-window optimised weights from
+                                       allocation_walk_forward_n; must contain
+                                       columns TestStart, TestEnd, and
+                                       w_{key} for each key in asset_keys,
+                                       plus w_mmf.
+    returns_dict     : dict[str, pd.Series]  — OOS daily returns per asset
+    mmf_returns      : pd.Series             — full MMF daily returns
+    signals_oos_dict : dict[str, pd.Series]  — OOS binary signals per asset
+    asset_keys       : list[str]             — ordered risky asset keys
+    baseline_metrics : dict                  — compute_metrics on baseline portfolio
+    perturb_steps    : list[float]           — weight shifts to apply to focus_asset;
+                                               0.0 reproduces the baseline
+    focus_asset      : str | None            — asset whose weight is shifted.
+                                               If None, uses asset_keys[0].
+    min_weight       : float                 — floor on any perturbed weight (default 0.0)
+    max_weight       : float                 — ceiling on focus_asset weight (default 1.0)
+    cooldown_days    : int                   — reallocation gate cooldown
+    annual_cap       : int                   — reallocation gate annual cap
+
+    Returns
+    -------
+    pd.DataFrame  — one row per perturbation step with columns:
+        focus_asset, weight_shift, focus_weight_mean,
+        CAGR, Vol, Sharpe, MaxDD, CalMAR, Sortino,
+        n_reallocations, n_floor_clamped, n_ceil_clamped,
+        CAGR_vs_base, MaxDD_vs_base, CalMAR_vs_base
+    """
+    if focus_asset is None:
+        focus_asset = asset_keys[0]
+
+    if focus_asset not in asset_keys:
+        logging.error(
+            "allocation_weight_robustness_n: focus_asset '%s' not in asset_keys %s",
+            focus_asset, asset_keys,
+        )
+        return pd.DataFrame()
+
+    other_keys = [k for k in asset_keys if k != focus_asset]
+
+    # Pre-align returns and signals to a common OOS index (union of all signal calendars)
+    all_signal_idx = None
+    for k in asset_keys:
+        sig = signals_oos_dict.get(k)
+        if sig is not None and not sig.empty:
+            all_signal_idx = sig.index if all_signal_idx is None else all_signal_idx.union(sig.index)
+
+    if all_signal_idx is None:
+        logging.error("allocation_weight_robustness_n: no OOS signal data found.")
+        return pd.DataFrame()
+
+    # Reindex all returns and signals to the common OOS index
+    ret_aligned  = {k: returns_dict[k].reindex(all_signal_idx, method="ffill").fillna(0.0)
+                    for k in asset_keys}
+    mmf_aligned  = mmf_returns.reindex(all_signal_idx, method="ffill").fillna(0.0)
+    sig_aligned  = {k: signals_oos_dict[k].reindex(all_signal_idx, method="ffill").fillna(0.0)
+                    for k in asset_keys}
+
+    results = []
+
+    for step in perturb_steps:
+        # ── Build per-window perturbed weight dicts ───────────────────────
+        perturbed_windows = []
+        n_floor_clamped = 0
+        n_ceil_clamped  = 0
+
+        for _, row in alloc_results_df.iterrows():
+            # Current optimised weights
+            w = {k: float(row.get(f"w_{k}", 0.0)) for k in asset_keys}
+            w_mmf_orig = float(row.get("w_mmf", 0.0))
+
+            # Shift focus asset
+            raw_focus = w[focus_asset] + step
+            clamped   = False
+
+            if raw_focus < min_weight:
+                raw_focus = min_weight
+                n_floor_clamped += 1
+                clamped = True
+            elif raw_focus > max_weight:
+                raw_focus = max_weight
+                n_ceil_clamped += 1
+                clamped = True
+
+            w_focus_new = round(raw_focus, 10)
+
+            # Scale other risky-asset weights proportionally so their
+            # relative ratios are preserved; total risky <= 1.0
+            other_total_orig = sum(w[k] for k in other_keys)
+            risky_budget     = min(1.0 - w_focus_new, 1.0)
+
+            if other_total_orig > 1e-9:
+                scale = min(risky_budget, other_total_orig) / other_total_orig
+                w_others = {k: max(min_weight, round(w[k] * scale, 10))
+                            for k in other_keys}
+            else:
+                w_others = {k: 0.0 for k in other_keys}
+
+            w_new          = {focus_asset: w_focus_new, **w_others}
+            w_mmf_new      = max(0.0, round(1.0 - sum(w_new.values()), 10))
+
+            perturbed_windows.append({
+                "TestStart": pd.Timestamp(row["TestStart"]),
+                "TestEnd":   pd.Timestamp(row["TestEnd"]),
+                **{k: w_new[k] for k in asset_keys},
+                "w_mmf":     w_mmf_new,
+            })
+
+        if n_floor_clamped or n_ceil_clamped:
+            logging.info(
+                "step=%+.2f: %d windows clamped at floor (min=%.2f), "
+                "%d clamped at ceiling (max=%.2f).",
+                step, n_floor_clamped, min_weight, n_ceil_clamped, max_weight,
+            )
+
+        # ── Simulate OOS with perturbed weights ───────────────────────────
+        oos_equity_slices = []
+        n_reallocations   = 0
+        current_weights   = {k: 0.0 for k in asset_keys}
+        current_weights["mmf"] = 1.0
+        last_change_date  = None
+        annual_counter    = {}
+
+        for pw in perturbed_windows:
+            window_start = pw["TestStart"]
+            window_end   = pw["TestEnd"]
+
+            # Target weights from the perturbed window
+            target = {k: pw[k] for k in asset_keys}
+            target["mmf"] = pw["w_mmf"]
+
+            # Slice the OOS index to this window
+            window_idx = all_signal_idx[
+                (all_signal_idx >= window_start) & (all_signal_idx <= window_end)
+            ]
+            if window_idx.empty:
+                continue
+
+            window_ret_vals = []
+            for date in window_idx:
+                # Signals on this date
+                sigs_today = {k: int(sig_aligned[k].get(date, 0)) for k in asset_keys}
+                n_on = sum(sigs_today.values())
+
+                # Apply 3-state portfolio weights (mirrors signals_to_target_weights_n)
+                if n_on == 0:
+                    effective = {k: 0.0 for k in asset_keys}
+                    effective["mmf"] = 1.0
+                elif n_on == 1:
+                    on_key = next(k for k in asset_keys if sigs_today[k] == 1)
+                    effective = {k: 0.0 for k in asset_keys}
+                    effective[on_key] = 1.0
+                    effective["mmf"] = 0.0
+                else:
+                    # Distribute signal-off assets to MMF within each weight bucket
+                    effective = {}
+                    extra_mmf = 0.0
+                    for k in asset_keys:
+                        if sigs_today[k] == 1:
+                            effective[k] = target[k]
+                        else:
+                            effective[k] = 0.0
+                            extra_mmf += target[k]
+                    effective["mmf"] = target["mmf"] + extra_mmf
+
+                # Gate
+                accepted, did_reallocate = reallocation_gate_n(
+                    current_weights  = current_weights,
+                    target_weights   = effective,
+                    last_change_date = last_change_date,
+                    current_date     = date,
+                    cooldown_days    = cooldown_days,
+                    min_delta        = 0.10,
+                    annual_cap       = annual_cap,
+                    annual_counter   = annual_counter,
+                )
+                if did_reallocate:
+                    current_weights  = accepted
+                    last_change_date = date
+                    n_reallocations += 1
+
+                # Daily portfolio return
+                r = sum(current_weights[k] * float(ret_aligned[k].get(date, 0.0))
+                        for k in asset_keys)
+                r += current_weights["mmf"] * float(mmf_aligned.get(date, 0.0))
+                window_ret_vals.append((date, r))
+
+            if not window_ret_vals:
+                continue
+
+            dates, rets = zip(*window_ret_vals)
+            port_r = pd.Series(list(rets), index=list(dates))
+            eq = (1 + port_r).cumprod()
+            eq = eq / eq.iloc[0]
+            if oos_equity_slices:
+                eq = eq * oos_equity_slices[-1].iloc[-1]
+            oos_equity_slices.append(eq)
+
+        if not oos_equity_slices:
+            logging.warning("step=%+.2f: no OOS slices produced — skipped.", step)
+            continue
+
+        portfolio_equity = pd.concat(oos_equity_slices).sort_index()
+        m = compute_metrics(portfolio_equity)
+        focus_mean = np.mean([pw[focus_asset] for pw in perturbed_windows])
+
+        results.append({
+            "focus_asset":       focus_asset,
+            "weight_shift":      step,
+            "focus_weight_mean": round(focus_mean, 3),
+            "n_floor_clamped":   n_floor_clamped,
+            "n_ceil_clamped":    n_ceil_clamped,
+            "CAGR":              m.get("CAGR",    np.nan),
+            "Vol":               m.get("Vol",     np.nan),
+            "Sharpe":            m.get("Sharpe",  np.nan),
+            "MaxDD":             m.get("MaxDD",   np.nan),
+            "CalMAR":            m.get("CalMAR",  np.nan),
+            "Sortino":           m.get("Sortino", np.nan),
+            "n_reallocations":   n_reallocations,
+        })
+
+    if not results:
+        logging.warning("allocation_weight_robustness_n: no results produced.")
+        return pd.DataFrame()
+
+    df = pd.DataFrame(results)
+
+    # Add vs-baseline comparison columns (step=0.0 row is the reference)
+    base_row = df.loc[df["weight_shift"].abs() < 1e-9]
+    if not base_row.empty:
+        base_cagr   = base_row["CAGR"].iloc[0]
+        base_maxdd  = base_row["MaxDD"].iloc[0]
+        base_calmar = base_row["CalMAR"].iloc[0]
+        df["CAGR_vs_base"]   = (df["CAGR"]  - base_cagr)  * 100
+        df["MaxDD_vs_base"]  = (df["MaxDD"] - base_maxdd) * 100
+        df["CalMAR_vs_base"] = (df["CalMAR"] / base_calmar
+                                if base_calmar != 0 else np.nan)
+    else:
+        logging.warning(
+            "allocation_weight_robustness_n: step=0.0 not in perturb_steps — "
+            "vs_base columns will be NaN.  Add 0.0 to perturb_steps."
+        )
+        df["CAGR_vs_base"]   = np.nan
+        df["MaxDD_vs_base"]  = np.nan
+        df["CalMAR_vs_base"] = np.nan
+
+    return df
+
+
+def print_allocation_robustness_report_n(
+    results_df: pd.DataFrame,
+    focus_asset: str = "",
+) -> None:
+    """
+    Log a structured report for the N-asset allocation weight perturbation.
+
+    Matches the style of multiasset_library.print_allocation_robustness_report.
+
+    Verdict thresholds (same as 2-asset case):
+      CalMAR ratio >= 0.80 at ±10pp  →  PLATEAU  (robust)
+      CalMAR ratio  0.60–0.80        →  MODERATE
+      CalMAR ratio <  0.60           →  SPIKE    (fragile)
+    """
+    sep = "=" * 80
+    label = f"  (focus: {focus_asset})" if focus_asset else ""
+    logging.info(sep)
+    logging.info(
+        "ALLOCATION WEIGHT ROBUSTNESS  (N-asset, Level 2%s)", label
+    )
+    logging.info(sep)
+
+    if results_df.empty:
+        logging.warning("No results to report.")
+        return
+
+    display = results_df.copy()
+    display["CAGR"]             = (display["CAGR"]  * 100).round(2).astype(str) + "%"
+    display["Vol"]              = (display["Vol"]   * 100).round(2).astype(str) + "%"
+    display["MaxDD"]            = (display["MaxDD"] * 100).round(2).astype(str) + "%"
+    display["Sharpe"]           = display["Sharpe"].round(3)
+    display["CalMAR"]           = display["CalMAR"].round(3)
+    display["Sortino"]          = display["Sortino"].round(3)
+    display["CAGR_vs_base"]     = display["CAGR_vs_base"].round(2).astype(str) + "pp"
+    display["MaxDD_vs_base"]    = display["MaxDD_vs_base"].round(2).astype(str) + "pp"
+    display["CalMAR_vs_base"]   = display["CalMAR_vs_base"].round(3)
+    display["weight_shift"]     = display["weight_shift"].apply(lambda x: f"{x:+.0%}")
+    display["focus_weight_mean"]= display["focus_weight_mean"].apply(lambda x: f"{x:.0%}")
+
+    cols = [
+        "weight_shift", "focus_weight_mean",
+        "n_floor_clamped", "n_ceil_clamped",
+        "CAGR", "Vol", "Sharpe", "MaxDD", "CalMAR", "Sortino",
+        "n_reallocations", "CAGR_vs_base", "MaxDD_vs_base", "CalMAR_vs_base",
+    ]
+    # Only show columns that exist
+    cols = [c for c in cols if c in display.columns]
+    logging.info("\n%s", display[cols].to_string(index=False))
+    logging.info("-" * 80)
+
+    # Verdict: CalMAR ratio at ±10pp steps
+    inner = results_df.loc[results_df["weight_shift"].abs().between(0.09, 0.11)]
+    if inner.empty:
+        logging.info(
+            "Verdict: ±10pp steps not present — add ±0.10 to perturb_steps."
+        )
+        return
+
+    min_ratio = inner["CalMAR_vs_base"].min()
+    if pd.isna(min_ratio):
+        logging.info("Verdict: baseline CalMAR is zero — ratio undefined.")
+        return
+
+    if min_ratio >= 0.80:
+        verdict = "PLATEAU"
+        interp  = "robust — weight is on a broad performance plateau"
+    elif min_ratio >= 0.60:
+        verdict = "MODERATE"
+        interp  = "somewhat sensitive — treat allocation with moderate confidence"
+    else:
+        verdict = "SPIKE"
+        interp  = "fragile — performance depends critically on this weight level"
+
+    logging.info(
+        "Verdict: %s  (min CalMAR ratio at ±10pp = %.3f)  %s",
+        verdict, min_ratio, interp,
+    )
     logging.info(sep)

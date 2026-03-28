@@ -116,16 +116,11 @@ from price_series_builder import build_and_upload
 # USER SETTINGS
 # ============================================================
 
-# Path to tbsp_extended_combined.csv (downloaded from Drive).
-# Set to None to fall back to standard ^tbsp from stooq.
-TBSP_EXTENDED_PATH = os.getenv(
-    "TBSP_EXTENDED_PATH",
-    None   # <- paste local path here if not using env var
-)
+
 
 # OOS period to match the sweep
-OOS_START = "2011-01-04"
-OOS_END   = "2026-03-20"   # update to today's date when running
+OOS_START = "2008-01-04"
+OOS_END   = "2026-03-27"   # update to today's date when running
 
 # Window configurations to evaluate
 WINDOW_CONFIGS = [
@@ -1060,10 +1055,7 @@ def main():
              f" (window={ATR_WINDOW}, grid={N_ATR_GRID})" if USE_ATR_STOP else "")
     logging.info("RUN_MC=%s (n=%d)  RUN_BOOTSTRAP=%s (n=%d)",
              RUN_MC, N_MC, RUN_BOOTSTRAP, N_BOOTSTRAP)
-    if TBSP_EXTENDED_PATH:
-        logging.info("Extended TBSP: %s", TBSP_EXTENDED_PATH)
-    else:
-        logging.warning("No extended TBSP path set — OOS will start later than 2011")
+    
     logging.info("=" * 70)
 
     tmp_dir = tempfile.mkdtemp()

@@ -1,28 +1,26 @@
 {
-  "run_date": "2026-03-18",
+  "run_date": "2026-03-28",
   "portfolio_mode": "msci_world",
   "fx_hedged": true,
   "signals": {
-    "WIG20TR": "IN",
-    "PL_MID": "OUT",
-    "MSCI_World": "IN",
+    "WIG": "IN",
+    "MSCI_World": "OUT",
     "TBSP": "IN"
   },
   "weights": {
-    "WIG20TR": 0.0,
-    "PL_MID": 0.0,
-    "MSCI_World": 0.4,
-    "TBSP": 0.0,
-    "mmf": 0.6
+    "WIG": 0.8,
+    "MSCI_World": 0.0,
+    "TBSP": 0.2,
+    "mmf": 0.0
   },
   "realloc_today": false,
-  "portfolio_level": 1.3862865158755064,
-  "portfolio_cagr": 0.0317303521728709,
-  "portfolio_sharpe": 1.0235592520892518,
-  "portfolio_maxdd": -0.057286126298962015,
-  "portfolio_calmar": 0.5538924382367574,
-  "oos_start": "2015-12-29",
-  "oos_end": "2026-03-17",
-  "n_reallocations": 13,
+  "portfolio_level": 2.448457467320111,
+  "portfolio_cagr": 0.0731104948167165,
+  "portfolio_sharpe": 0.7846574684627264,
+  "portfolio_maxdd": -0.12131664108744833,
+  "portfolio_calmar": 0.6026419307472951,
+  "oos_start": "2013-12-30",
+  "oos_end": "2026-03-27",
+  "n_reallocations": 44,
   "action": "HOLD"
 }

@@ -88,16 +88,14 @@ from global_equity_library import (
     DATA_START,
 )
 
-from wsj_msci_world import (
-    load_combined_from_drive as load_MSCIWORLD_from_drive,
-    build_and_upload as build_MSCIWORLD,
-    COMBINED_DRIVE_FILENAME as MSCI_COMBINED_FILENAME)
-from stoxx600 import (
-    load_combined_from_drive as load_stoxx600_from_drive,
-    build_and_upload as build_stoxx600,
-    COMBINED_DRIVE_FILENAME as STOXX600_COMBINED_FILENAME,
-)
+
 from global_equity_daily_output import build_daily_outputs
+
+from price_series_builder import build_and_upload 
+from msci_world_synthetic import (
+    build_full_msci_world_extended,
+    load_synthetic_from_drive,
+)
 
 
 # ============================================================
@@ -136,7 +134,7 @@ logging.info("=" * 80)
 #
 # "msci_world"    : Mode B — WIG20TR + PL_MID + MSCI_World + TBSP + MMF
 #                   OOS start ~2019, 9+1 walk-forward, two Polish equities
-PORTFOLIO_MODE = "global_equity"   # <- "global_equity" or "msci_world"
+PORTFOLIO_MODE = "msci_world"   # <- "global_equity" or "msci_world"
 
 # ---------------------------------------------------------------------------
 # GOOGLE DRIVE (required for msci_world mode; ignored in global_equity mode)
@@ -160,8 +158,8 @@ POSITION_MODE = "full"   # "full" | "vol_entry" | "vol_dynamic"
 # ---------------------------------------------------------------------------
 # WALK-FORWARD WINDOWS
 # ---------------------------------------------------------------------------
-TRAIN_YEARS = 9    # training window length (years) — same for all assets
-TEST_YEARS  = 1    # test window length (years)      — same for all assets
+TRAIN_YEARS = 7    # training window length (years) — same for all assets
+TEST_YEARS  = 2    # test window length (years)      — same for all assets
 VOL_WINDOW  = 20   # rolling volatility window (days)
 
 # ---------------------------------------------------------------------------
@@ -228,17 +226,40 @@ SWIG_WEIGHT = 0.50   # weight of SWIG80TR in the PL_MID blend
 # WIG (Mode A only): daily continuous trading started 1994-10-03.
 #   Earlier data has multi-day gaps that distort the breakout trough
 #   calculation and MA windows.  Clipped after download in Phase 2.
-WIG_DATA_FLOOR = "1994-10-03"
+WIG_DATA_FLOOR = "1995-01-02"
 
 # MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
 #   date. Ensures IS windows starting before 1999 have realistic cash returns
 #   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
-MMF_FLOOR = "1994-10-03"
+MMF_FLOOR = "1995-01-02"
 
 # ---------------------------------------------------------------------------
 # DAILY OUTPUT
 # ---------------------------------------------------------------------------
 OUTPUT_DIR = "global_equity_outputs"   # local directory for daily artefacts
+
+# --- Trailing stop mode ---
+# USE_ATR_STOP = False : fixed percentage trailing stop (current default)
+#     X_GRID_EQ is used; stop fires when price < (1 - X) * peak
+# USE_ATR_STOP = True  : ATR-scaled Chandelier exit
+#     N_ATR_GRID is used; stop fires when price < peak - N * ATR
+#     ATR = rolling mean of |daily price change| over ATR_WINDOW bars
+#     Recommended N_ATR range for WIG: 3–6 (wider = more room to breathe)
+#     ATR_WINDOW: 20 matches VOL_WINDOW; increase to 40–60 for a slower ATR
+#
+# The bond walk-forward (Phase 3) uses a separate flag USE_ATR_STOP_BD
+# so equity and bond stops can be tuned independently.
+# Set USE_ATR_STOP_BD = USE_ATR_STOP to keep them in sync.
+#
+USE_ATR_STOP    = True          # Equity trailing stop mode
+ATR_WINDOW      = 20             # Rolling window for ATR estimate (days)
+N_ATR_GRID      = [0.08, 0.10, 0.12, 0.15, 0.20]   # Normalised ATR grid (same scale as X_GRID_EQ)
+
+USE_ATR_STOP_BD = False          # Bond trailing stop mode (can differ from equity)
+ATR_WINDOW_BD   = 20
+N_ATR_GRID_BD   = [0.05, 0.08, 0.10, 0.15]          # Normalised ATR grid (same scale as X_GRID_BD)
+
+FAST_MODE = True
 
 
 # ============================================================
@@ -263,11 +284,20 @@ logging.info("=" * 80)
 # PHASE 1 — DATA DOWNLOAD
 # ============================================================
 
+
+
+# ============================================================
+# PHASE 1 — DOWNLOAD ALL DATA ONCE
+# ============================================================
+
+
 logging.info("=" * 80)
 logging.info("PHASE 1: DATA DOWNLOAD")
 logging.info("=" * 80)
 
 tmp_dir = tempfile.gettempdir()
+folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip() or GDRIVE_FOLDER_ID_DEFAULT.strip()
+
 
 def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
     """Download a stooq series, clip to DATA_START, exit if mandatory and missing."""
@@ -323,29 +353,20 @@ if PORTFOLIO_MODE == "global_equity":
     # build_stoxx600() auto-selects first-build vs update mode:
     #   First build: reads stoxx600.csv from Drive, extends with yfinance
     #   Update:      reads stoxx600_combined.csv from Drive, extends forward
-    _stoxx_folder = (
-        os.environ.get("GDRIVE_FOLDER_ID", "").strip()
-        or GDRIVE_FOLDER_ID_DEFAULT.strip()
+    
+    
+    STOXX600 = build_and_upload(
+        folder_id         = folder_id,
+        raw_filename      = "stoxx600.csv",
+        combined_filename = "stoxx600_combined.csv",
+        extension_ticker  = "^STOXX",
     )
-    if not _stoxx_folder:
-        logging.error(
-            "FAIL: GDRIVE_FOLDER_ID not set — cannot load STOXX 600. "
-            "Set GDRIVE_FOLDER_ID_DEFAULT or the env var."
-        )
-        sys.exit(1)
-    STOXX600 = build_stoxx600(folder_id=_stoxx_folder)
     if STOXX600 is None:
-        logging.error(
-            "FAIL: STOXX 600 build/update failed. "
-            "Ensure stoxx600.csv is uploaded to Drive folder %s.",
-            _stoxx_folder,
-        )
+        logging.error("FAIL: STOXX 600 build/update failed.")
         sys.exit(1)
-    logging.info(
-        "OK  : %-14s  %5d rows  %s to %s",
-        "STOXX600", len(STOXX600),
-        STOXX600.index.min().date(), STOXX600.index.max().date(),
-    )
+    logging.info("OK  %-14s  %5d rows  %s to %s",
+                 "STOXX600", len(STOXX600),
+                 STOXX600.index.min().date(), STOXX600.index.max().date())
 
     # Mode A does not use these
     WIG20TR  = None
@@ -356,35 +377,28 @@ if PORTFOLIO_MODE == "global_equity":
 elif PORTFOLIO_MODE == "msci_world":
     logging.info("--- Mode B: msci_world ---")
 
-    WIG20TR  = _stooq("wig20tr",  "WIG20TR")
-    MWIG40TR = _stooq("mwig40tr", "MWIG40TR")
-    SWIG80TR = _stooq("swig80tr", "SWIG80TR")
+    WIG     = _stooq("wig",   "WIG")
 
-    # MSCI World combined series from Google Drive
-    folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip() or GDRIVE_FOLDER_ID_DEFAULT.strip()
-    if not folder_id:
-        logging.error(
-            "FAIL: GDRIVE_FOLDER_ID not set.\n"
-            "  Set GDRIVE_FOLDER_ID_DEFAULT in USER SETTINGS or the env var.\n"
-            "  Build the combined file first with: python wsj_msci_world.py"
-        )
-        sys.exit(1)
-    MSCIW = build_MSCIWORLD(folder_id=folder_id)
-    if MSCIW is None:
-        logging.error(
-            "FAIL: msci_world_combined.csv not found in Drive folder %s.\n"
-            "  Run wsj_msci_world.py to build it, then retry.",
-            folder_id,
-        )
-        sys.exit(1)
-    logging.info(
-        "OK  : %-14s  %5d rows  %s to %s",
-        "MSCI_World", len(MSCIW),
-        MSCIW.index.min().date(), MSCIW.index.max().date(),
+    # Mode B: MSCI World (synthetic 1990 + WSJ 2010 + URTH)
+    msciw_wsj = build_and_upload(
+        folder_id         = folder_id,
+        raw_filename      = "msci_world_wsj_raw.csv",
+        combined_filename = "msci_world_combined.csv",
+        extension_ticker  = "URTH",
     )
+    if msciw_wsj is None:
+        logging.error("FAIL: MSCI World (WSJ+URTH) build failed.")
+        sys.exit(1)
+    MSCIW = build_full_msci_world_extended(
+        wsj_combined_df = msciw_wsj,
+        folder_id       = folder_id,
+    )
+    logging.info("OK  %-14s  %5d rows  %s to %s",
+                 "MSCI_World", len(MSCIW),
+                 MSCIW.index.min().date(), MSCIW.index.max().date())
 
     # Mode B does not use these
-    WIG      = None
+      
     SPX      = None
     NKX      = None
     STOXX600 = None
@@ -403,10 +417,10 @@ fx_usd = USDPLN[CLOSE_COL] if USDPLN is not None else None
 fx_eur = EURPLN[CLOSE_COL] if EURPLN is not None else None
 fx_jpy = JPYPLN[CLOSE_COL] if JPYPLN is not None else None
 
-# --- WIG floor (Mode A only) ---
+# --- WIG floor ---
 # Clip WIG to the daily-continuous-trading era. Earlier data has multi-day
 # gaps that distort the breakout trough and MA signal calculations.
-if PORTFOLIO_MODE == "global_equity" and WIG is not None:
+if  WIG is not None:
     _wig_before = len(WIG)
     WIG = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
     logging.info(
@@ -480,15 +494,13 @@ if PORTFOLIO_MODE == "global_equity":
         price_NKX     = NKX
 
 elif PORTFOLIO_MODE == "msci_world":
-    # PL_MID blend: returns in PLN (both components are PLN-native)
-    PL_MID = build_blend(MWIG40TR, SWIG80TR, MWIG_WEIGHT, SWIG_WEIGHT, "PL_MID")
-    ret_WIG20TR = build_return_series(WIG20TR, hedged=True)
-    ret_PL_MID  = build_return_series(PL_MID,  hedged=True)
+    
+    ret_WIG     = build_return_series(WIG,     hedged=True)   # PLN — no FX
+    
     ret_MSCIW   = build_return_series(MSCIW,   fx_series=fx_usd, hedged=FX_HEDGED)
 
     for label, ret in [
-        ("WIG20TR",    ret_WIG20TR),
-        ("PL_MID",     ret_PL_MID),
+        ("WIG",    ret_WIG),
         ("MSCI_World", ret_MSCIW),
     ]:
         r = ret.dropna()
@@ -500,12 +512,12 @@ elif PORTFOLIO_MODE == "msci_world":
 
     if not FX_HEDGED:
         logging.info("FX_HEDGED=False: rebuilding price DFs from PLN return series.")
-        price_WIG20TR = build_price_df_from_returns(ret_WIG20TR, "WIG20TR_PLN")
-        price_PL_MID  = build_price_df_from_returns(ret_PL_MID,  "PL_MID_PLN")
+        price_WIG = build_price_df_from_returns(ret_WIG, "WIG_PLN")
+        
         price_MSCIW   = build_price_df_from_returns(ret_MSCIW,   "MSCIW_PLN")
     else:
-        price_WIG20TR = WIG20TR
-        price_PL_MID  = PL_MID
+        price_WIG = WIG
+        
         price_MSCIW   = MSCIW
 
 
@@ -537,6 +549,10 @@ def _run_equity_wf(price_df: pd.DataFrame, label: str):
         mom_lookback_grid     = MOM_LB_EQ,
         objective             = "calmar",
         n_jobs                = N_JOBS,
+        fast_mode             = FAST_MODE,
+        use_atr_stop          = USE_ATR_STOP,
+        N_atr_grid            = N_ATR_GRID if USE_ATR_STOP else None,
+        atr_window            = ATR_WINDOW,
     )
     m = compute_metrics(wf_eq)
     logging.info(
@@ -560,8 +576,8 @@ if PORTFOLIO_MODE == "global_equity":
     wf_eq_NKX,    wf_res_NKX,    wf_tr_NKX,    sig_NKX    = _run_equity_wf(price_NKX,   "Nikkei225")
 
 elif PORTFOLIO_MODE == "msci_world":
-    wf_eq_WIG20,  wf_res_WIG20,  wf_tr_WIG20,  sig_WIG20  = _run_equity_wf(price_WIG20TR, "WIG20TR")
-    wf_eq_PLMID,  wf_res_PLMID,  wf_tr_PLMID,  sig_PLMID  = _run_equity_wf(price_PL_MID,  "PL_MID")
+    wf_eq_WIG,  wf_res_WIG,  wf_tr_WIG,  sig_WIG  = _run_equity_wf(price_WIG, "WIG")
+    
     wf_eq_MSCIW,  wf_res_MSCIW,  wf_tr_MSCIW,  sig_MSCIW  = _run_equity_wf(price_MSCIW,   "MSCI_World")
 
 
@@ -591,6 +607,10 @@ wf_eq_TBSP, wf_res_TBSP, wf_tr_TBSP = walk_forward(
     mom_lookback_grid     = [252],
     objective             = "calmar",
     n_jobs                = N_JOBS,
+    fast_mode             = FAST_MODE,
+    use_atr_stop          = USE_ATR_STOP_BD,
+    N_atr_grid            = N_ATR_GRID_BD if USE_ATR_STOP_BD else None,
+    atr_window            = ATR_WINDOW,
 )
 
 m_tbsp = compute_metrics(wf_eq_TBSP)
@@ -643,17 +663,17 @@ if PORTFOLIO_MODE == "global_equity":
     wf_results_ref = wf_res_TBSP
 
 elif PORTFOLIO_MODE == "msci_world":
-    asset_keys = ["WIG20TR", "PL_MID", "MSCI_World", "TBSP"]
+    asset_keys = ["WIG",  "MSCI_World", "TBSP"]
 
     returns_dict = {
-        "WIG20TR":    ret_WIG20TR.dropna(),
-        "PL_MID":     ret_PL_MID.dropna(),
+        "WIG":       ret_WIG.dropna(),
+        
         "MSCI_World": ret_MSCIW.dropna(),
         "TBSP":       ret_tbsp.dropna(),
     }
     signals_full_dict = {
-        "WIG20TR":    sig_WIG20,
-        "PL_MID":     sig_PLMID,
+        "WIG":       sig_WIG,
+        
         "MSCI_World": sig_MSCIW,
         "TBSP":       sig_TBSP,
     }

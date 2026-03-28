@@ -431,8 +431,8 @@ def precompute_shared_wf(raw: dict, derived: dict) -> tuple[dict, dict, dict]:
                 objective="calmar",
                 n_jobs=N_JOBS,
                 fast_mode             = FAST_MODE,
-                use_atr_stop          = USE_ATR_STOP,
-                N_atr_grid            = N_ATR_GRID if USE_ATR_STOP else None,
+                use_atr_stop          = USE_ATR_STOP_BD,
+                N_atr_grid            = N_ATR_GRID_BD if USE_ATR_STOP_BD else None,
                 atr_window            = ATR_WINDOW,
             )
             sig = build_signal_series(eq, tr)

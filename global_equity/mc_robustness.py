@@ -3,98 +3,20 @@ mc_robustness.py
 ================
 Monte Carlo parameter robustness test for walk-forward optimised strategies.
 
-PURPOSE
--------
-A walk-forward optimisation selects the best parameters for each training
-window independently. The question this module answers is:
+ATR STOP MODE SUPPORT
+---------------------
+When use_atr_stop=True is active in the run configuration:
 
-    "If the optimiser had landed on slightly different parameters in each
-     training window, would the stitched OOS performance remain acceptable?"
+  - PERTURB_PARAMS replaces "X" with "N_atr" so the normalised ATR
+    multiplier is perturbed rather than the fixed stop fraction.
+  - MIN_VALUES adds a "N_atr" floor (default 0.02, same as X floor).
+  - build_perturbation_grid handles either key name transparently.
+  - extract_best_params_from_wf_results reads both X and N_atr columns.
+  - run_universe passes use_atr_stop and atr_window through to
+    run_strategy_with_trades.
 
-This is NOT a test of whether the strategy works — it tests whether the
-walk-forward APPROACH is stable, i.e. whether the results depend critically
-on hitting exact parameter values or whether performance holds across a
-neighbourhood of plausible alternatives.
-
-METHODOLOGY
------------
-1. Run normal walk-forward optimisation → best_params per window (done externally)
-2. For each window, build a perturbation grid: ±PERTURB_PCT around each
-   best parameter, keeping filter_mode fixed
-3. Repeat N_SAMPLES times:
-       a. Sample one param set per window independently (random.choice)
-       b. Run full stitched OOS using those params — no retraining
-       c. Compute metrics on the stitched equity curve
-4. Analyse the distribution of CAGR, Sharpe, MaxDD, CalMAR across samples
-
-Each sample represents "one possible way the optimisation could have gone".
-Carry states differ between universes because different params in window N
-produce different open positions at the end of window N, which then feed
-into window N+1. This is correct and realistic behaviour.
-
-KEY DESIGN DECISIONS
---------------------
-- filter_mode is held fixed (not perturbed) — we test parameter sensitivity
-  within the winning filter mode, not whether a different mode should have won
-- Perturbation uses ±20% of the base value, not grid-step neighbours — this
-  tests general parameter robustness, not whether our pre-chosen grid was
-  well-spaced
-- Integer params (fast, slow) are rounded; slow-fast >= 75 constraint enforced
-- Parallelised at the universe level (universes are independent); windows
-  within a universe are sequential due to carry state dependency
-- Seeds are set per sample for full reproducibility
-
-INTERPRETATION
---------------
-Focus on tail metrics, not mean:
-- p05 CAGR > 0          : strategy profitable in 95% of alternate realities
-- p05 Sharpe > 0        : risk-adjusted positive in 95% of cases
-- p05 MaxDD > -0.35     : drawdown bounded even in adverse param realisations
-- p(CAGR < 0) < 0.10   : less than 10% chance of losing scenario
-
-If these hold, the strategy is ROBUST — results do not depend on hitting
-exact parameter values. If p05 CAGR is negative or p(loss) > 20%, the
-strategy is FRAGILE — the backtest results may be a lucky parameter pick.
-
-USAGE
------
-    from mc_robustness import run_monte_carlo_robustness, analyze_robustness
-
-    # After normal walk-forward run:
-    results_df = run_monte_carlo_robustness(
-        best_params=wf_best_params,      # dict: window_id -> param_dict
-        windows=wf_windows,              # list of window dicts from walk_forward
-        df=df,                           # full price DataFrame
-        cash_df=CASH,                    # full cash DataFrame
-        vol_window=VOL_WINDOW,
-        selected_mode=chosen_mode,
-        n_samples=1000,
-        n_jobs=N_JOBS,
-        perturb_pct=0.20,
-        seed=42
-    )
-
-    baseline = compute_metrics(wf_equity)
-    analyze_robustness(results_df, baseline)
-
-DEPENDENCIES
-------------
-Requires from main strategy module:
-    run_strategy_with_trades
-    compute_metrics
-    compute_fund_breadth_signal   (only if fund filter used)
-    
-    
-    
-Now also includes bootstrapping of data
-
-Reshuffle blocks of returns (120 or 250 days) to create many synthetic price 
-histories with the same short-term autocorrelation structure but a different 
-sequence of regimes. Re-run the full walk-forward procedure 
-(including re-optimisation) on each synthetic history. 
-Asks: "does the walk-forward procedure reliably find good parameters 
-on histories that look like ours but aren't exactly ours?" 
-This is testing the procedure, not just the parameters.
+All other logic (window sampling, equity stitching, carry state, parallel
+execution, analysis/reporting) is unchanged.
 """
 
 import itertools
@@ -107,10 +29,6 @@ import pandas as pd
 import numpy as np
 from joblib import Parallel, delayed
 
-# ---------------------------------------------------------------------------
-# These must be imported from your main strategy module.
-# Adjust the import path to match your project structure.
-# ---------------------------------------------------------------------------
 from strategy_test_library import (
                                 run_strategy_with_trades,
                                 compute_metrics,
@@ -122,19 +40,19 @@ from strategy_test_library import (
 # Constants
 # ---------------------------------------------------------------------------
 
-# Parameters that are perturbed. filter_mode, fund_idx, fund_params,
-# target_vol are held fixed — only continuous/integer strategy params vary.
-PERTURB_PARAMS  = ["X", "Y", "fast", "slow", "stop_loss"]
+# Parameters perturbed in fixed-stop mode
+PERTURB_PARAMS_FIXED = ["X", "Y", "fast", "slow", "stop_loss"]
 
-# Parameters that must be rounded to integers after perturbation
+# Parameters perturbed in ATR-stop mode (N_atr replaces X)
+PERTURB_PARAMS_ATR   = ["N_atr", "Y", "fast", "slow", "stop_loss"]
+
 INTEGER_PARAMS  = {"fast", "slow"}
 
-# Minimum separation between slow and fast MA to prevent excessive crossovers
 MIN_SLOW_FAST_GAP = 75
 
-# Minimum values to prevent degenerate params after downward perturbation
 MIN_VALUES = {
     "X":         0.02,
+    "N_atr":     0.02,   # minimum normalised ATR multiplier (same floor as X)
     "Y":         0.01,
     "fast":      10,
     "slow":      50,
@@ -144,7 +62,7 @@ MIN_VALUES = {
 
 
 # ---------------------------------------------------------------------------
-# Asset-class threshold presets for analyze_robustness / analyze_bootstrap
+# Asset-class threshold presets
 # ---------------------------------------------------------------------------
 
 EQUITY_THRESHOLDS_MC = {
@@ -183,26 +101,27 @@ def build_perturbation_grid(base_params, pct=0.20):
     """
     Build the cartesian product of ±pct perturbations around base_params.
 
-    For each parameter in PERTURB_PARAMS, three candidate values are
-    generated: base*(1-pct), base, base*(1+pct). Integer params are rounded.
-    Combinations that violate slow-fast >= MIN_SLOW_FAST_GAP are excluded.
-    Values below MIN_VALUES are clipped.
+    Automatically selects PERTURB_PARAMS_ATR when base_params contains
+    "N_atr" (i.e. use_atr_stop=True was active), otherwise uses
+    PERTURB_PARAMS_FIXED. This means the caller does not need to pass a
+    mode flag — the param dict self-describes which mode is active.
 
     Parameters
     ----------
-    base_params : dict   — best params for one window (output from walk_forward)
-    pct         : float  — perturbation fraction, default 0.20 (±20%)
+    base_params : dict   — best params for one window
+    pct         : float  — perturbation fraction (default 0.20 = ±20%)
 
     Returns
     -------
     list[dict]  — all valid perturbed parameter dicts for this window.
-                  Each dict contains all keys from base_params, with
-                  PERTURB_PARAMS values replaced by the perturbed values
-                  and all other keys (filter_mode, fund_idx etc.) preserved.
     """
+    # Determine which stop parameter is active
+    use_atr = "N_atr" in base_params and base_params.get("use_atr_stop", False)
+    perturb_params = PERTURB_PARAMS_ATR if use_atr else PERTURB_PARAMS_FIXED
+
     grid = {}
 
-    for name in PERTURB_PARAMS:
+    for name in perturb_params:
         val = base_params[name]
         lo  = max(MIN_VALUES.get(name, 0.0), val * (1 - pct))
         hi  = val * (1 + pct)
@@ -223,7 +142,7 @@ def build_perturbation_grid(base_params, pct=0.20):
 
         # Preserve non-perturbed keys unchanged
         for key in base_params:
-            if key not in PERTURB_PARAMS:
+            if key not in perturb_params:
                 p[key] = base_params[key]
 
         # Enforce MA separation constraint
@@ -231,11 +150,16 @@ def build_perturbation_grid(base_params, pct=0.20):
             if p["slow"] - p["fast"] < MIN_SLOW_FAST_GAP:
                 continue
 
+        # In fixed mode: absolute stop must be less than trailing stop fraction
+        if not use_atr and "X" in p and "stop_loss" in p:
+            if p["stop_loss"] >= p["X"]:
+                continue
+
         combos.append(p)
 
     logging.debug(
-        "build_perturbation_grid: %d valid combinations (pct=%.0f%%)",
-        len(combos), pct * 100
+        "build_perturbation_grid: %d valid combinations (pct=%.0f%%, mode=%s)",
+        len(combos), pct * 100, "ATR" if use_atr else "fixed"
     )
     return combos
 
@@ -245,18 +169,6 @@ def build_perturbation_grid(base_params, pct=0.20):
 # ---------------------------------------------------------------------------
 
 def build_all_perturbation_grids(best_params, pct=0.20):
-    """
-    Build perturbation grids for every window.
-
-    Parameters
-    ----------
-    best_params : dict  — {window_id: param_dict} from walk_forward
-    pct         : float — perturbation fraction
-
-    Returns
-    -------
-    dict  — {window_id: list[param_dict]}
-    """
     return {
         w_id: build_perturbation_grid(params, pct=pct)
         for w_id, params in best_params.items()
@@ -264,22 +176,10 @@ def build_all_perturbation_grids(best_params, pct=0.20):
 
 
 # ---------------------------------------------------------------------------
-# Step 3 — Sample one universe (one param set per window)
+# Step 3 — Sample one universe
 # ---------------------------------------------------------------------------
 
 def sample_universe(window_variants, rng):
-    """
-    Sample one parameter set per window to form a single 'universe'.
-
-    Parameters
-    ----------
-    window_variants : dict   — {window_id: list[param_dict]}
-    rng             : random.Random instance for reproducibility
-
-    Returns
-    -------
-    dict  — {window_id: param_dict}
-    """
     return {
         w_id: rng.choice(variants)
         for w_id, variants in window_variants.items()
@@ -287,7 +187,7 @@ def sample_universe(window_variants, rng):
 
 
 # ---------------------------------------------------------------------------
-# Step 4 — Run one universe: stitch OOS equity curve with perturbed params
+# Step 4 — Run one universe
 # ---------------------------------------------------------------------------
 
 def run_universe(universe, windows, df, cash_df, vol_window,
@@ -295,26 +195,9 @@ def run_universe(universe, windows, df, cash_df, vol_window,
     """
     Stitch the full OOS equity curve using perturbed params — no retraining.
 
-    This mirrors the stitching logic in walk_forward exactly. Carry states
-    are propagated between windows, so different parameter choices in window N
-    correctly affect the carry state entering window N+1.
-
-    Parameters
-    ----------
-    universe     : dict         — {window_id: param_dict} from sample_universe
-    windows      : list[dict]   — window definitions from walk_forward, each
-                                  containing: warmup_start, train_end (=test_start),
-                                  test_end, warmup_df
-    df           : DataFrame    — full price series
-    cash_df      : DataFrame    — full cash series
-    vol_window   : int          — rolling vol window
-    selected_mode: str          — 'full', 'vol_entry', or 'vol_dynamic'
-    funds_df     : DataFrame|None — fund panel (only needed if fund filter used)
-
-    Returns
-    -------
-    equity : pd.Series   — stitched OOS equity curve (starts at 1.0)
-    trades : list[dict]  — all trades across windows
+    ATR parameters (use_atr_stop, N_atr, atr_window) are read from each
+    window's param dict and forwarded to run_strategy_with_trades, so
+    ATR mode is handled transparently without additional arguments.
     """
     equity_parts = []
     all_trades   = []
@@ -324,7 +207,6 @@ def run_universe(universe, windows, df, cash_df, vol_window,
     for w_id, w in enumerate(windows):
         params = universe[w_id]
 
-        # --- Prepare OOS slice with warmup prepended ---
         test_start   = w["test_start"]
         test_end     = w["test_end"]
         warmup_start = w["warmup_start"]
@@ -347,7 +229,6 @@ def run_universe(universe, windows, df, cash_df, vol_window,
             method="ffill"
         )
 
-        # --- Fund signal (if applicable) ---
         fund_signal = None
         if params.get("filter_mode") == "fund" and funds_df is not None:
             fund_slice = funds_df.loc[
@@ -359,10 +240,9 @@ def run_universe(universe, windows, df, cash_df, vol_window,
             )
             fund_signal = full_signal.loc[full_signal.index >= test_start]
 
-        # --- Run strategy with fixed params ---
         result = run_strategy_with_trades(
             oos_slice,
-            X             = params["X"],
+            X             = params.get("X", 0.10),
             Y             = params["Y"],
             fast          = int(params["fast"]),
             slow          = int(params["slow"]),
@@ -370,22 +250,24 @@ def run_universe(universe, windows, df, cash_df, vol_window,
             target_vol    = params.get("target_vol"),
             position_mode = selected_mode,
             vol_window    = vol_window,
-            use_momentum  = (params.get("filter_mode") == "mom"),
+            filter_mode  = params.get("filter_mode"),
             cash_df       = cash_slice,
             initial_state = carry_state,
             warmup_df     = warmup_slice if len(warmup_slice) > 0 else None,
             fund_signal   = fund_signal,
-            price_col     = price_col
+            price_col     = price_col,
+            # ATR stop parameters — forwarded from the perturbed param dict
+            use_atr_stop  = params.get("use_atr_stop", False),
+            N_atr         = params.get("N_atr", 0.10),
+            atr_window    = params.get("atr_window", 20),
         )
 
         if result is None or result[0] is None:
-            # Strategy returned None (insufficient data) — skip window
             logging.debug("run_universe: window %d returned None, skipping", w_id)
             continue
 
         result_df, _, trades_df, end_state = result
 
-        # --- Chain-link equity ---
         eq = result_df["equity"]
         eq = eq / eq.iloc[0] * prev_equity
 
@@ -403,23 +285,11 @@ def run_universe(universe, windows, df, cash_df, vol_window,
 
 
 # ---------------------------------------------------------------------------
-# Step 5 — Single sample runner (for parallelisation)
+# Step 5 — Single sample runner
 # ---------------------------------------------------------------------------
 
 def _run_single_sample(seed, window_variants, windows, df, cash_df,
                         vol_window, selected_mode, funds_df, price_col):
-    """
-    Run one Monte Carlo sample with a fixed seed. Designed to be called
-    via joblib.Parallel — all arguments must be picklable.
-
-    Parameters
-    ----------
-    seed : int  — random seed for this sample (ensures reproducibility)
-
-    Returns
-    -------
-    dict  — metrics for this sample, plus the seed for traceability
-    """
     rng = random.Random(seed)
     universe = sample_universe(window_variants, rng)
 
@@ -459,60 +329,34 @@ def run_monte_carlo_robustness(
     """
     Run the full Monte Carlo robustness test.
 
-    Parameters
-    ----------
-    best_params   : dict        — {window_id: param_dict} from walk_forward.
-                                  Each param_dict must contain: X, Y, fast,
-                                  slow, stop_loss, filter_mode, and optionally
-                                  fund_idx, fund_params, target_vol.
-    windows       : list[dict]  — window definitions. Each dict must contain:
-                                  warmup_start, test_start, test_end.
-                                  Typically extracted from walk_forward internals
-                                  or reconstructed from wf_results DataFrame.
-    df            : DataFrame   — full price series (same as passed to walk_forward)
-    cash_df       : DataFrame   — full cash series
-    vol_window    : int         — rolling volatility window (bars)
-    selected_mode : str         — position sizing mode: 'full', 'vol_entry',
-                                  or 'vol_dynamic'
-    funds_df      : DataFrame   — fund NAV panel (only needed if any window
-                                  uses fund filter). Pass None if MA/mom only.
-    n_samples     : int         — number of Monte Carlo universes to simulate.
-                                  1000 gives stable p05/p95 estimates.
-                                  2000 for publication-quality results.
-    n_jobs        : int         — number of parallel jobs (joblib). Use N_JOBS
-                                  from main script. Set to 1 for debugging.
-    perturb_pct   : float       — perturbation fraction, default 0.20 (±20%).
-                                  Larger values test wider robustness but may
-                                  produce many degenerate param combinations.
-    seed          : int         — master random seed. Sample i uses seed+i,
-                                  ensuring full reproducibility.
-
-    Returns
-    -------
-    pd.DataFrame  — one row per sample, columns: CAGR, Vol, Sharpe, MaxDD,
-                    CalMAR, seed. Failed samples (None) are dropped.
+    ATR stop mode is detected automatically from best_params — no
+    additional arguments are required from the caller.
     """
     t_start = time.time()
 
     logging.info("=" * 80)
     logging.info("MONTE CARLO ROBUSTNESS TEST")
     logging.info("=" * 80)
+
+    # Detect stop mode from first window's params for logging
+    first_params = next(iter(best_params.values()))
+    stop_mode = "ATR" if first_params.get("use_atr_stop", False) else "fixed %"
     logging.info(
-        "Config: n_samples=%d | perturb_pct=%.0f%% | n_jobs=%d | seed=%d",
-        n_samples, perturb_pct * 100, n_jobs, seed
+        "Config: n_samples=%d | perturb_pct=%.0f%% | n_jobs=%d | seed=%d | stop_mode=%s",
+        n_samples, perturb_pct * 100, n_jobs, seed, stop_mode
     )
-    # --- Build perturbation grids --- 
+
     window_variants = build_all_perturbation_grids(best_params, pct=perturb_pct)
 
     for w_id, variants in window_variants.items():
         logging.info(
-            "Window %d (%s filter): %d perturbation variants",
+            "Window %d (%s filter, %s stop): %d perturbation variants",
             w_id,
             best_params[w_id].get("filter_mode", "?"),
+            stop_mode,
             len(variants)
         )
 
-    # --- Time a single sample before full run ---
     logging.info("Timing single sample...")
     t0 = time.time()
     _run_single_sample(
@@ -524,16 +368,15 @@ def run_monte_carlo_robustness(
         vol_window=vol_window,
         selected_mode=selected_mode,
         funds_df=funds_df,
-        price_col     = price_col
+        price_col=price_col
     )
     single_ms = (time.time() - t0) * 1000
-    est_total_s = single_ms * n_samples / max(n_jobs, 1) / 1000
+    est_total_s = 2 * single_ms * n_samples / max(n_jobs, 1) / 1000
     logging.info(
-        "Single sample: %.0fms -> estimated total: %.0fs (~%.1f min) on %d jobs",
+        "Single sample: %.0fms -> estimated total (x2): %.0fs (~%.1f min) on %d jobs",
         single_ms, est_total_s, est_total_s / 60, n_jobs
     )
 
-    # --- Run Monte Carlo ---
     try:
         raw_results = Parallel(n_jobs=n_jobs, backend="loky")(
             delayed(_run_single_sample)(
@@ -568,7 +411,6 @@ def run_monte_carlo_robustness(
             for i in range(n_samples)
         ]
 
-    # --- Collect results ---
     valid = [r for r in raw_results if r is not None]
     n_failed = n_samples - len(valid)
     if n_failed > 0:
@@ -590,26 +432,6 @@ def run_monte_carlo_robustness(
 # ---------------------------------------------------------------------------
 
 def analyze_robustness(results_df, baseline_metrics, thresholds=None):
-    """
-    Print a formatted robustness report comparing the Monte Carlo distribution
-    to the baseline (actual walk-forward result).
-
-    Parameters
-    ----------
-    results_df       : pd.DataFrame  — output from run_monte_carlo_robustness
-    baseline_metrics : dict          — metrics from the actual WF run.
-                                       Keys: CAGR, Vol, Sharpe, MaxDD, CalMAR
-    thresholds       : dict|None     — custom pass/fail thresholds. If None,
-                                       uses conservative defaults suitable for
-                                       a single-index Polish equity strategy:
-                                         CAGR  p05 > 0.00
-                                         Sharpe p05 > 0.00
-                                         MaxDD  p05 > -0.35
-
-    Returns
-    -------
-    dict  — summary statistics per metric, plus overall verdict
-    """
     if thresholds is None:
         thresholds = {
             "CAGR":   {"p05_min": 0.00,  "label": "p05 CAGR > 0%"},
@@ -641,7 +463,6 @@ def analyze_robustness(results_df, baseline_metrics, thresholds=None):
         p75   = results_df[col].quantile(0.75)
         p95   = results_df[col].quantile(0.95)
 
-        # "worse than baseline" — for MaxDD, worse = more negative
         if col == "MaxDD":
             p_worse = (results_df[col] < base).mean()
         else:
@@ -654,7 +475,6 @@ def analyze_robustness(results_df, baseline_metrics, thresholds=None):
             "p_worse_than_baseline": p_worse,
         }
 
-        # Format percentages for CAGR, MaxDD; 2dp for Sharpe/CalMAR
         fmt = "{:.1%}" if col in ("CAGR", "MaxDD", "Vol") else "{:.2f}"
         row = (
             f"{col:<10} "
@@ -671,7 +491,6 @@ def analyze_robustness(results_df, baseline_metrics, thresholds=None):
 
     logging.info("-" * 90)
 
-    # --- Pass/fail verdict ---
     passes = []
     fails  = []
     for metric, cfg in thresholds.items():
@@ -685,7 +504,6 @@ def analyze_robustness(results_df, baseline_metrics, thresholds=None):
                 f"{cfg['label']}  [actual p05={p05_val:.3f}]"
             )
 
-    # Additional check: P(CAGR < 0)
     p_loss = (results_df["CAGR"] < 0).mean()
     summary["p_loss"] = p_loss
     loss_label = f"P(CAGR < 0) = {p_loss:.1%}"
@@ -694,7 +512,6 @@ def analyze_robustness(results_df, baseline_metrics, thresholds=None):
     else:
         fails.append(f"P(CAGR < 0) < 10%  [actual {p_loss:.1%}]")
 
-    # Check: baseline should not be a top-decile outlier in its own distribution
     for metric in ["CAGR", "Sharpe"]:
         if metric not in summary:
             continue
@@ -709,7 +526,6 @@ def analyze_robustness(results_df, baseline_metrics, thresholds=None):
                 f"P({metric} worse than baseline) = {p_worse:.1%}  [baseline not an outlier]"
             )
 
-    # Check: median CAGR should be meaningfully positive
     median_cagr = summary["CAGR"]["median"]
     if median_cagr < 0.02:
         fails.append(
@@ -718,7 +534,6 @@ def analyze_robustness(results_df, baseline_metrics, thresholds=None):
     else:
         passes.append(f"Median CAGR = {median_cagr:.1%}  [> 2% threshold]")
 
-    # Check: result should not be highly parameter-sensitive
     cagr_range  = summary["CAGR"]["p95"] - summary["CAGR"]["p05"]
     cagr_median = summary["CAGR"]["median"]
     if cagr_median > 0 and cagr_range / cagr_median > 3.0:
@@ -747,31 +562,15 @@ def analyze_robustness(results_df, baseline_metrics, thresholds=None):
     return summary
 
 # ---------------------------------------------------------------------------
-# Utility — extract window definitions from walk_forward wf_results DataFrame
+# Utility — extract window definitions from wf_results DataFrame
 # ---------------------------------------------------------------------------
 
 def extract_windows_from_wf_results(wf_results, train_years=8):
-    """
-    Reconstruct window definitions from the wf_results DataFrame produced
-    by walk_forward. This avoids having to modify walk_forward to return
-    window metadata separately.
-
-    Parameters
-    ----------
-    wf_results   : pd.DataFrame  — per-window results from walk_forward
-    train_years  : int           — training window length in years (default 8)
-
-    Returns
-    -------
-    list[dict]  — one dict per window with keys:
-                  warmup_start, test_start, test_end, window_id
-    """
     windows = []
     for i, row in wf_results.iterrows():
         test_start   = pd.Timestamp(row["TestStart"])
         test_end     = pd.Timestamp(row["TestEnd"])
         train_start  = pd.Timestamp(row["TrainStart"])
-        # Warmup begins at train_start — same as the WF loop uses
         warmup_start = train_start
         windows.append({
             "window_id":    i,
@@ -786,27 +585,28 @@ def extract_best_params_from_wf_results(wf_results):
     """
     Extract best_params dict from the wf_results DataFrame.
 
-    Parameters
-    ----------
-    wf_results : pd.DataFrame — per-window results from walk_forward
-
-    Returns
-    -------
-    dict  — {window_index: param_dict}
+    Reads both X and N_atr columns (whichever are present) and includes
+    use_atr_stop and atr_window so run_universe can forward them correctly
+    to run_strategy_with_trades.
     """
     best_params = {}
     for i, row in wf_results.iterrows():
-        best_params[i] = {
-            "filter_mode": row["filter_mode"],
-            "fund_idx":    row.get("fund_idx"),
-            "fund_params": row.get("fund_params"),
-            "X":           float(row["X"]),
-            "Y":           float(row["Y"]),
-            "fast":        int(row["fast"]),
-            "slow":        int(row["slow"]),
-            "stop_loss":   float(row["stop_loss"]),
-            "target_vol":  row.get("target_vol"),
+        use_atr = bool(row.get("use_atr_stop", False))
+        p = {
+            "filter_mode":  row["filter_mode"],
+            "fund_idx":     row.get("fund_idx"),
+            "fund_params":  row.get("fund_params"),
+            "X":            float(row["X"]) if "X" in row and not use_atr else 0.10,
+            "Y":            float(row["Y"]),
+            "fast":         int(row["fast"]),
+            "slow":         int(row["slow"]),
+            "stop_loss":    float(row["stop_loss"]),
+            "target_vol":   row.get("target_vol"),
+            "use_atr_stop": use_atr,
+            "N_atr":        float(row["N_atr"]) if "N_atr" in row else 0.10,
+            "atr_window":   int(row["atr_window"]) if "atr_window" in row else 20,
         }
+        best_params[i] = p
     return best_params
 
 
@@ -818,24 +618,15 @@ def extract_best_params_from_wf_results(wf_results):
 def block_bootstrap_history(df, price_col, cash_col, block_size=250, seed=None):
     """
     Reshuffle (index_return, cash_return) pairs in blocks.
-    Preserves within-block equity/rate correlation.
-    Rate jumps at block boundaries are accepted as necessary artefact.
-    
-    Returns synthetic df with reconstructed price and cash columns,
-    same index as input.
     """
     rng = np.random.default_rng(seed)
     
-    # Work in return space for both series
     idx_ret  = df[price_col].pct_change().dropna()
     cash_ret = df[cash_col].pct_change().dropna()
-    
-    # combined (which is passed here as df) is pre-intersected — both series share the same date range
 
     aligned = pd.concat([idx_ret, cash_ret], axis=1).dropna()
     aligned.columns = ["idx_ret", "cash_ret"]
 
-    
     n = len(aligned)
     block_starts = list(range(0, n - block_size + 1, block_size))
     n_blocks_needed = int(np.ceil(n / block_size))
@@ -864,15 +655,9 @@ def _bootstrap_single_sample(
 ):
     """
     Single bootstrap sample — designed for joblib.Parallel dispatch.
-    Fully self-contained, no shared mutable state.
+    ATR parameters are forwarded via wf_kwargs transparently.
     """
-    
-    # Force sequential grid search inside bootstrap workers
-    # to avoid nested joblib parallelism deadlock on Windows
-    # Force sequential grid search inside each bootstrap worker
     wf_kwargs_inner = {**wf_kwargs, "n_jobs": 1}
-
-
     
     try:
         synthetic = block_bootstrap_history(
@@ -893,7 +678,6 @@ def _bootstrap_single_sample(
             i, len(synthetic_df), len(synthetic_cash),
             synthetic_df.index[0], synthetic_df.index[-1]
             )   
-        
         
         equity, wf_res, _ = walk_forward(
             synthetic_df, cash_df=synthetic_cash, **wf_kwargs_inner
@@ -928,13 +712,7 @@ def run_block_bootstrap_robustness(
 ):
     """
     Run full walk-forward re-optimisation on n_samples block-bootstrapped
-    synthetic histories. Bootstrap samples are evaluated in parallel using
-    the same three-tier fallback as walk_forward (loky -> threading -> sequential).
-
-    Each sample independently reshuffles (index_return, cash_return) blocks,
-    runs the full walk-forward optimisation, and returns OOS metrics.
-    The distribution of results answers: would the walk-forward procedure
-    perform well on a different plausible market history?
+    synthetic histories. ATR parameters are forwarded via wf_kwargs.
     """
     _cpu_count = os.cpu_count() or 1
     n_jobs= max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
@@ -947,12 +725,10 @@ def run_block_bootstrap_robustness(
         n_samples, block_size, n_jobs
     )
 
-    # Merge price and cash into single df for joint reshuffling
     common_idx = df.index.intersection(cash_df.index)
     combined = df.loc[common_idx, [price_col]].copy()
     combined["cash_price"] = cash_df.loc[common_idx, cash_price_col]
     
-    # Estimate runtime from single sample
     logging.info("Timing single sample...")
     t0 = time.time()
     _bootstrap_single_sample(
@@ -966,17 +742,16 @@ def run_block_bootstrap_robustness(
         single_time * 1000, estimated, estimated / 60, n_jobs
     )
     logging.info(
-        "Single sample: %.0fms -> realistic estimation (x2) including overhead: %.0fs (~%.1f min) on %d jobs",
+        "Single sample: %.0fms -> realistic estimation (x2): %.0fs (~%.1f min) on %d jobs",
         single_time * 1000, 2*estimated, 2*estimated / 60, n_jobs
     )
 
-   # Three-tier parallel fallback — mirrors walk_forward parallelisation
     valid     = []
     failed    = 0
-    log_every = max(1, n_samples // 20)  # ~20 progress updates
+    log_every = max(1, n_samples // 20)
     success   = False
 
-    N_OUTER_JOBS = n_jobs  # preserve before loop
+    N_OUTER_JOBS = n_jobs
     for backend, n_jobs, label in [
             ("loky",      N_OUTER_JOBS, "multiprocessing"),
             ("threading", N_OUTER_JOBS, "threading"),
@@ -1029,7 +804,7 @@ def run_block_bootstrap_robustness(
                 "Bootstrap backend '%s' failed: %s — trying next option.",
                 label, e
             )
-            valid   = []  # reset on failure — don't mix partial results
+            valid   = []
             failed  = 0
 
     if not success:
@@ -1050,7 +825,6 @@ def run_block_bootstrap_robustness(
         logging.error("No valid bootstrap samples — cannot report.")
         return results_df
 
-    # Summary report
     logging.info("=" * 80)
     logging.info(
         "BLOCK BOOTSTRAP ROBUSTNESS REPORT  (n=%d valid samples, block=%d days)",
@@ -1073,8 +847,6 @@ def run_block_bootstrap_robustness(
         )
     logging.info("-" * 80)
 
-
-
     return results_df
 
 
@@ -1083,40 +855,6 @@ def run_block_bootstrap_robustness(
 # ---------------------------------------------------------------------------
 
 def analyze_bootstrap(results_df, baseline_metrics, thresholds=None):
-    """
-    Print a formatted report for the block bootstrap robustness test.
-
-    The bootstrap test asks a different question from the Monte Carlo test:
-    not "are these parameters on a robust plateau?" but "does the walk-forward
-    procedure reliably find a good strategy on alternative plausible histories?"
-
-    Because block reshuffling suppresses multi-year trends, the bootstrap
-    is structurally biased against trend-following. Thresholds are therefore
-    set lower than the MC thresholds — a borderline pass here is meaningful.
-
-    Parameters
-    ----------
-    results_df       : pd.DataFrame  — output from run_block_bootstrap_robustness.
-                                       One row per synthetic history, columns:
-                                       CAGR, Vol, Sharpe, MaxDD, CalMAR.
-    baseline_metrics : dict          — metrics from the actual WF run on real data.
-                                       Keys: CAGR, Vol, Sharpe, MaxDD, CalMAR.
-    thresholds       : dict|None     — custom pass/fail thresholds. If None,
-                                       uses defaults appropriate for a single-index
-                                       Polish equity trend-following strategy:
-                                         CAGR  p05 > -0.01  (tolerates mild losses
-                                                              on worst synthetic histories)
-                                         Sharpe p05 > -0.10  (risk-adjusted near-zero)
-                                         MaxDD  p05 > -0.40  (wider than MC — bootstrap
-                                                              can produce concentrated
-                                                              drawdown periods)
-                                         P(CAGR < 0) < 0.20  (strategy loss-making on
-                                                              fewer than 1 in 5 histories)
-
-    Returns
-    -------
-    dict  — summary statistics per metric, plus overall verdict
-    """
     if thresholds is None:
         thresholds = {
             "CAGR":   {"p05_min": -0.01, "label": "p05 CAGR > -1%"},
@@ -1165,7 +903,6 @@ def analyze_bootstrap(results_df, baseline_metrics, thresholds=None):
             "p95":      p95,
         }
 
-        # P(CAGR<0) shown only on the CAGR row, blank on others
         p_loss_display = f"{p_loss:.1%}" if col == "CAGR" else ""
 
         if col in ("CAGR", "Sharpe", "CalMAR"):
@@ -1185,13 +922,9 @@ def analyze_bootstrap(results_df, baseline_metrics, thresholds=None):
     summary["p_loss"] = p_loss
     logging.info("-" * 90)
 
-    # ------------------------------------------------------------------
-    # Pass / fail checks
-    # ------------------------------------------------------------------
     passes = []
     fails  = []
 
-    # p05 threshold checks
     for metric, cfg in thresholds.items():
         if metric == "p_loss":
             continue
@@ -1208,7 +941,6 @@ def analyze_bootstrap(results_df, baseline_metrics, thresholds=None):
                 f"p05 {metric} = {p05:.2%}  >= {limit:.2%}  [{cfg['label']}]"
             )
 
-    # P(loss) check
     p_loss_limit = thresholds["p_loss"]["max"]
     if p_loss > p_loss_limit:
         fails.append(
@@ -1221,7 +953,6 @@ def analyze_bootstrap(results_df, baseline_metrics, thresholds=None):
             f"[{thresholds['p_loss']['label']}]"
         )
 
-    # Median CAGR check — lower bar than MC given structural bias
     median_cagr = summary["CAGR"]["median"]
     if median_cagr < 0.01:
         fails.append(
@@ -1233,9 +964,7 @@ def analyze_bootstrap(results_df, baseline_metrics, thresholds=None):
             f"Median CAGR = {median_cagr:.1%}  [> 1% threshold]"
         )
 
-    # Baseline vs median — is real history unusually good?
     base_cagr   = baseline_metrics.get("CAGR", float("nan"))
-    
     p95_cagr    = summary["CAGR"]["p95"]
     if base_cagr > p95_cagr:
         fails.append(
