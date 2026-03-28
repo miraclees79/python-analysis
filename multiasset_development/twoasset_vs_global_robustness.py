@@ -147,8 +147,8 @@ CANDIDATE_TEST_YEARS  = 2
 FORCE_OOS_START = "2008-01-04"   # None = auto-detect
 
 # ── Robustness iterations ────────────────────────────────────────────────────
-N_MC        = int(os.getenv("N_MC",        "10"))  # 10 for smoke test
-N_BOOTSTRAP = int(os.getenv("N_BOOTSTRAP", "10"))   # 10 for smoke test
+N_MC        = int(os.getenv("N_MC",        "1000"))  # 10 for smoke test 1000 full
+N_BOOTSTRAP = int(os.getenv("N_BOOTSTRAP", "100"))   # 10 for smoke test 500 full
 
 RUN_MC        = True   # MC parameter perturbation
 RUN_BOOTSTRAP = True   # Block bootstrap (slow — set False to skip)
