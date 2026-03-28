@@ -6,7 +6,7 @@ import random
 import os
 import datetime as dt
 from joblib import Parallel, delayed
-
+from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
 
 
 import logging
@@ -17,7 +17,236 @@ import logging
 # DATA ACQUISITION
 # ============================================================
 
-def download_csv(url, filename):
+
+
+import subprocess
+
+
+# Only import headless browser when needed
+try:
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+except ImportError:
+    webdriver = None
+
+def download_csv(url: str, filename: str) -> bool:
+    """
+    Download a CSV from Stooq using 3-step fallback:
+      1. requests with browser headers
+      2. curl subprocess
+      3. headless Chrome (Selenium)
+    Returns True if download succeeds, False otherwise.
+    """
+    # ===== Step 1: Hardened Python requests =====
+    USER_AGENTS = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:118.0) Gecko/20100101 Firefox/118.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_5_2) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1 Safari/605.1.15"
+    ]
+
+    headers = {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Referer": "https://stooq.pl/",
+        "Connection": "keep-alive"
+    }
+
+    for attempt in range(1, 4):
+        try:
+            logging.info(f"Step 1: Attempt {attempt} - requests GET {url}")
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+
+            if not resp.content.strip() or b"<html" in resp.content.lower():
+                logging.warning(f"Step 1: Attempt {attempt} returned empty or HTML")
+                time.sleep(0.4)
+                continue
+
+            with open(filename, "wb") as f:
+                f.write(resp.content)
+            logging.info(f"Step 1: Downloaded via requests: {filename}")
+            return True
+
+        except Exception as e:
+            logging.warning(f"Step 1: Attempt {attempt} failed: {e}")
+            time.sleep(0.4)
+
+    # ===== Step 2: Curl fallback =====
+    logging.info(f"Step 2: Falling back to curl")
+    cmd = [
+        "curl", "-L", "--fail",
+        "--retry", "3", "--retry-delay", "1",
+        "-A", "Mozilla/5.0",
+        "-H", "Referer: https://stooq.pl/",
+        "--http1.1",  # force HTTP/1.1
+        "-o", filename,
+        url
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        if result.returncode == 0 and os.path.exists(filename) and os.path.getsize(filename) > 0:
+            logging.info(f"Step 2: Downloaded via curl: {filename}")
+            return True
+        logging.warning(f"Step 2: Curl failed or empty file. stderr: {result.stderr.strip()}")
+    except Exception as e:
+        logging.warning(f"Step 2: Curl execution failed: {e}")
+
+    # ===== Step 3: Headless Chrome / Selenium fallback =====
+    if webdriver is None:
+        logging.error("Step 3: Selenium not installed; cannot perform headless browser fallback")
+        return False
+
+    logging.info(f"Step 3: Falling back to headless Chrome")
+    try:
+        chrome_options = Options()
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.get(url)
+
+        content = driver.page_source.encode("utf-8")
+        driver.quit()
+
+        # Detect if HTML page instead of CSV
+        if b"<html" in content.lower():
+            logging.error("Step 3: Headless Chrome returned HTML instead of CSV")
+            return False
+
+        with open(filename, "wb") as f:
+            f.write(content)
+        logging.info(f"Step 3: Downloaded via headless Chrome: {filename}")
+        return True
+
+    except Exception as e:
+        logging.error(f"Step 3: Headless Chrome failed: {e}")
+
+    logging.error(f"All 3 download steps failed for {url}")
+    return False
+
+
+
+def _add_noise(url: str) -> str:
+    """Add a random query param to bypass caching and anti-bot filters."""
+    noise = f"t={int(time.time()*1000)}{random.randint(100,999)}"
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}{noise}"
+
+
+def _switch_to_i10(url: str) -> str:
+    """If i=d is used, switch to i=10. Preserves other parameters."""
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+
+    if "i" in qs and qs["i"] == ["d"]:
+        qs["i"] = ["10"]
+
+    new_query = urlencode(qs, doseq=True)
+    return urlunparse(parsed._replace(query=new_query))
+
+
+def download_csv_hardened(url, filename):
+    """
+    Extremely robust CSV downloader for Stooq endpoints.
+    Uses:
+      - rotating browser headers
+      - random query noise
+      - retries
+      - HTML detection
+      - fallback from i=d → i=10
+      - requests.Session() for persistent TLS
+    """
+
+    USER_AGENTS = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:118.0) Gecko/20100101 Firefox/118.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_5_2) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1 Safari/605.1.15"
+    ]
+
+    session = requests.Session()
+
+    # First try original URL, then fallback to i=10 version
+    candidate_urls = [url, _switch_to_i10(url)]
+    tried_fallback = False
+
+    for base_url in candidate_urls:
+        for attempt in range(1, 4):
+
+            # Fully random headers *each attempt*
+            headers = {
+                "User-Agent": random.choice(USER_AGENTS),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Referer": "https://stooq.pl/",
+                "Connection": "keep-alive"
+            }
+
+            noisy_url = _add_noise(base_url)
+
+            logging.info(
+                f"Attempt {attempt}{' (fallback i=10)' if tried_fallback else ''}: "
+                f"Downloading {noisy_url} with User-Agent: {headers['User-Agent']}"
+            )
+
+            try:
+                response = session.get(
+                    noisy_url,
+                    headers=headers,
+                    timeout=10,
+                    allow_redirects=True,
+                    stream=True
+                )
+                response.raise_for_status()
+
+                content = response.content
+
+                # Empty -> retry
+                if not content.strip():
+                    logging.warning(f"Attempt {attempt}: Empty response from {noisy_url}")
+                    time.sleep(0.4)
+                    continue
+
+                # Stooq sometimes responds with HTML
+                if b"<html" in content.lower():
+                    snippet = content[:200].decode("utf-8", errors="ignore")
+                    logging.warning(f"Attempt {attempt}: HTML received:\n{snippet}")
+                    time.sleep(0.4)
+                    continue
+
+                # Save file
+                with open(filename, "wb") as f:
+                    f.write(content)
+
+                logging.info(f"Downloaded and saved: {filename}")
+                return True
+
+            except requests.exceptions.Timeout:
+                logging.error(f"Attempt {attempt}: Timeout for {noisy_url}")
+                time.sleep(0.4)
+
+            except requests.exceptions.HTTPError as e:
+                logging.error(f"Attempt {attempt}: HTTP error: {e}")
+                return False
+
+            except Exception as e:
+                logging.error(f"Attempt {attempt}: Unexpected error: {e}")
+                time.sleep(0.4)
+
+        # If primary URL failed, try i=10 version
+        tried_fallback = True
+
+    logging.error(f"Failed to download {url} after all retries (including i=10 fallback).")
+    return False
+
+
+def download_csv_old(url, filename):
 
 
     """
