@@ -53,15 +53,29 @@ async def download_file(url, target_name):
         
         try:
             logging.info(f"Pobieranie: {url}")
-            async with page.expect_download(timeout=600000) as download_info:
-                await page.goto(url, wait_until="commit")
             
-            download = await download_info.value
-            await download.save_as(target_name)
-            logging.info(f"Zapisano lokalnie: {target_name}")
+            # Tworzymy zadanie oczekiwania na download
+            download_task = page.expect_download(timeout=900000) # 15 minut na duże pliki
+            
+            try:
+                # Wywołujemy goto, ale ignorujemy błąd "Download is starting"
+                await page.goto(url, wait_until="commit")
+            except Exception as e:
+                if "Download is starting" in str(e):
+                    logging.info("Wykryto start pobierania (ignoruję błąd nawigacji)...")
+                else:
+                    raise e
+            
+            # Czekamy na faktyczne zakończenie pobierania pliku
+            async with download_task as download_info:
+                download = await download_info.value
+                await download.save_as(target_name)
+                
+            logging.info(f"Zapisano lokalnie: {target_name} ({os.path.getsize(target_name)} bajtów)")
             return target_name
+            
         except Exception as e:
-            logging.error(f"Błąd pobierania {target_name}: {e}")
+            logging.error(f"Błąd krytyczny przy {target_name}: {e}")
             return None
         finally:
             await browser.close()
