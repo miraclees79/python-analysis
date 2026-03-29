@@ -9,7 +9,7 @@ from playwright.async_api import async_playwright
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2 import service_account
-
+os.environ["PYTHONIOENCODING"] = "utf-8"
 # --- KONFIGURACJA ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
@@ -51,7 +51,7 @@ def upload_to_gdrive(file_path, folder_id):
 # --- FUNKCJE POBIERANIA ---
 async def download_file(url, target_name):
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(headless=False)
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             locale="pl-PL"
@@ -116,10 +116,12 @@ async def download_file(url, target_name):
             await asyncio.sleep(random.uniform(5, 10))
 
 async def run_sync():
-    if not os.path.exists(CREDENTIALS_PATH) or not FOLDER_ID:
-        logging.error(f"Brak pliku poświadczeń w {CREDENTIALS_PATH} lub brak FOLDER_ID!")
+    if not os.path.exists(CREDENTIALS_PATH) :
+        logging.error(f"Brak pliku poświadczeń w {CREDENTIALS_PATH} ")
         return
-
+    elif not FOLDER_ID:
+        logging.error(f"Brak FOLDER_ID!")
+        return
     for target in STOOQ_TARGETS:
         local_file = await download_file(target['url'], target['name'])
         if local_file and os.path.exists(local_file):
