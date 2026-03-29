@@ -47,21 +47,31 @@ CREDENTIALS_PATH = os.path.join(tempfile.gettempdir(), "credentials.json")
 _ZIP_CACHE = {}
 
 # --- LISTA TICKERÓW (Twoja tabela) ---
-TICKERS_TABLE = [
-    {"label": "WIG", "stooq": "wig", "yf": "WIG.WA", "type": "index_pl", "knf": None},
-    {"label": "WIG20TR", "stooq": "wig20tr", "yf": "WIG20TR.WA", "type": "index_pl", "knf": None},
-    {"label": "MWIG40TR", "stooq": "mwig40tr", "yf": "MWIG40TR.WA", "type": "index_pl", "knf": None},
-    {"label": "SWIG80TR", "stooq": "swig80tr", "yf": "SWIG80TR.WA", "type": "index_pl", "knf": None},
-    {"label": "TBSP", "stooq": "^tbsp", "yf": "TBSP-INDEX.WA", "type": "index_pl", "knf": None},
-    {"label": "MMF", "stooq": "2720.n", "yf": None, "type": "fund_pl", "knf": "195983"},
-    {"label": "SP500", "stooq": "^spx", "yf": "^GSPC", "type": "index_world", "knf": None},
-    {"label": "WIBOR1M", "stooq": "plopln1m", "yf": None, "type": "interest_rate", "knf": None},
-    {"label": "PL10Y", "stooq": "10yply.b", "yf": None, "type": "interest_rate", "knf": None},
-    {"label": "DE10Y", "stooq": "10ydey.b", "yf": None, "type": "interest_rate", "knf": None},
-    {"label": "USDPLN", "stooq": "usdpln", "yf": "USDPLN=X", "type": "fx_rate", "knf": None},
-    {"label": "EURPLN", "stooq": "eurpln", "yf": "EURPLN=X", "type": "fx_rate", "knf": None},
-    {"label": "JPYPLN", "stooq": "jpypln", "yf": "JPYPLN=X", "type": "fx_rate", "knf": None},
-]
+import json
+import os
+
+# Sprawdzamy czy istnieje plik wygenerowany z GDrive, 
+# jeśli nie - używamy domyślnej listy (fallback)
+if os.path.exists('tickers_to_process.json'):
+    with open('tickers_to_process.json', 'r', encoding='utf-8') as f:
+        TICKERS_TABLE = json.load(f)
+else:
+
+    TICKERS_TABLE = [
+        {"label": "WIG", "stooq": "wig", "yf": "WIG.WA", "type": "index_pl", "knf": None},
+        {"label": "WIG20TR", "stooq": "wig20tr", "yf": "WIG20TR.WA", "type": "index_pl", "knf": None},
+        {"label": "MWIG40TR", "stooq": "mwig40tr", "yf": "MWIG40TR.WA", "type": "index_pl", "knf": None},
+        {"label": "SWIG80TR", "stooq": "swig80tr", "yf": "SWIG80TR.WA", "type": "index_pl", "knf": None},
+        {"label": "TBSP", "stooq": "^tbsp", "yf": "TBSP-INDEX.WA", "type": "index_pl", "knf": None},
+        {"label": "MMF", "stooq": "2720.n", "yf": None, "type": "fund_pl", "knf": "195983"},
+        {"label": "SP500", "stooq": "^spx", "yf": "^GSPC", "type": "index_world", "knf": None},
+        {"label": "WIBOR1M", "stooq": "plopln1m", "yf": None, "type": "interest_rate", "knf": None},
+        {"label": "PL10Y", "stooq": "10yply.b", "yf": None, "type": "interest_rate", "knf": None},
+        {"label": "DE10Y", "stooq": "10ydey.b", "yf": None, "type": "interest_rate", "knf": None},
+        {"label": "USDPLN", "stooq": "usdpln", "yf": "USDPLN=X", "type": "fx_rate", "knf": None},
+        {"label": "EURPLN", "stooq": "eurpln", "yf": "EURPLN=X", "type": "fx_rate", "knf": None},
+        {"label": "JPYPLN", "stooq": "jpypln", "yf": "JPYPLN=X", "type": "fx_rate", "knf": None},
+        ]
 
 # --- FUNKCJE POMOCNICZE (Google Drive & Load) ---
 
