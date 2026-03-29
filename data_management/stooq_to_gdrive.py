@@ -7,6 +7,8 @@ from playwright.async_api import async_playwright
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2 import service_account
+import random
+
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
@@ -45,7 +47,7 @@ def upload_to_gdrive(file_path, folder_id):
         file_metadata = {'name': file_name, 'parents': [folder_id]}
         service.files().create(body=file_metadata, media_body=media, fields='id').execute()
 
-import random
+
 
 async def download_file(url, target_name):
     async with async_playwright() as p:
@@ -54,54 +56,60 @@ async def download_file(url, target_name):
             '--disable-blink-features=AutomationControlled',
         ])
         
+        # Poprawiony argument: 'locale' zamiast 'accept_language'
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            accept_language="pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7"
+            locale="pl-PL" 
         )
         page = await context.new_page()
         
         try:
-            # KROK 1: Wchodzimy najpierw na stronę główną stooq.pl, żeby dostać ciastka
+            # Udajemy człowieka: wchodzimy na stronę główną
             logging.info("Inicjalizacja sesji na stooq.pl...")
             await page.goto("https://stooq.pl", wait_until="networkidle")
-            await asyncio.sleep(random.uniform(2, 5)) # Udajemy, że czytamy stronę
+            await asyncio.sleep(random.uniform(2, 4)) 
             
             logging.info(f"Pobieranie: {url}")
             
-            # KROK 2: Rejestrujemy oczekiwanie na pobieranie
-            async with page.expect_download(timeout=900000) as download_info:
-                try:
-                    # Idziemy pod link pobierania
-                    await page.goto(url, wait_until="commit")
-                except Exception as e:
-                    if "Download is starting" in str(e):
-                        logging.info("Start pobierania wykryty.")
-                    else:
-                        raise e
+            # Oczekujemy na pobieranie
+            download_task = page.expect_download(timeout=900000)
             
-            download = await download_info.value
-            await download.save_as(target_name)
+            try:
+                # Start pobierania
+                await page.goto(url, wait_until="commit")
+            except Exception as e:
+                if "Download is starting" in str(e):
+                    logging.info("Start pobierania wykryty.")
+                else:
+                    raise e
             
-            # KROK 3: Walidacja rozmiaru
+            async with download_task as download_info:
+                download = await download_info.value
+                await download.save_as(target_name)
+            
+            # Walidacja rozmiaru (sprawdzamy czy to nie 17 bajtów błędu)
             file_size = os.path.getsize(target_name)
-            if file_size < 1000: # Jeśli plik ma mniej niż 1KB, to na pewno nie jest to baza danych
-                logging.error(f"BŁĄD: Pobrano uszkodzony plik ({file_size} bajtów). Prawdopodobnie blokada IP.")
-                # Opcjonalnie: zapiszmy co jest w środku, żeby wiedzieć co mówi Stooq
-                with open(target_name, 'r') as f:
-                    logging.info(f"Treść odpowiedzi serwera: {f.read()[:100]}")
+            if file_size < 2000: # Mniej niż 2KB to na pewno błąd
+                logging.error(f"BŁĄD: Plik zbyt mały ({file_size} bajtów).")
+                try:
+                    with open(target_name, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()[:200]
+                        logging.info(f"Odpowiedź serwera: {content}")
+                except:
+                    pass
                 return None
 
-            logging.info(f"SUKCES: Pobrano {target_name} ({file_size // 1024} KB)")
+            logging.info(f"SUKCES: {target_name} ({file_size // 1024} KB)")
             return target_name
             
         except Exception as e:
-            logging.error(f"Błąd przy {target_name}: {e}")
+            logging.error(f"Błąd krytyczny przy {target_name}: {e}")
             return None
         finally:
             await browser.close()
 
 def get_gdrive_service():
-    # Naprawienie błędu file_cache
+    # Dodano cache_discovery=False, aby wyłączyć ostrzeżenie o file_cache
     creds = service_account.Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES)
     return build('drive', 'v3', credentials=creds, cache_discovery=False)
 
