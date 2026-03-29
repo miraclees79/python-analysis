@@ -45,40 +45,65 @@ def upload_to_gdrive(file_path, folder_id):
         file_metadata = {'name': file_name, 'parents': [folder_id]}
         service.files().create(body=file_metadata, media_body=media, fields='id').execute()
 
+import random
+
 async def download_file(url, target_name):
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36")
+        # Dodajemy argumenty maskujące bota
+        browser = await p.chromium.launch(headless=True, args=[
+            '--disable-blink-features=AutomationControlled',
+        ])
+        
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            accept_language="pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7"
+        )
         page = await context.new_page()
         
         try:
+            # KROK 1: Wchodzimy najpierw na stronę główną stooq.pl, żeby dostać ciastka
+            logging.info("Inicjalizacja sesji na stooq.pl...")
+            await page.goto("https://stooq.pl", wait_until="networkidle")
+            await asyncio.sleep(random.uniform(2, 5)) # Udajemy, że czytamy stronę
+            
             logging.info(f"Pobieranie: {url}")
             
-            # Tworzymy zadanie oczekiwania na download
-            download_task = page.expect_download(timeout=900000) # 15 minut na duże pliki
+            # KROK 2: Rejestrujemy oczekiwanie na pobieranie
+            async with page.expect_download(timeout=900000) as download_info:
+                try:
+                    # Idziemy pod link pobierania
+                    await page.goto(url, wait_until="commit")
+                except Exception as e:
+                    if "Download is starting" in str(e):
+                        logging.info("Start pobierania wykryty.")
+                    else:
+                        raise e
             
-            try:
-                # Wywołujemy goto, ale ignorujemy błąd "Download is starting"
-                await page.goto(url, wait_until="commit")
-            except Exception as e:
-                if "Download is starting" in str(e):
-                    logging.info("Wykryto start pobierania (ignoruję błąd nawigacji)...")
-                else:
-                    raise e
+            download = await download_info.value
+            await download.save_as(target_name)
             
-            # Czekamy na faktyczne zakończenie pobierania pliku
-            async with download_task as download_info:
-                download = await download_info.value
-                await download.save_as(target_name)
-                
-            logging.info(f"Zapisano lokalnie: {target_name} ({os.path.getsize(target_name)} bajtów)")
+            # KROK 3: Walidacja rozmiaru
+            file_size = os.path.getsize(target_name)
+            if file_size < 1000: # Jeśli plik ma mniej niż 1KB, to na pewno nie jest to baza danych
+                logging.error(f"BŁĄD: Pobrano uszkodzony plik ({file_size} bajtów). Prawdopodobnie blokada IP.")
+                # Opcjonalnie: zapiszmy co jest w środku, żeby wiedzieć co mówi Stooq
+                with open(target_name, 'r') as f:
+                    logging.info(f"Treść odpowiedzi serwera: {f.read()[:100]}")
+                return None
+
+            logging.info(f"SUKCES: Pobrano {target_name} ({file_size // 1024} KB)")
             return target_name
             
         except Exception as e:
-            logging.error(f"Błąd krytyczny przy {target_name}: {e}")
+            logging.error(f"Błąd przy {target_name}: {e}")
             return None
         finally:
             await browser.close()
+
+def get_gdrive_service():
+    # Naprawienie błędu file_cache
+    creds = service_account.Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES)
+    return build('drive', 'v3', credentials=creds, cache_discovery=False)
 
 async def main():
     if not SERVICE_ACCOUNT_INFO or not FOLDER_ID:
