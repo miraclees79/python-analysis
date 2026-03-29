@@ -29,7 +29,7 @@ try:
 except ImportError:
     webdriver = None
 
-def download_csv(url: str, filename: str) -> bool:
+def download_csv_v2(url: str, filename: str) -> bool:
     """
     Download a CSV from Stooq using 3-step fallback:
       1. requests with browser headers
