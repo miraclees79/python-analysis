@@ -20,7 +20,7 @@
 name: KNF-stooq Name Matching
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  
     inputs:
       fuzzy_threshold:
         description: "Minimum fuzzy match score to accept (default 75)"
