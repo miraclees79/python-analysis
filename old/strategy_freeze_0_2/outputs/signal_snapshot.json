@@ -1,0 +1,71 @@
+{
+  "run_date": "2026-03-22",
+  "params": {
+    "filter_mode": "mom",
+    "X": 0.08,
+    "Y": 0.05,
+    "fast": 50,
+    "slow": 200,
+    "stop_loss": 0.05,
+    "TestStart": "2022-12-31 00:00:00",
+    "TestEnd": "2026-03-21 00:00:00",
+    "mom_lookback": 252
+  },
+  "today_price": 7181.7,
+  "open_position": {
+    "EntryDate": "2025-10-15 00:00:00",
+    "ExitDate": "2026-03-20 00:00:00",
+    "EntryPrice": 6413.14,
+    "Position": 1.0,
+    "ExitPrice": 7181.7,
+    "Return": 0.11984145052189721,
+    "Days": 156,
+    "Entry Reason": "BREAKOUT & FILTER",
+    "Exit Reason": "CARRY",
+    "CrossWindow": false,
+    "WF_Window": "2014-12-31 00:00:00"
+  },
+  "signal": "IN",
+  "entry_date": "2025-10-15",
+  "entry_price": 6413.14,
+  "days_in_trade": 156,
+  "unrealised_pct": 11.98,
+  "peak_price": 7693.94,
+  "trail_stop": 7078.42,
+  "abs_stop": 6092.48,
+  "binding_stop": 7078.42,
+  "stop_gap_pct": -1.44,
+  "ma_state": {
+    "fast_ma": 7400.62,
+    "slow_ma": 6640.09,
+    "filter_on": true,
+    "gap_pct": 11.45
+  },
+  "mom_state": {
+    "mom_value": 27.94,
+    "filter_on": true
+  },
+  "active_filter_on": true,
+  "strategy_metrics": {
+    "CAGR": 0.0504,
+    "Vol": 0.1137,
+    "Sharpe": 0.4435,
+    "Sortino": 0.4096,
+    "MaxDD": -0.2404,
+    "CalMAR": 0.2099
+  },
+  "bh_metrics": {
+    "CAGR": 0.05,
+    "Vol": 0.209,
+    "Sharpe": 0.2393,
+    "Sortino": 0.2368,
+    "MaxDD": -0.4765,
+    "CalMAR": 0.1049
+  },
+  "active_window": {
+    "train_start": "2014-12-31 00:00:00",
+    "test_start": "2022-12-31 00:00:00",
+    "test_end": "2026-03-21 00:00:00"
+  },
+  "action": "ENTER"
+}
