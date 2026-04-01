@@ -10,6 +10,7 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime as dt
 import datetime
+from googleapiclient.http import MediaIoBaseUpload
 
 # --- KONFIGURACJA LOGOWANIA ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -52,7 +53,7 @@ DEFAULT_TICKERS = [
     {"label": "JPYPLN", "stooq": "jpypln", "yf": "JPYPLN=X", "type": "fx_rate", "knf": None},
     {"label": "DE10Y", "stooq": "10YDEY.B", "yf": None, "type": "interest_rate", "knf": None},
     {"label": "PL10Y", "stooq": "10YPLY.B", "yf": None, "type": "interest_rate", "knf": None},
-    {"label": "fund_2720", "stooq": "2720", "yf": None, "type": "index_pl", "knf": None},
+    {"label": "fund_2720", "stooq": "2720.n", "yf": None, "type": "index_pl", "knf": None},
 ]
 # fund_2720 used as MMF - classed as index_pl to ensure it always loads
 
@@ -247,7 +248,7 @@ def run_update(get_funds = True):
         elif row.get('knf'):
             df_new = _fetch_knf_data(row['knf'], last_date)
             
-        # 3. Połącz i zapisz lokalnie (na Runnerze)
+        # 3. Połącz i zapisz lokalnie (na Runnerze) + upload do Drive
         df_final = pd.concat([df_hist, df_new], ignore_index=True) if df_hist is not None else df_new
         
         if df_final is not None and not df_final.empty:
@@ -258,6 +259,33 @@ def run_update(get_funds = True):
                 out_path = os.path.join(DATA_DIR, f"{safe_name}.csv")
                 df_validated.to_csv(out_path)
                 logging.info(f"ZAPISANO: {out_path} ({len(df_validated)} wierszy)")
+                
+                if get_funds and data_type == "fund_pl":
+                    # Build Drive file name
+                    file_name = f"historia{ticker_stooq}.csv"
+
+                   
+                    folder_id = FOLDER_ID
+
+                    # Check if file exists in folder
+                    query = f"name='{file_name}' and '{folder_id}' in parents and trashed=false"
+                    res = service.files().list(q=query, fields='files(id)').execute()
+                    items = res.get('files', [])
+
+                    with open(out_path, "rb") as f:
+                        media = MediaIoBaseUpload(f, mimetype='text/csv', resumable=True)
+
+                        if items:
+                            file_id = items[0]['id']
+                            service.files().update(fileId=file_id, media_body=media).execute()
+                            logging.info(f"Updated file: {file_name}")
+                        else:
+                            metadata = {'name': file_name, 'parents': [folder_id]}
+                            service.files().create(body=metadata, media_body=media).execute()
+                            logging.info(f"Created file: {file_name}")
+
+                    return True
+                
         else:
             logging.error(f"BRAK DANYCH dla {label}")
 

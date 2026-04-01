@@ -42,7 +42,7 @@ DEPENDENCIES
         load_csv,
     )
 """
-
+from __future__ import annotations
 import itertools
 import logging
 import pandas as pd
@@ -56,6 +56,7 @@ from strategy_test_library import (
     
     load_csv,
 )
+
 
 
 # ============================================================
@@ -415,160 +416,38 @@ def build_signal_series(wf_equity: pd.Series, wf_trades: pd.DataFrame) -> pd.Ser
 # ============================================================
 # PORTFOLIO SIMULATION
 # ============================================================
+"""
+multiasset_library_DEPRECATED_functions.py
+===========================================
+Documents the two functions removed from multiasset_library.py.
 
-def portfolio_returns(
-    equity_returns: pd.Series,
-    bond_returns:   pd.Series,
-    mmf_returns:    pd.Series,
-    weights_series: pd.Series,
-) -> pd.Series:
-    """
-    Compute daily portfolio returns from three asset return series and a
-    time-varying weights series.
+REMOVED: portfolio_returns()
+-----------------------------
+An early-iteration function that computed daily portfolio returns from
+three asset return series and a time-varying weights series.  Superseded
+by allocation_walk_forward(), which implements the full simulation inline
+(signal-gating, reallocation gate, per-window weight optimisation, and
+chain-linked equity slices).
 
-    Parameters
-    ----------
-    equity_returns : pd.Series — daily returns of the equity asset
-    bond_returns   : pd.Series — daily returns of the bond asset
-    mmf_returns    : pd.Series — daily returns of the money-market fund
-    weights_series : pd.Series — DatetimeIndex → dict of
-                                 {'equity': float, 'bond': float, 'mmf': float}
-                                 One entry per date (post-gate weights).
+portfolio_returns() was never called from any runfile in the codebase.
+Its signature accepted pre-computed weights_series and produced a return
+series only — it had no gate logic and could not produce the weights_series
+it consumed.
 
-    Returns
-    -------
-    pd.Series — daily portfolio returns on the common date range
-    """
-    common = equity_returns.index \
-        .intersection(bond_returns.index) \
-        .intersection(mmf_returns.index) \
-        .intersection(weights_series.index)
+REMOVED: portfolio_equity_from_signals()
+-----------------------------------------
+An earlier iteration of the multi-asset portfolio simulation that
+iterated day-by-day applying reallocation_gate on each date.  The full
+walk-forward variant (allocation_walk_forward()) superseded it by adding
+per-window IS optimisation of both-on weights and continuous gate state
+across window boundaries.
 
-    eq_r = equity_returns.loc[common]
-    bd_r = bond_returns.loc[common]
-    mf_r = mmf_returns.loc[common]
-    ws   = weights_series.loc[common]
+portfolio_equity_from_signals() was never called from any runfile in the
+codebase.
 
-    port_r = pd.Series(index=common, dtype=float)
-    for date in common:
-        w = ws[date]
-        port_r[date] = (
-            w.get("equity", 0.0) * eq_r[date]
-            + w.get("bond",   0.0) * bd_r[date]
-            + w.get("mmf",    1.0) * mf_r[date]
-        )
-    return port_r
-
-
-def portfolio_equity_from_signals(
-    equity_returns:   pd.Series,
-    bond_returns:     pd.Series,
-    mmf_returns:      pd.Series,
-    sig_equity:       pd.Series,
-    sig_bond:         pd.Series,
-    weights_both_on:  dict,
-    cooldown_days:    int   = 10,
-    min_delta:        float = 0.10,
-    annual_cap:       int   = 12,
-    w_equity_only:    float = 1.0,
-    w_bond_only:      float = 1.0,
-) -> tuple:
-    """
-    Full simulation: daily signals → gate → weights → portfolio equity curve.
-
-    Iterates day-by-day applying reallocation_gate on each date so that
-    the cooldown and annual cap operate correctly in calendar time.
-
-    Parameters
-    ----------
-    equity_returns   : pd.Series  — daily returns of the equity asset
-    bond_returns     : pd.Series  — daily returns of the bond asset
-    mmf_returns      : pd.Series  — daily returns of the money-market fund
-    sig_equity       : pd.Series  — binary signal for equity (0/1)
-    sig_bond         : pd.Series  — binary signal for bond (0/1)
-    weights_both_on  : dict       — optimised split when both signals on
-    cooldown_days    : int        — min calendar days between reallocations
-    min_delta        : float      — min weight change to trigger reallocation
-    annual_cap       : int        — max reallocations per calendar year
-    w_equity_only    : float      — equity weight when only equity is on
-    w_bond_only      : float      — bond weight when only bond is on
-
-    Returns
-    -------
-    (equity_curve, weights_series, reallocation_log)
-      equity_curve     : pd.Series  — portfolio equity curve starting at 1.0
-      weights_series   : pd.Series  — per-date weight dicts (post-gate)
-      reallocation_log : list[dict] — one entry per accepted reallocation
-    """
-    common = equity_returns.index \
-        .intersection(bond_returns.index) \
-        .intersection(mmf_returns.index) \
-        .intersection(sig_equity.index) \
-        .intersection(sig_bond.index)
-    common = common.sort_values()
-
-    eq_r = equity_returns.loc[common]
-    bd_r = bond_returns.loc[common]
-    mf_r = mmf_returns.loc[common]
-    s_eq = sig_equity.reindex(common).fillna(0).astype(int)
-    s_bd = sig_bond.reindex(common).fillna(0).astype(int)
-
-    # State
-    current_weights  = {"equity": 0.0, "bond": 0.0, "mmf": 1.0}
-    last_change_date = None
-    annual_counter   = {}
-
-    weights_series   = pd.Series(index=common, dtype=object)
-    reallocation_log = []
-    portfolio_r      = pd.Series(index=common, dtype=float)
-
-    for date in common:
-        target = signals_to_target_weights(
-            sig_equity=int(s_eq[date]),
-            sig_bond=int(s_bd[date]),
-            weights_both_on=weights_both_on,
-            w_equity_only=w_equity_only,
-            w_bond_only=w_bond_only,
-        )
-
-        accepted, reallocated, annual_counter = reallocation_gate(
-            current_weights  = current_weights,
-            target_weights   = target,
-            last_change_date = last_change_date,
-            current_date     = date,
-            cooldown_days    = cooldown_days,
-            min_delta        = min_delta,
-            annual_cap       = annual_cap,
-            annual_counter   = annual_counter,
-        )
-
-        if reallocated:
-            reallocation_log.append({
-                "Date":          date,
-                "equity_before": current_weights["equity"],
-                "bond_before":   current_weights["bond"],
-                "mmf_before":    current_weights["mmf"],
-                "equity_after":  accepted["equity"],
-                "bond_after":    accepted["bond"],
-                "mmf_after":     accepted["mmf"],
-            })
-            current_weights  = accepted
-            last_change_date = date
-
-        weights_series[date] = dict(current_weights)
-
-        w = current_weights
-        portfolio_r[date] = (
-            w["equity"] * eq_r[date]
-            + w["bond"]   * bd_r[date]
-            + w["mmf"]    * mf_r[date]
-        )
-
-    equity_curve = (1 + portfolio_r).cumprod()
-    equity_curve = equity_curve / equity_curve.iloc[0]   # normalise to 1.0
-
-    return equity_curve, weights_series, reallocation_log
-
+Both functions are preserved here for reference until the next
+documentation freeze, then this file is deleted.
+"""
 
 # ============================================================
 # ALLOCATION WALK-FORWARD  (Phase 4)
@@ -1516,3 +1395,137 @@ def build_yield_momentum_prefilter(
         prefilter.index.max().date(),
     )
     return prefilter
+
+
+
+
+
+
+# These imports are already present in multiasset_library.py
+from global_equity_library import build_mmf_extended
+
+
+# ============================================================
+# CONSOLIDATED TWO-ASSET DATA PREPARATION
+# ============================================================
+
+def build_standard_two_asset_data(
+    wig: pd.DataFrame,
+    tbsp: pd.DataFrame,
+    mmf: pd.DataFrame,
+    wibor1m: pd.DataFrame | None,
+    pl10y: pd.DataFrame,
+    de10y: pd.DataFrame,
+    mmf_floor: str = "1995-01-02",
+    yield_prefilter_bp: float = 50.0,
+    yield_lookback_days: int = 63,
+    spread_change_window: int = 63,
+    spread_change_cap_bp: float = 50.0,
+) -> dict:
+    """
+    Build all derived series required by the 2-asset WIG+TBSP+MMF strategy.
+
+    This function consolidates the repeated setup block that appeared in five
+    strategy scripts.  It builds the extended MMF, spread and yield pre-filters,
+    the combined bond entry gate, and daily return series — everything needed
+    before the walk-forward phases begin.
+
+    Parameters
+    ----------
+    wig        : pd.DataFrame — WIG price DataFrame (stooq format)
+    tbsp       : pd.DataFrame — TBSP price DataFrame (stooq format, already
+                                loaded with Najwyzszy/Najnizszy columns added)
+    mmf        : pd.DataFrame — MMF price DataFrame (stooq format, 2720.n)
+    wibor1m    : pd.DataFrame | None — WIBOR 1M price DataFrame; if None the
+                                MMF is used without WIBOR backward extension
+    pl10y      : pd.DataFrame — PL 10Y yield (stooq format)
+    de10y      : pd.DataFrame — DE 10Y yield (stooq format)
+    mmf_floor  : str  — ISO date string; MMF backward extension floor date.
+                        Should match WIG_DATA_FLOOR in the calling runfile.
+    yield_prefilter_bp    : float — yield momentum pre-filter threshold (bp)
+    yield_lookback_days   : int   — yield momentum lookback window (trading days)
+    spread_change_window  : int   — spread pre-filter rolling window (trading days)
+    spread_change_cap_bp  : float — spread pre-filter threshold (bp)
+
+    Returns
+    -------
+    dict with keys:
+        mmf_ext     : pd.DataFrame — extended MMF (WIBOR chain-link backwards)
+        bond_gate   : pd.Series    — binary bond entry gate (AND of spread + yield)
+        spread_pf   : pd.Series    — raw spread pre-filter series (before alignment)
+        yield_pf    : pd.Series    — raw yield pre-filter series (before alignment)
+        ret_eq      : pd.Series    — daily WIG returns (dropna'd)
+        ret_bd      : pd.Series    — daily TBSP returns (dropna'd)
+        ret_mmf     : pd.Series    — daily MMF returns (from plain MMF, not extended)
+
+    Notes
+    -----
+    ret_mmf uses the un-extended MMF to match the existing runfile behaviour.
+    The extended MMF (mmf_ext) is passed to walk_forward as cash_df so that
+    in-sample periods starting before 1999 have realistic cash returns.
+
+    The bond_entry_gate is aligned to TBSP's date index (the index of `tbsp`).
+    Any dates in pl10y/de10y that do not appear in tbsp are forward-filled.
+    """
+    # ── Extended MMF (WIBOR chain-link backwards) ─────────────────────────
+    if wibor1m is not None:
+        mmf_ext = build_mmf_extended(mmf, wibor1m, floor_date=mmf_floor)
+        logging.info("MMF extended back to %s", mmf_ext.index.min().date())
+    else:
+        mmf_ext = mmf
+        logging.warning(
+            "WIBOR1M unavailable — using standard MMF (starts ~1999). "
+            "IS windows before %s will use ret_mmf=0 for cash returns.",
+            mmf.index.min().date(),
+        )
+
+    # ── Bond entry gate (spread + yield pre-filter AND-ed together) ────────
+    spread_pf = build_spread_prefilter(
+        pl10y,
+        de10y,
+        spread_change_window=spread_change_window,
+        spread_change_cap_bp=spread_change_cap_bp,
+    )
+    yield_pf = build_yield_momentum_prefilter(
+        pl10y,
+        rise_threshold_bp=yield_prefilter_bp,
+        lookback_days=yield_lookback_days,
+    )
+
+    tbsp_index  = tbsp.index
+    spread_gate = (
+        spread_pf.reindex(tbsp_index, method="ffill").fillna(1).astype(int)
+    )
+    yield_gate = (
+        yield_pf.reindex(tbsp_index, method="ffill").fillna(1).astype(int)
+    )
+    bond_gate = (spread_gate & yield_gate).astype(int)
+    bond_gate.name = "bond_entry_gate"
+
+    logging.info(
+        "Bond entry gate: %.1f%% of days pass  "
+        "(spread: %.1f%% pass | yield: %.1f%% pass)",
+        bond_gate.mean() * 100,
+        spread_gate.mean() * 100,
+        yield_gate.mean() * 100,
+    )
+
+    # ── Daily return series ────────────────────────────────────────────────
+    ret_eq  = wig["Zamkniecie"].pct_change().dropna().rename("ret_eq")
+    ret_bd  = tbsp["Zamkniecie"].pct_change().dropna().rename("ret_bd")
+    ret_mmf = mmf_ext["Zamkniecie"].pct_change().dropna().rename("ret_mmf")
+
+    logging.info(
+        "Return series: equity %d rows | bond %d rows | mmf %d rows",
+        len(ret_eq), len(ret_bd), len(ret_mmf),
+    )
+
+    return dict(
+        mmf_ext   = mmf_ext,
+        bond_gate = bond_gate,
+        spread_pf = spread_pf,
+        yield_pf  = yield_pf,
+        ret_eq    = ret_eq,
+        ret_bd    = ret_bd,
+        ret_mmf   = ret_mmf,
+    )

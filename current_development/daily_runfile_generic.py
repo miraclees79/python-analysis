@@ -2,43 +2,35 @@
 daily_runfile_generic.py
 ========================
 Generic daily monitoring runfile for any single equity index.
-Mirrors daily_runfile_WIG20TR.py in structure — same walk-forward,
-same daily_output module, same Drive upload pattern — but driven by
-the ASSET_CONFIG block at the top of this file.
+
+Set the ASSET CONFIG BLOCK below to deploy for a new asset.  All other
+strategy, logging, and output logic is shared and should not be edited.
 
 DEPLOYMENT CHECKLIST
 --------------------
 1. Set ASSET_NAME to the asset label (must be a key in ASSET_REGISTRY).
 2. Set OUTPUT_PREFIX to a unique short string (lowercase, no spaces).
-   This prefix is prepended to all output filenames and log file names,
-   ensuring co-existence with other strategies in the same Drive folder.
-3. Set TRAIN_YEARS / TEST_YEARS from sweep results.
-4. Optionally override FORCE_FILTER_MODE if the sweep showed a dominant
-   filter (e.g. ["ma"] for bond-like or index-agnostic series).
-5. Copy daily_generic_asset.yml, rename it, and set OUTPUT_PREFIX in
-   the workflow's env block to match the value set here.
+3. Set TRAIN_YEARS / TEST_YEARS from sweep candidate results.
+4. Optionally override FORCE_FILTER_MODE (e.g. ["ma"] for bond-like series).
 
-OUTPUT FILES
-------------
-All written to outputs/ directory:
+OUTPUT FILES (all written to outputs/{OUTPUT_PREFIX}/ then copied to outputs/)
+-------------------------------------------------------------------------------
   {OUTPUT_PREFIX}_signal_status.txt
   {OUTPUT_PREFIX}_signal_log.csv
   {OUTPUT_PREFIX}_equity_chart.png
   {OUTPUT_PREFIX}_signal_snapshot.json
   {OUTPUT_PREFIX}_DailyRun.log
 
-NOTES
------
-- daily_output.py (from WIG20TR) writes hardcoded filenames internally.
-  This script writes to an isolated subdirectory (outputs/{OUTPUT_PREFIX}/)
-  and copies the four files to outputs/{PREFIX}_*.ext for Drive upload.
-  daily_output.py is never modified.
-- The Drive log pre-fetch (before action determination) is preserved:
-  build_daily_outputs() downloads {PREFIX}_signal_log.csv from Drive
-  before writing today's row, ensuring correct ENTER/EXIT/HOLD on
-  fresh GitHub Actions runners where outputs/ is always empty.
-  The Drive filename must match the prefixed name — the GH Actions
-  workflow is responsible for uploading the prefixed files.
+CURRENTLY DEPLOYED INSTANCES
+-----------------------------
+  daily_runfile_WIG20TR.py   : ASSET_NAME="WIG20TR",   OUTPUT_PREFIX="wig20tr",    TRAIN=8 TEST=2
+  daily_runfile_swig80.py    : ASSET_NAME="SWIG80TR",  OUTPUT_PREFIX="swig80tr",   TRAIN=8 TEST=2
+  daily_runfile_mwig40tr.py  : ASSET_NAME="MWIG40TR",  OUTPUT_PREFIX="mwig40tr",   TRAIN=8 TEST=2
+  daily_runfile_SP500.py     : ASSET_NAME="SP500",     OUTPUT_PREFIX="sp500",      TRAIN=6 TEST=2
+  daily_MSCI_world.py        : ASSET_NAME="MSCI_World", OUTPUT_PREFIX="msci_world", TRAIN=8 TEST=1
+
+  To add a new asset: copy one of the above, update the ASSET CONFIG BLOCK,
+  and add a matching entry in ASSET_REGISTRY below if not already present.
 """
 
 import os
@@ -49,14 +41,14 @@ import tempfile
 import datetime as dt
 
 import pandas as pd
-import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from strategy_test_library import (
-    download_csv,
     load_csv,
+    load_stooq_local,       # consolidated loader — replaces per-runfile _stooq()
+    get_n_jobs,             # canonical N_JOBS calculation
     walk_forward,
     compute_metrics,
     analyze_trades,
@@ -70,35 +62,25 @@ from global_equity_library import build_mmf_extended
 from price_series_builder import build_and_upload
 from stooq_hybrid_updater import run_update
 
+
 # ============================================================
 # ██████████████████████████████████████████████████████████
-#  ASSET CONFIG BLOCK — edit this for each deployed asset
+#  ASSET CONFIG BLOCK — edit this section for each deployed asset
 # ██████████████████████████████████████████████████████████
 # ============================================================
 
-ASSET_NAME    = "SP500"
-# Must match a key in ASSET_REGISTRY below.
+ASSET_NAME    = "SWIG80TR"          # <- key in ASSET_REGISTRY below
+OUTPUT_PREFIX = "swig80tr"          # <- unique lowercase file prefix
+TRAIN_YEARS   = 8                   # <- from sweep candidate results
+TEST_YEARS    = 2                   # <- from sweep candidate results
+FORCE_FILTER_MODE = ["ma", "mom"]   # <- None for auto, or e.g. ["ma"]
 
-OUTPUT_PREFIX = "sp500"
-# Unique lowercase identifier for output file naming.
-# Determines log file name, output filenames, and Drive filenames.
-# Examples: "sp500", "mwig40tr", "nikkei225", "stoxx600", "msci_world"
-
-TRAIN_YEARS   = 8
-TEST_YEARS    = 2
-# Set from sweep candidate results.
-
-FORCE_FILTER_MODE = ["ma", "mom"]
-# Override to ["ma"] if sweep showed ma-only was consistently dominant
-# for this asset across window configs.
 
 # ============================================================
-# ASSET REGISTRY
+# ASSET REGISTRY  (shared across all generic daily runners)
 # ============================================================
-# Identical to asset_config_sweep.py — keep in sync when adding assets.
 
 GDRIVE_FOLDER_ID_DEFAULT = ""   # fallback if GDRIVE_FOLDER_ID env var not set
-
 
 ASSET_REGISTRY = {
     "WIG20TR": {
@@ -125,10 +107,6 @@ ASSET_REGISTRY = {
         "source": "stooq",
         "ticker": "nk225",
     },
-    "WIBOR1M": {
-        "source": "stooq",
-        "ticker": "wibor1m",
-    },
     "STOXX600": {
         "source": "drive",
         "drive_kwargs": {
@@ -150,11 +128,10 @@ ASSET_REGISTRY = {
     },
 }
 
+
 # ============================================================
-# STRATEGY CONFIGURATION
+# STRATEGY CONFIGURATION  (shared defaults)
 # ============================================================
-# Identical defaults to strat_test_runfile_with_MC.py.
-# Override per-asset only if the sweep warrants it.
 
 POSITION_MODE  = "full"
 VOL_WINDOW     = 20
@@ -172,7 +149,7 @@ MMF_FLOOR      = "1994-10-03"
 DATA_START     = "1990-01-01"
 BOUNDARY_EXITS = {"CARRY", "SAMPLE_END"}
 
-OUTPUT_DIR     = "outputs"
+OUTPUT_DIR = "outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
@@ -202,17 +179,9 @@ logging.info("  TEST_YEARS    : %d", TEST_YEARS)
 logging.info("  FILTER_MODE   : %s", FORCE_FILTER_MODE)
 logging.info("=" * 80)
 
+N_JOBS = get_n_jobs()
+logging.info("Parallel grid search: %d jobs.", N_JOBS)
 
-# ============================================================
-# PARALLELISM
-# ============================================================
-
-_cpu_count = os.cpu_count() or 1
-N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
-logging.info(
-    "Parallel grid search: %d logical cores detected, using %d jobs.",
-    _cpu_count, N_JOBS,
-)
 
 # ============================================================
 # PHASE 1 — DATA DOWNLOAD
@@ -222,26 +191,10 @@ logging.info("=" * 80)
 logging.info("PHASE 1: DOWNLOAD DATA")
 logging.info("=" * 80)
 
-tmp_dir = tempfile.gettempdir()
+run_update(get_funds=False)
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
-run_update(get_funds=False) # load data from GDrive to /data subfolder
-def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
-    path = os.path.join(DATA_DIR, f"{ticker}.csv")
-    
-    df = load_csv(path)
-    if df is None:
-        if mandatory:
-            logging.error("FAIL: load_csv returned None for %s — exiting.", label)
-            sys.exit(1)
-        return None
-    df = df.loc[df.index >= pd.Timestamp(DATA_START)]
-    logging.info(
-        "OK  : %-14s  %5d rows  %s to %s",
-        label, len(df), df.index.min().date(), df.index.max().date(),
-    )
-    return df
-
 
 # --- Load target index ---
 cfg = ASSET_REGISTRY.get(ASSET_NAME)
@@ -250,7 +203,8 @@ if cfg is None:
     sys.exit(1)
 
 if cfg["source"] == "stooq":
-    INDEX_DF = _stooq(cfg["ticker"], ASSET_NAME, mandatory=True)
+    # load_stooq_local replaces the per-runfile _stooq() helper
+    INDEX_DF = load_stooq_local(cfg["ticker"], ASSET_NAME, DATA_DIR, DATA_START)
 
 elif cfg["source"] == "drive":
     folder_id = (
@@ -258,10 +212,7 @@ elif cfg["source"] == "drive":
         or GDRIVE_FOLDER_ID_DEFAULT.strip()
     )
     if not folder_id:
-        logging.error(
-            "GDRIVE_FOLDER_ID not set — cannot load Drive-backed asset '%s'.",
-            ASSET_NAME,
-        )
+        logging.error("GDRIVE_FOLDER_ID not set — cannot load Drive-backed asset '%s'.", ASSET_NAME)
         sys.exit(1)
     kw = dict(cfg["drive_kwargs"])
     kw["folder_id"] = folder_id
@@ -269,36 +220,27 @@ elif cfg["source"] == "drive":
     if INDEX_DF is None:
         logging.error("Failed to build/load '%s' from Drive.", ASSET_NAME)
         sys.exit(1)
-    logging.info(
-        "OK  : %-14s  %5d rows  %s to %s",
-        ASSET_NAME, len(INDEX_DF),
-        INDEX_DF.index.min().date(), INDEX_DF.index.max().date(),
-    )
+    logging.info("OK  : %-14s  %5d rows  %s to %s",
+                 ASSET_NAME, len(INDEX_DF),
+                 INDEX_DF.index.min().date(), INDEX_DF.index.max().date())
 else:
     logging.error("Unknown source '%s' for asset '%s'.", cfg["source"], ASSET_NAME)
     sys.exit(1)
 
 df = INDEX_DF
 
-# --- Load cash (MMF + WIBOR extension) ---
-MMF = _stooq("fund_2720", "MMF", mandatory=True)
+# --- Load cash (MMF + optional WIBOR extension) ---
+MMF    = load_stooq_local("fund_2720", "MMF",     DATA_DIR, DATA_START)
+WIBOR1M = load_stooq_local("wibor1m", "WIBOR1M", DATA_DIR, DATA_START, mandatory=False)
 
-WIBOR1M = _stooq("wibor1m", "WIBOR1M", mandatory=False)
 if WIBOR1M is not None:
     CASH = build_mmf_extended(MMF, WIBOR1M, floor_date=MMF_FLOOR)
-    logging.info(
-        "MMF extended: %s to %s (%d rows total; original MMF from %s)",
-        CASH.index.min().date(), CASH.index.max().date(),
-        len(CASH), MMF.index.min().date(),
-    )
+    logging.info("MMF extended: %s to %s (%d rows total; original MMF from %s)",
+                 CASH.index.min().date(), CASH.index.max().date(),
+                 len(CASH), MMF.index.min().date())
 else:
-    logging.warning(
-        "WIBOR1M unavailable — MMF not extended. "
-        "IS windows before %s use ret_mmf=0.",
-        MMF.index.min().date(),
-    )
+    logging.warning("WIBOR1M unavailable — MMF not extended.")
     CASH = MMF
-
 
 
 # ============================================================
@@ -306,10 +248,8 @@ else:
 # ============================================================
 
 logging.info("=" * 80)
-logging.info(
-    "PHASE 2: WALK-FORWARD  (%s, train=%dy test=%dy)",
-    ASSET_NAME, TRAIN_YEARS, TEST_YEARS,
-)
+logging.info("PHASE 2: WALK-FORWARD  (%s, train=%dy test=%dy)",
+             ASSET_NAME, TRAIN_YEARS, TEST_YEARS)
 logging.info("=" * 80)
 
 wf_equity, wf_results, wf_trades = walk_forward(
@@ -336,25 +276,13 @@ if wf_equity.empty or wf_results.empty:
     logging.error("Walk-forward produced no results — exiting.")
     sys.exit(1)
 
-# ── OOS metrics ──────────────────────────────────────────────────────────
 wf_metrics = {k: float(v) for k, v in compute_metrics(wf_equity).items()}
-logging.info("=" * 80)
-logging.info("Stitched OOS Metrics:")
-logging.info(
-    "CAGR: %.2f%%  Vol: %.2f%%  Sharpe: %.2f  MaxDD: %.2f%%  CalMAR: %.2f",
-    wf_metrics["CAGR"]   * 100,
-    wf_metrics["Vol"]    * 100,
-    wf_metrics["Sharpe"],
-    wf_metrics["MaxDD"]  * 100,
-    wf_metrics["CalMAR"],
-)
-logging.info("=" * 80)
+logging.info("Stitched OOS Metrics: CAGR=%.2f%%  Vol=%.2f%%  Sharpe=%.2f  MaxDD=%.2f%%  CalMAR=%.2f",
+             wf_metrics["CAGR"]*100, wf_metrics["Vol"]*100, wf_metrics["Sharpe"],
+             wf_metrics["MaxDD"]*100, wf_metrics["CalMAR"])
 
-# ── Trade statistics ─────────────────────────────────────────────────────
 if not wf_trades.empty and "Exit Reason" in wf_trades.columns:
-    wf_trades_closed = wf_trades[
-        ~wf_trades["Exit Reason"].isin(BOUNDARY_EXITS)
-    ].copy()
+    wf_trades_closed = wf_trades[~wf_trades["Exit Reason"].isin(BOUNDARY_EXITS)].copy()
 else:
     wf_trades_closed = pd.DataFrame()
 
@@ -364,26 +292,23 @@ trade_stats = (
 )
 
 print_backtest_report(
-    metrics              = wf_metrics,
-    trades               = wf_trades,
-    trade_stats          = trade_stats,
-    wf_results           = wf_results,
-    position_mode        = POSITION_MODE,
-    filter_modes_override= FORCE_FILTER_MODE,
+    metrics               = wf_metrics,
+    trades                = wf_trades,
+    trade_stats           = trade_stats,
+    wf_results            = wf_results,
+    position_mode         = POSITION_MODE,
+    filter_modes_override = FORCE_FILTER_MODE,
 )
 
-# ── Buy & Hold ────────────────────────────────────────────────────────────
 oos_start = wf_results["TestStart"].min()
 oos_end   = wf_results["TestEnd"].max()
 
 bh_equity, bh_metrics = compute_buy_and_hold(
     df, price_col="Zamkniecie", start=oos_start, end=oos_end
 )
-logging.info(
-    "B&H (%s to %s):  CAGR=%.2f%%  Sharpe=%.2f  MaxDD=%.2f%%",
-    oos_start.date(), oos_end.date(),
-    bh_metrics["CAGR"] * 100, bh_metrics["Sharpe"], bh_metrics["MaxDD"] * 100,
-)
+logging.info("B&H (%s to %s):  CAGR=%.2f%%  Sharpe=%.2f  MaxDD=%.2f%%",
+             oos_start.date(), oos_end.date(),
+             bh_metrics["CAGR"]*100, bh_metrics["Sharpe"], bh_metrics["MaxDD"]*100)
 
 
 # ============================================================
@@ -420,8 +345,8 @@ if wf_equity is not None and not wf_equity.empty:
         wf_trades["ExitDate"]  = pd.to_datetime(wf_trades["ExitDate"])
 
     fig, ax = plt.subplots(figsize=(16, 8))
-    ax.plot(wf_equity.index, wf_equity.values,
-            label="OOS Equity Curve", color="blue", linewidth=2)
+    ax.plot(wf_equity.index, wf_equity.values, label="OOS Equity Curve",
+            color="blue", linewidth=2)
 
     bh_al = bh_equity.loc[
         (bh_equity.index >= wf_equity.index.min()) &
@@ -438,38 +363,21 @@ if wf_equity is not None and not wf_equity.empty:
         for _, trade in wf_trades.iterrows():
             color = "green" if trade["Return"] > 0 else "red"
             ax.axvspan(trade["EntryDate"], trade["ExitDate"], color=color, alpha=0.15)
-            trade_eq = wf_equity.loc[
-                (wf_equity.index >= trade["EntryDate"]) &
-                (wf_equity.index <= trade["ExitDate"])
-            ]
-            if trade_eq.empty:
-                continue
-            y_pos = (trade_eq.max() * 1.02 if trade["Return"] > 0
-                     else trade_eq.min() * 0.98)
-            ax.text(
-                trade["ExitDate"], y_pos,
-                f"{trade['Return']*100:.1f}%",
-                color=color, fontsize=8, ha="left", va="bottom", rotation=45,
-            )
 
     ax.text(
         0.01, 0.97,
-        (
-            f"Strategy:   CAGR {wf_metrics['CAGR']*100:.1f}% | "
-            f"Vol {wf_metrics['Vol']*100:.1f}% | "
-            f"MaxDD {wf_metrics['MaxDD']*100:.1f}%\n"
-            f"Buy & Hold: CAGR {bh_metrics['CAGR']*100:.1f}% | "
-            f"Vol {bh_metrics['Vol']*100:.1f}% | "
-            f"MaxDD {bh_metrics['MaxDD']*100:.1f}%"
-        ),
+        (f"Strategy:   CAGR {wf_metrics['CAGR']*100:.1f}% | "
+         f"Vol {wf_metrics['Vol']*100:.1f}% | "
+         f"MaxDD {wf_metrics['MaxDD']*100:.1f}%\n"
+         f"Buy & Hold: CAGR {bh_metrics['CAGR']*100:.1f}% | "
+         f"Vol {bh_metrics['Vol']*100:.1f}% | "
+         f"MaxDD {bh_metrics['MaxDD']*100:.1f}%"),
         transform=ax.transAxes, fontsize=9, verticalalignment="top",
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
     )
-    ax.set_title(
-        f"{ASSET_NAME} Walk-Forward OOS Equity  "
-        f"[train={TRAIN_YEARS}y  test={TEST_YEARS}y  filter={FORCE_FILTER_MODE}]",
-        fontsize=13,
-    )
+    ax.set_title(f"{ASSET_NAME} Walk-Forward OOS Equity  "
+                 f"[train={TRAIN_YEARS}y  test={TEST_YEARS}y  filter={FORCE_FILTER_MODE}]",
+                 fontsize=13)
     ax.set_xlabel("Date")
     ax.set_ylabel("Equity")
     ax.grid(True, alpha=0.3)
@@ -485,24 +393,6 @@ if wf_equity is not None and not wf_equity.empty:
 # ============================================================
 # PHASE 5 — DAILY OUTPUT
 # ============================================================
-#
-# daily_output.py writes to a fixed set of filenames:
-#   signal_status.txt, signal_log.csv, equity_chart.png, signal_snapshot.json
-#
-# We isolate each asset's output to a subdirectory (outputs/{PREFIX}/)
-# to avoid clobbering WIG20TR or other assets, then copy the four files
-# to outputs/{PREFIX}_*.ext for Drive upload.
-#
-# The Drive log pre-fetch inside build_daily_outputs() looks for
-# "signal_log.csv" in the Drive folder.  Since we upload the file as
-# "{PREFIX}_signal_log.csv", we pass gdrive_log_filename_override so
-# build_daily_outputs() fetches the right file.  If daily_output.py
-# does not support that override, the workaround is to run each asset
-# in its own Drive folder — documented below.
-#
-# IMPORTANT: set GDRIVE_FOLDER_ID env var before running so the Drive
-# pre-fetch can locate the correct signal_log.csv for this asset.
-# ============================================================
 
 logging.info("=" * 80)
 logging.info("PHASE 5: DAILY OUTPUT")
@@ -511,53 +401,32 @@ logging.info("=" * 80)
 PREFIX_OUTPUT_DIR = os.path.join(OUTPUT_DIR, OUTPUT_PREFIX)
 os.makedirs(PREFIX_OUTPUT_DIR, exist_ok=True)
 
-# daily_output._fetch_log_from_drive looks for "signal_log.csv" by default.
-# The file on Drive is named "{PREFIX}_signal_log.csv".
-# We temporarily monkey-patch the constant so the fetch targets the correct file.
-# This is the minimal surgical change — no modifications to daily_output.py.
-import daily_output as _do
-
-
-# daily_output._fetch_log_from_drive looks for "signal_log.csv" by default.
-# The file on Drive is named "{PREFIX}_signal_log.csv".
-
-
-
-#_orig_log_file = _do.LOG_FILE  # save
-#_do.LOG_FILE   = f"{OUTPUT_PREFIX}_signal_log.csv"  # patch
-
 outputs = build_daily_outputs(
-    wf_equity   = wf_equity,
-    wf_trades   = wf_trades,
-    wf_metrics  = wf_metrics,
-    wf_results  = wf_results,
-    bh_equity   = bh_equity,
-    bh_metrics  = bh_metrics,
-    df          = df,
-    output_dir  = PREFIX_OUTPUT_DIR,
-    asset_name = ASSET_NAME,
-    price_col   = "Zamkniecie",
+    wf_equity    = wf_equity,
+    wf_trades    = wf_trades,
+    wf_metrics   = wf_metrics,
+    wf_results   = wf_results,
+    bh_equity    = bh_equity,
+    bh_metrics   = bh_metrics,
+    df           = df,
+    output_dir   = PREFIX_OUTPUT_DIR,
+    asset_name   = ASSET_NAME,
+    price_col    = "Zamkniecie",
     logfile_name = f"{OUTPUT_PREFIX}_signal_log.csv",
     gdrive_folder_id   = os.getenv("GDRIVE_FOLDER_ID"),
     gdrive_credentials = "/tmp/credentials.json"
                          if os.path.exists("/tmp/credentials.json") else None,
 )
 
-#_do.LOG_FILE = _orig_log_file  # restore
+logging.info("Daily output complete — action=%s  signal=%s",
+             outputs["action"], outputs["signal"])
 
-logging.info(
-    "Daily output complete — action=%s  signal=%s",
-    outputs["action"], outputs["signal"],
-)
-
-# Copy outputs to prefixed names in outputs/ for Drive upload by GH Actions.
-# daily_output.py writes fixed names inside PREFIX_OUTPUT_DIR;
-# we rename to prefixed names in the parent outputs/ directory.
+# Copy outputs to prefixed names in outputs/ for Drive upload by GH Actions
 FILE_MAP = {
-    "signal_status.txt":    f"{OUTPUT_PREFIX}_signal_status.txt",
-    f"{OUTPUT_PREFIX}_signal_log.csv":       f"{OUTPUT_PREFIX}_signal_log.csv",
-    "equity_chart.png":     f"{OUTPUT_PREFIX}_equity_chart.png",
-    "signal_snapshot.json": f"{OUTPUT_PREFIX}_signal_snapshot.json",
+    "signal_status.txt":              f"{OUTPUT_PREFIX}_signal_status.txt",
+    f"{OUTPUT_PREFIX}_signal_log.csv": f"{OUTPUT_PREFIX}_signal_log.csv",
+    "equity_chart.png":               f"{OUTPUT_PREFIX}_equity_chart.png",
+    "signal_snapshot.json":           f"{OUTPUT_PREFIX}_signal_snapshot.json",
 }
 
 for orig_name, prefixed_name in FILE_MAP.items():
@@ -575,10 +444,7 @@ for orig_name, prefixed_name in FILE_MAP.items():
 # ============================================================
 
 logging.info("=" * 80)
-logging.info(
-    "%s DAILY RUNFILE COMPLETE: %s",
-    ASSET_NAME.upper(), dt.datetime.now(),
-)
+logging.info("%s DAILY RUNFILE COMPLETE: %s", ASSET_NAME.upper(), dt.datetime.now())
 logging.info("  Action : %s", outputs["action"])
 logging.info("  Signal : %s", outputs["signal"])
 logging.info("  Outputs: %s/", OUTPUT_DIR)
