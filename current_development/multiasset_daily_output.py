@@ -354,7 +354,7 @@ def _build_status_text(snap: dict, action: str) -> str:
     else:
         lines.append("  No open equity position.")
     ma_eq  = snap.get("ma_state_equity", {})
-    icon   = "✓" if ma_eq.get("filter_on") else "✗"
+    icon   = "(+)" if ma_eq.get("filter_on") else "(-)"
     lines.append(
         f"  MA filter: {icon}  fast({par_eq.get('fast','?')})={ma_eq.get('fast_ma')}  "
         f"slow({par_eq.get('slow','?')})={ma_eq.get('slow_ma')}  "
@@ -379,7 +379,7 @@ def _build_status_text(snap: dict, action: str) -> str:
     else:
         lines.append("  No open bond position.")
     ma_bd  = snap.get("ma_state_bond", {})
-    icon2  = "✓" if ma_bd.get("filter_on") else "✗"
+    icon2  = "+" if ma_bd.get("filter_on") else "(-)"
     lines.append(
         f"  MA filter: {icon2}  fast({par_bd.get('fast','?')})={ma_bd.get('fast_ma')}  "
         f"slow({par_bd.get('slow','?')})={ma_bd.get('slow_ma')}  "
