@@ -65,7 +65,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install pandas numpy requests google-auth google-api-python-client yfinance
+          pip install pandas numpy requests google-auth google-api-python-client yfinance joblib
 
       - name: Write Google credentials
         run: echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
