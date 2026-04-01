@@ -213,7 +213,7 @@ FAST_MODE = True
 # Both can be disabled independently. When both are False the script
 # produces only OOS portfolio metrics (original behaviour).
 #
-RUN_MC         = True   # MC parameter perturbation per config
+RUN_MC         = False   # MC parameter perturbation per config
 N_MC           = 1000    # MC samples (set to 10 for smoke test)
 RUN_BOOTSTRAP  = False   # Block bootstrap per config (requires RUN_MC=True)
 N_BOOTSTRAP    = 500     # Bootstrap samples (set to 10 for smoke test)
@@ -240,7 +240,7 @@ def download_all(tmp_dir):
     logging.info("DOWNLOADING DATA")
     logging.info("=" * 70)
     
-    run_update() # load data from GDrive to /data subfolder
+    run_update(get_funds=False) # load data from GDrive to /data subfolder
 
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -269,10 +269,10 @@ def download_all(tmp_dir):
 
     WIG   = _stooq("wig",       "WIG")
     WIG = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
-    MMF   = _stooq("fund_2720.n",    "MMF")
-    W1M   = _stooq("plopln1m",  "WIBOR1M", mandatory=False)
-    PL10Y = _stooq("10yply.b",  "PL10Y")
-    DE10Y = _stooq("10ydey.b",  "DE10Y")
+    MMF   = _stooq("fund_2720",    "MMF")
+    W1M   = _stooq("wibor1m",  "WIBOR1M", mandatory=False)
+    PL10Y = _stooq("pl10y",  "PL10Y")
+    DE10Y = _stooq("de10y",  "DE10Y")
 
     folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip()
 
@@ -280,7 +280,7 @@ def download_all(tmp_dir):
         folder_id         = folder_id,
         raw_filename      = "tbsp_extended_full.csv",
         combined_filename = "tbsp_extended_combined.csv",
-        extension_ticker  = "^tbsp",
+        extension_ticker  = "tbsp",
         extension_source  = "stooq",
     )
 

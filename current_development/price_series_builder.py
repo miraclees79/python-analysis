@@ -100,6 +100,9 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
+from strategy_test_library import (
+    load_csv)
+
 # Google Drive (required)
 try:
     from google.oauth2 import service_account
@@ -132,8 +135,10 @@ CLOSE_COL        = "Zamkniecie"
 DATA_START       = "1990-01-01"
 CREDENTIALS_PATH = os.path.join(tempfile.gettempdir(), "credentials.json")
 
-# stooq base URL — used when extension_source="stooq"
-_STOOQ_URL = "https://stooq.pl/q/d/l/?s={ticker}&i=d"
+# DATA DIR — used when extension_source="stooq"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
 
 _USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -431,31 +436,29 @@ def _download_yfinance(ticker: str) -> pd.DataFrame | None:
 
     return None
 
-#### TO BE MODIFIED TO LOCAL
-def _download_stooq(ticker: str) -> pd.DataFrame | None:
-    """Download daily OHLCV from stooq.pl, return stooq-format DataFrame."""
-    if not _REQUESTS_AVAILABLE:
-        logging.error("requests not installed.  pip install requests")
-        return None
-
-    import random
-    url = _STOOQ_URL.format(ticker=ticker)
-    headers = {"User-Agent": random.choice(_USER_AGENTS)}
-
-    logging.info("Downloading %s from stooq ...", ticker)
-    try:
-        resp = _requests.get(url, headers=headers, timeout=15)
-        resp.raise_for_status()
-        if not resp.content.strip():
-            logging.warning("stooq returned empty response for %s.", ticker)
-            return None
-    except Exception as exc:
-        logging.error("stooq download failed for %s: %s", ticker, exc)
-        return None
-
-    # stooq returns standard CSV with Polish column names
-    raw_bytes = resp.content
-    return _parse_generic_csv(raw_bytes)
+# MODIFIED TO LOCAL
+def _download_stooq(ticker: str, mandatory: bool = True) -> pd.DataFrame | None:
+         
+        """
+        Load a stooq series from /data subfolder, clip to DATA_START.
+        """
+    
+        path = os.path.join(DATA_DIR, f"{ticker}.csv")
+    
+        df = load_csv(path)
+        if df is None:
+            if mandatory:
+                logging.error("FAIL: load_csv returned None for %s — exiting.", ticker)
+                sys.exit(1)
+                return None
+        df = df.loc[df.index >= pd.Timestamp(DATA_START)]
+        logging.info(
+            "OK  : %-14s  %5d rows  %s to %s",
+            ticker, len(df), df.index.min().date(), df.index.max().date(),
+            )
+        return df
+   
+    
 
 
 # ============================================================

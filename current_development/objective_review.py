@@ -94,7 +94,9 @@ from mc_robustness import (
     BOND_THRESHOLDS_MC,
 )
 
-
+from price_series_builder import build_and_upload, load_combined_from_drive
+from global_equity_library import build_mmf_extended
+from stooq_hybrid_updater import run_update
 # ============================================================
 # LOGGING
 # ============================================================
@@ -162,6 +164,14 @@ SWITCH_YEAR_MIN      = 3        # must win in >= N of the LAST_5_YEARS
 ALL_OBJECTIVES = ["calmar", "sharpe", "sortino", "calmar_sharpe", "calmar_sortino"]
 INCUMBENT      = "calmar"
 
+WIG_DATA_FLOOR = "1995-01-02"
+ 
+# MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
+#   date. Ensures IS windows starting before 1999 have realistic cash returns
+#   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
+MMF_FLOOR = "1995-01-02"
+DATA_START = "1990-01-01"  # hard floor for all series
+
 
 # ============================================================
 # EXPERIMENT MATRIX
@@ -208,22 +218,71 @@ def download_data():
     logging.info("=" * 80)
     logging.info("DOWNLOADING DATA")
     logging.info("=" * 80)
-    tmp = tempfile.mkdtemp()
+    
 
-    def _get(url, fname):
-        path = os.path.join(tmp, fname)
-        download_csv(url, path)
+    run_update(get_funds=False) # load data from GDrive to /data subfolder
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    DATA_DIR = os.path.join(BASE_DIR, "data")
+
+    def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
+        """
+        Load a stooq series from /data subfolder, clip to DATA_START.
+        """
+    
+        path = os.path.join(DATA_DIR, f"{ticker}.csv")
+    
         df = load_csv(path)
         if df is None:
-            raise RuntimeError(f"Failed to load {fname}")
+            if mandatory:
+                logging.error("FAIL: load_csv returned None for %s — exiting.", label)
+                sys.exit(1)
+                return None
+        df = df.loc[df.index >= pd.Timestamp(DATA_START)]
+        logging.info(
+            "OK  : %-14s  %5d rows  %s to %s",
+            label, len(df), df.index.min().date(), df.index.max().date(),
+            )
         return df
 
-    WIG   = _get("https://stooq.pl/q/d/l/?s=wig&i=d",       "wig.csv")
-    TBSP  = _get("https://stooq.pl/q/d/l/?s=^tbsp&i=d",     "tbsp.csv")
-    MMF   = _get("https://stooq.pl/q/d/l/?s=2720.n&i=d",    "mmf.csv")
-    PL10Y = _get("https://stooq.pl/q/d/l/?s=10yply.b&i=d",  "pl10y.csv")
-    DE10Y = _get("https://stooq.pl/q/d/l/?s=10ydey.b&i=d",  "de10y.csv")
 
+
+    WIG   = _stooq("wig",       "WIG")
+    WIG = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
+    MMF   = _stooq("fund_2720",    "MMF")
+    W1M   = _stooq("wibor1m",  "WIBOR1M", mandatory=False)
+    PL10Y = _stooq("pl10y",  "PL10Y")
+    DE10Y = _stooq("de10y",  "DE10Y")
+
+    folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip()
+
+    TBSP = build_and_upload(
+        folder_id         = folder_id,
+        raw_filename      = "tbsp_extended_full.csv",
+        combined_filename = "tbsp_extended_combined.csv",
+        extension_ticker  = "tbsp",
+        extension_source  = "stooq",
+    )
+
+    if TBSP is None:
+        TBSP = _stooq("tbsp",  "TBSP")
+        if TBSP is None:
+            logging.error("FAIL: TBSP build/update failed.")
+            sys.exit(1)
+    logging.info("OK  %-14s  %5d rows  %s to %s",
+                 "TBSP", len(TBSP),
+                 TBSP.index.min().date(), TBSP.index.max().date())
+    for col in ["Najwyzszy", "Najnizszy"]:
+        if col not in TBSP.columns:
+            TBSP[col] = TBSP["Zamkniecie"]
+
+    if W1M is not None:
+        MMF_EXT = build_mmf_extended(MMF, W1M, floor_date="1994-10-03")
+        logging.info("MMF extended back to %s", MMF_EXT.index.min().date())
+    else:
+        MMF_EXT = MMF
+
+        logging.warning("WIBOR1M unavailable — using standard MMF (starts ~1999)")
     logging.info("WIG %d rows | TBSP %d rows | MMF %d rows | PL10Y %d rows | DE10Y %d rows",
                  len(WIG), len(TBSP), len(MMF), len(PL10Y), len(DE10Y))
 

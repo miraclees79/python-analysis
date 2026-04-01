@@ -74,7 +74,7 @@ if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
 from strategy_test_library import (
-    download_csv,
+ 
     load_csv,
     walk_forward,
     compute_metrics,
@@ -101,13 +101,11 @@ from global_equity_library import (
     DATA_START,
 )
 
-from price_series_builder import build_and_upload, load_combined_from_drive
-from msci_world_synthetic import (
-    build_full_msci_world_extended,
-    load_synthetic_from_drive,
-)
+from price_series_builder import build_and_upload
+from msci_world_synthetic import build_full_msci_world_extended
 
-
+from global_equity_library import build_mmf_extended
+from stooq_hybrid_updater import run_update
 # ============================================================
 # LOGGING SETUP
 # ============================================================
@@ -210,28 +208,32 @@ def download_all_data() -> dict:
     logging.info("DOWNLOADING ALL DATA")
     logging.info("=" * 70)
 
-    tmp_dir = tempfile.gettempdir()
+    
     folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip() or GDRIVE_FOLDER_ID_DEFAULT.strip()
 
-    def _stooq(ticker, label, mandatory=True):
-        url  = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
-        path = os.path.join(tmp_dir, f"sweep_{label}.csv")
-        ok   = download_csv(url, path)
-        if not ok:
-            if mandatory:
-                logging.error("FAIL mandatory: %s (%s)", label, ticker)
-                sys.exit(1)
-            logging.warning("WARN optional: %s (%s) not available", label, ticker)
-            return None
+    run_update(get_funds=False) # load data from GDrive to /data subfolder
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    DATA_DIR = os.path.join(BASE_DIR, "data")
+
+    def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
+        """
+        Load a stooq series from /data subfolder, clip to DATA_START.
+        """
+    
+        path = os.path.join(DATA_DIR, f"{ticker}.csv")
+    
         df = load_csv(path)
         if df is None:
             if mandatory:
-                logging.error("FAIL load_csv: %s", label)
+                logging.error("FAIL: load_csv returned None for %s — exiting.", label)
                 sys.exit(1)
-            return None
+                return None
         df = df.loc[df.index >= pd.Timestamp(DATA_START)]
-        logging.info("OK  %-14s  %5d rows  %s to %s",
-                     label, len(df), df.index.min().date(), df.index.max().date())
+        logging.info(
+            "OK  : %-14s  %5d rows  %s to %s",
+            label, len(df), df.index.min().date(), df.index.max().date(),
+            )
         return df
 
     raw = {}
@@ -241,7 +243,7 @@ def download_all_data() -> dict:
         folder_id         = folder_id,
         raw_filename      = "tbsp_extended_full.csv",
         combined_filename = "tbsp_extended_combined.csv",
-        extension_ticker  = "^tbsp",
+        extension_ticker  = "tbsp",
         extension_source  = "stooq",
     )
     if raw["TBSP"] is None:
@@ -250,9 +252,20 @@ def download_all_data() -> dict:
     logging.info("OK  %-14s  %5d rows  %s to %s",
                  "TBSP", len(raw["TBSP"]),
                  raw["TBSP"].index.min().date(), raw["TBSP"].index.max().date())
-
-    raw["MMF"]     = _stooq("2720.n",   "MMF")
-    raw["WIBOR1M"] = _stooq("plopln1m", "WIBOR1M", mandatory=False)
+    
+    raw["WIBOR1M"] = _stooq("wibor1m", "WIBOR1M", mandatory=False)
+    W1M = raw["WIBOR1M"] 
+    
+    MMF = _stooq("fund_2720",   "MMF")
+    if W1M is not None:
+        MMF_EXT = build_mmf_extended(MMF, W1M, floor_date="1994-10-03")
+        logging.info("MMF extended back to %s", MMF_EXT.index.min().date())
+    else:
+        MMF_EXT = MMF
+        logging.warning("WIBOR1M unavailable — using standard MMF (starts ~1999)")
+    
+    raw["MMF"]     = MMF_EXT
+    
 
     # FX
     raw["USDPLN"] = _stooq("usdpln", "USDPLN")
@@ -263,8 +276,8 @@ def download_all_data() -> dict:
     raw["WIG"] = _stooq("wig", "WIG")
 
     # Mode A: SP500, STOXX600, Nikkei
-    raw["SPX"] = _stooq("^spx", "SP500")
-    raw["NKX"] = _stooq("^nkx", "Nikkei225")
+    raw["SPX"] = _stooq("sp500", "SP500")
+    raw["NKX"] = _stooq("nk225", "Nikkei225")
 
     raw["STOXX600"] = build_and_upload(
         folder_id         = folder_id,

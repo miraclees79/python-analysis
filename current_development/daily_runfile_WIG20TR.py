@@ -67,7 +67,7 @@ from strategy_test_library import (
 from daily_output import build_daily_outputs
 from global_equity_library import build_mmf_extended
 from price_series_builder import build_and_upload
-
+from stooq_hybrid_updater import run_update
 
 # ============================================================
 # ██████████████████████████████████████████████████████████
@@ -117,15 +117,15 @@ ASSET_REGISTRY = {
     },
     "NASDAQ100": {
         "source": "stooq",
-        "ticker": "^ndq",
+        "ticker": "ndq100",
     },
     "Nikkei225": {
         "source": "stooq",
-        "ticker": "^nkx",
+        "ticker": "nk225",
     },
     "WIBOR1M": {
         "source": "stooq",
-        "ticker": "plopln1m",
+        "ticker": "wibor1m",
     },
     "STOXX600": {
         "source": "drive",
@@ -225,6 +225,8 @@ tmp_dir = tempfile.gettempdir()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
+run_update(get_funds=False) # load data from GDrive to /data subfolder
+
 def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
     path = os.path.join(DATA_DIR, f"{ticker}.csv")
     
@@ -282,7 +284,7 @@ df = INDEX_DF
 # --- Load cash (MMF + WIBOR extension) ---
 MMF = _stooq("fund_2720", "MMF", mandatory=True)
 
-WIBOR1M = _stooq("plopln1m", "WIBOR1M", mandatory=False)
+WIBOR1M = _stooq("wibor1m", "WIBOR1M", mandatory=False)
 if WIBOR1M is not None:
     CASH = build_mmf_extended(MMF, WIBOR1M, floor_date=MMF_FLOOR)
     logging.info(

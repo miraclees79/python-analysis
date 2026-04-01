@@ -37,3 +37,5 @@ dev_single_asset_monitoring/__pycache__/strategy_test_library.cpython-314.pyc
 /strategy_freeze_0_2/outputs
 /multiasset_development/__pycache__
 /current_development/data
+/old/multiasset_development/data
+/current_development/__pycache__

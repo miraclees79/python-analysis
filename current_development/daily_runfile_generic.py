@@ -68,7 +68,7 @@ from strategy_test_library import (
 from daily_output import build_daily_outputs
 from global_equity_library import build_mmf_extended
 from price_series_builder import build_and_upload
-
+from stooq_hybrid_updater import run_update
 
 # ============================================================
 # ██████████████████████████████████████████████████████████
@@ -99,6 +99,7 @@ FORCE_FILTER_MODE = ["ma", "mom"]
 
 GDRIVE_FOLDER_ID_DEFAULT = ""   # fallback if GDRIVE_FOLDER_ID env var not set
 
+
 ASSET_REGISTRY = {
     "WIG20TR": {
         "source": "stooq",
@@ -118,11 +119,15 @@ ASSET_REGISTRY = {
     },
     "NASDAQ100": {
         "source": "stooq",
-        "ticker": "^ndq",
+        "ticker": "ndq100",
     },
     "Nikkei225": {
         "source": "stooq",
-        "ticker": "^nkx",
+        "ticker": "nk225",
+    },
+    "WIBOR1M": {
+        "source": "stooq",
+        "ticker": "wibor1m",
     },
     "STOXX600": {
         "source": "drive",
@@ -209,7 +214,6 @@ logging.info(
     _cpu_count, N_JOBS,
 )
 
-
 # ============================================================
 # PHASE 1 — DATA DOWNLOAD
 # ============================================================
@@ -219,18 +223,12 @@ logging.info("PHASE 1: DOWNLOAD DATA")
 logging.info("=" * 80)
 
 tmp_dir = tempfile.gettempdir()
-
-
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+run_update(get_funds=False) # load data from GDrive to /data subfolder
 def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
-    url  = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
-    path = os.path.join(tmp_dir, f"{OUTPUT_PREFIX}_{label}.csv")
-    ok   = download_csv(url, path)
-    if not ok:
-        if mandatory:
-            logging.error("FAIL: %s (%s) — exiting.", label, ticker)
-            sys.exit(1)
-        logging.warning("WARN: %s — not available, skipping.", label)
-        return None
+    path = os.path.join(DATA_DIR, f"{ticker}.csv")
+    
     df = load_csv(path)
     if df is None:
         if mandatory:
@@ -283,9 +281,9 @@ else:
 df = INDEX_DF
 
 # --- Load cash (MMF + WIBOR extension) ---
-MMF = _stooq("2720.n", "MMF", mandatory=True)
+MMF = _stooq("fund_2720", "MMF", mandatory=True)
 
-WIBOR1M = _stooq("plopln1m", "WIBOR1M", mandatory=False)
+WIBOR1M = _stooq("wibor1m", "WIBOR1M", mandatory=False)
 if WIBOR1M is not None:
     CASH = build_mmf_extended(MMF, WIBOR1M, floor_date=MMF_FLOOR)
     logging.info(
@@ -300,6 +298,7 @@ else:
         MMF.index.min().date(),
     )
     CASH = MMF
+
 
 
 # ============================================================

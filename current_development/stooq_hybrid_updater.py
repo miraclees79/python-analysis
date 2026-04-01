@@ -45,13 +45,17 @@ DEFAULT_TICKERS = [
     {"label": "TBSP", "stooq": "^tbsp", "yf": "TBSP-INDEX.WA", "type": "index_pl", "knf": None},
     {"label": "SP500", "stooq": "^spx", "yf": "^GSPC", "type": "index_world", "knf": None},
     {"label": "NK225", "stooq": "^nkx", "yf": "^N225", "type": "index_world", "knf": None},
+    {"label": "NDQ100", "stooq": "^ndx", "yf": "^N225", "type": "index_world", "knf": None},
     {"label": "WIBOR1M", "stooq": "plopln1m", "yf": None, "type": "interest_rate", "knf": None},
     {"label": "USDPLN", "stooq": "usdpln", "yf": "USDPLN=X", "type": "fx_rate", "knf": None},
     {"label": "EURPLN", "stooq": "eurpln", "yf": "EURPLN=X", "type": "fx_rate", "knf": None},
     {"label": "JPYPLN", "stooq": "jpypln", "yf": "JPYPLN=X", "type": "fx_rate", "knf": None},
     {"label": "DE10Y", "stooq": "10YDEY.B", "yf": None, "type": "interest_rate", "knf": None},
     {"label": "PL10Y", "stooq": "10YPLY.B", "yf": None, "type": "interest_rate", "knf": None},
+    {"label": "fund_2720", "stooq": "2720", "yf": None, "type": "index_pl", "knf": None},
 ]
+# fund_2720 used as MMF - classed as index_pl to ensure it always loads
+
 
 # --- FUNKCJE GOOGLE DRIVE ---
 
@@ -199,20 +203,26 @@ def load_csv_and_validate(df, label):
 
 # --- GŁÓWNY PROCES ---
 
-def run_update():
+def run_update(get_funds = True):
     service = _get_drive_service()
-    dynamic_tickers = _get_dynamic_tickers(service)
-    full_tickers_table = DEFAULT_TICKERS + dynamic_tickers
-    
+    if get_funds: 
+        dynamic_tickers = _get_dynamic_tickers(service)
+        full_tickers_table = DEFAULT_TICKERS + dynamic_tickers
+    else:
+        full_tickers_table = DEFAULT_TICKERS 
+        
     for row in full_tickers_table:
         label = row['label']
         ticker_stooq = row['stooq']
         data_type = row['type']
         
+        if data_type == "fund_pl" and not get_funds:
+            continue
+        
         logging.info(f"--- Przetwarzanie: {label} ---")
         
         # 1. Pobierz dane historyczne z ZIPa na GDrive
-        zip_name = "d_pl_txt.zip" if data_type in ["index_pl", "fund_pl", "fx_rate", "interest_rate"] else "d_world_txt.zip"
+        zip_name = "d_pl_txt.zip" if data_type in ["index_pl", "fund_pl"] else "d_world_txt.zip"
         zip_content = _get_zip_from_gdrive(service, zip_name)
         
         df_hist = None
