@@ -49,7 +49,8 @@ DEFAULT_TICKERS = [
     {"label": "USDPLN", "stooq": "usdpln", "yf": "USDPLN=X", "type": "fx_rate", "knf": None},
     {"label": "EURPLN", "stooq": "eurpln", "yf": "EURPLN=X", "type": "fx_rate", "knf": None},
     {"label": "JPYPLN", "stooq": "jpypln", "yf": "JPYPLN=X", "type": "fx_rate", "knf": None},
-    {"label": "WIBOR1m", "stooq": "plopln1m", "yf": None, "type": "interest_rate", "knf": None},
+    {"label": "DE10Y", "stooq": "10YDEY.B", "yf": None, "type": "interest_rate", "knf": None},
+    {"label": "PL10Y", "stooq": "10YPLY.B", "yf": None, "type": "interest_rate", "knf": None},
 ]
 
 # --- FUNKCJE GOOGLE DRIVE ---
@@ -58,7 +59,7 @@ def _get_drive_service():
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
     
-    # Próba odczytu credentials z temp (jak w Twoim oryginale) lub bezpośrednio z pliku
+    # Próba odczytu credentials z temp 
     credentials_path = os.path.join(tempfile.gettempdir(), "credentials.json")
     
 
