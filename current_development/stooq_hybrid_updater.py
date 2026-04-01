@@ -209,6 +209,7 @@ def run_update(get_funds = True):
     if get_funds: 
         dynamic_tickers = _get_dynamic_tickers(service)
         full_tickers_table = DEFAULT_TICKERS + dynamic_tickers
+        
         def get_folder_id(name):
             query = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
             res = service.files().list(q=query, fields='files(id)').execute()
@@ -227,8 +228,11 @@ def run_update(get_funds = True):
         
         if data_type == "fund_pl" and not get_funds:
             continue
-        
-        logging.info(f"--- Przetwarzanie: {label} ---")
+        if data_type == "fund_pl" :
+            name = row['original_name']
+            logging.info(f"--- Przetwarzanie: {label} --- {name} ---")
+        else:
+            logging.info(f"--- Przetwarzanie: {label} ------")
         
         # 1. Pobierz dane historyczne z ZIPa na GDrive
         zip_name = "d_pl_txt.zip" if data_type in ["index_pl", "fund_pl"] else "d_world_txt.zip"

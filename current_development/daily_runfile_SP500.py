@@ -97,7 +97,7 @@ ASSET_REGISTRY = {
     },
     "SP500": {
         "source": "stooq",
-        "ticker": "^spx",
+        "ticker": "sp500",
     },
     "NASDAQ100": {
         "source": "stooq",
