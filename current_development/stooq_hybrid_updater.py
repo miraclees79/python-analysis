@@ -209,9 +209,17 @@ def run_update(get_funds = True):
     if get_funds: 
         dynamic_tickers = _get_dynamic_tickers(service)
         full_tickers_table = DEFAULT_TICKERS + dynamic_tickers
+        def get_folder_id(name):
+            query = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            res = service.files().list(q=query, fields='files(id)').execute()
+            items = res.get('files', [])
+            return items[0]['id'] if items else None
+        FOLDER_ID = get_folder_id("Dane")
     else:
         full_tickers_table = DEFAULT_TICKERS 
-        
+    
+    
+    
     for row in full_tickers_table:
         label = row['label']
         ticker_stooq = row['stooq']
@@ -262,7 +270,7 @@ def run_update(get_funds = True):
                 
                 if get_funds and data_type == "fund_pl":
                     # Build Drive file name
-                    file_name = f"historia{ticker_stooq}.csv"
+                    file_name = f"historia{ticker_stooq[:4]}.csv"
 
                    
                     folder_id = FOLDER_ID
@@ -284,7 +292,8 @@ def run_update(get_funds = True):
                             service.files().create(body=metadata, media_body=media).execute()
                             logging.info(f"Created file: {file_name}")
 
-                    return True
+                    
+                
                 
         else:
             logging.error(f"BRAK DANYCH dla {label}")

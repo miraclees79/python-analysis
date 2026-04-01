@@ -105,7 +105,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/multiasset_freeze_0_5
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
-          cd multiasset_freeze_0_5
+          cd current_development
           python multiasset_daily_runfile.py
 
       # ------------------------------------------------------------------

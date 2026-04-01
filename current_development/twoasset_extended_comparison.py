@@ -87,16 +87,29 @@ logging.info("=" * 80)
 
 from strategy_test_library import (
     load_csv,
-    walk_forward, compute_metrics, compute_buy_and_hold,
+    load_stooq_local,       # consolidated loader — replaces per-runfile _stooq()
+    get_n_jobs,             # canonical N_JOBS calculation
+    walk_forward,
+    compute_metrics,
+    compute_buy_and_hold,
+    analyze_trades,
+    print_backtest_report,
 )
-
-from global_equity_library import build_mmf_extended
 from multiasset_library import (
     build_signal_series,
     allocation_walk_forward,
+    print_multiasset_report,
+    build_standard_two_asset_data,  # consolidated setup — replaces inline block
     build_spread_prefilter,
     build_yield_momentum_prefilter,
+    allocation_weight_robustness,
+    print_allocation_robustness_report,
 )
+from multiasset_daily_output import build_daily_outputs
+from global_equity_library import build_mmf_extended
+from price_series_builder import build_and_upload
+from stooq_hybrid_updater import run_update
+
 from mc_robustness import (
     run_monte_carlo_robustness,
     analyze_robustness,
@@ -104,14 +117,10 @@ from mc_robustness import (
     extract_best_params_from_wf_results,
     run_block_bootstrap_robustness,
     analyze_bootstrap,
-    EQUITY_THRESHOLDS_MC,
     BOND_THRESHOLDS_MC,
-    EQUITY_THRESHOLDS_BOOTSTRAP,
     BOND_THRESHOLDS_BOOTSTRAP,
-)
-
-from price_series_builder import build_and_upload
-from stooq_hybrid_updater import run_update
+    EQUITY_THRESHOLDS_MC,
+    EQUITY_THRESHOLDS_BOOTSTRAP,)
 
 
 # ============================================================
@@ -240,61 +249,38 @@ def download_all(tmp_dir):
     logging.info("DOWNLOADING DATA")
     logging.info("=" * 70)
     
-    run_update(get_funds=False) # load data from GDrive to /data subfolder
+    run_update(get_funds=False)
 
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     DATA_DIR = os.path.join(BASE_DIR, "data")
 
-    def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
-        """
-        Load a stooq series from /data subfolder, clip to DATA_START.
-        """
-    
-        path = os.path.join(DATA_DIR, f"{ticker}.csv")
-    
-        df = load_csv(path)
-        if df is None:
-            if mandatory:
-                logging.error("FAIL: load_csv returned None for %s — exiting.", label)
-                sys.exit(1)
-                return None
-        df = df.loc[df.index >= pd.Timestamp(DATA_START)]
-        logging.info(
-            "OK  : %-14s  %5d rows  %s to %s",
-            label, len(df), df.index.min().date(), df.index.max().date(),
-            )
-        return df
-
-
-
-    WIG   = _stooq("wig",       "WIG")
-    WIG = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
-    MMF   = _stooq("fund_2720",    "MMF")
-    W1M   = _stooq("wibor1m",  "WIBOR1M", mandatory=False)
-    PL10Y = _stooq("pl10y",  "PL10Y")
-    DE10Y = _stooq("de10y",  "DE10Y")
+    # All series loaded via consolidated load_stooq_local() — no per-runfile _stooq()
+    WIG   = load_stooq_local("wig",       "WIG",     DATA_DIR, DATA_START)
+    WIG   = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
+    MMF   = load_stooq_local("fund_2720", "MMF",     DATA_DIR, DATA_START)
+    W1M   = load_stooq_local("wibor1m",  "WIBOR1M", DATA_DIR, DATA_START, mandatory=False)
+    PL10Y = load_stooq_local("pl10y",    "PL10Y",   DATA_DIR, DATA_START)
+    DE10Y = load_stooq_local("de10y",    "DE10Y",   DATA_DIR, DATA_START)
 
     folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip()
 
     TBSP = build_and_upload(
-        folder_id         = folder_id,
-        raw_filename      = "tbsp_extended_full.csv",
-        combined_filename = "tbsp_extended_combined.csv",
-        extension_ticker  = "tbsp",
-        extension_source  = "stooq",
+    folder_id         = folder_id,
+    raw_filename      = "tbsp_extended_full.csv",
+    combined_filename = "tbsp_extended_combined.csv",
+    extension_ticker  = "tbsp",
+    extension_source  = "stooq",
     )
-
     if TBSP is None:
-        TBSP = _stooq("^tbsp",  "TBSP")
-        if TBSP is None:
-            logging.error("FAIL: TBSP build/update failed.")
-            sys.exit(1)
-    logging.info("OK  %-14s  %5d rows  %s to %s",
-                 "TBSP", len(TBSP),
-                 TBSP.index.min().date(), TBSP.index.max().date())
-    for col in ["Najwyzszy", "Najnizszy"]:
-        if col not in TBSP.columns:
-            TBSP[col] = TBSP["Zamkniecie"]
+        TBSP = load_stooq_local("tbsp", "TBSP", DATA_DIR, DATA_START)
+    if TBSP is None:
+        logging.error("FAIL: TBSP build/update failed.")
+        sys.exit(1)
+        logging.info("OK  %-14s  %5d rows  %s to %s",
+             "TBSP", len(TBSP), TBSP.index.min().date(), TBSP.index.max().date())
+        for col in ["Najwyzszy", "Najnizszy"]:
+            if col not in TBSP.columns:
+                TBSP[col] = TBSP["Zamkniecie"]
 
     return WIG, TBSP, MMF, W1M, PL10Y, DE10Y
 

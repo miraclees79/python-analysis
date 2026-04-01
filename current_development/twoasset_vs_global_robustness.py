@@ -62,7 +62,7 @@ import matplotlib.pyplot as plt
 from strategy_test_library import (
     download_csv, load_csv,
     walk_forward, compute_metrics, compute_buy_and_hold,
-    analyze_trades, print_backtest_report,
+    analyze_trades, print_backtest_report, load_stooq_local,
 )
 from multiasset_library import (
     build_signal_series,
@@ -99,7 +99,7 @@ from msci_world_synthetic import (
     load_synthetic_from_drive,
 )
 
-
+from stooq_hybrid_updater import run_update
 # ============================================================
 # LOGGING SETUP
 # ============================================================
@@ -222,60 +222,21 @@ def download_all_data() -> dict:
 
     tmp = tempfile.mkdtemp()
     folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip()
+    run_update(get_funds=False)
 
-    def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
-        """
-        Download a stooq series, clip to DATA_START.
-        If download fails, fall back to loading CSV from current working directory.
-        """
-        url         = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
-        tmp_path    = os.path.join(tmp, f"ge_{label}.csv")
-        #local_path  = os.path.join(os.getcwd(), f"{label}.csv")  # fallback filename
-        local_path = os.path.join(os.getcwd(), "data", f"{label}.csv")
-        # === Attempt online download ===
-        ok = download_csv(url, tmp_path)
-        if ok:
-            logging.info("INFO: %s — downloaded from Stooq", label)
-            df = load_csv(tmp_path)
-        else:
-            logging.warning("WARN: %s — download failed, trying local CSV: %s", label, local_path)
-
-        # === Fallback: try loading local file ===
-        if os.path.exists(local_path):
-            df = load_csv(local_path)
-            if df is not None:
-                logging.info("INFO: %s — loaded from local CSV", label)
-            else:
-                logging.error("FAIL: %s — local CSV exists but load_csv returned None", label)
-                if mandatory:
-                    sys.exit(1)
-                    return None
-                else:
-                    # No fallback available
-                    if mandatory:
-                        logging.error("FAIL: %s — neither online nor local CSV available, exiting.", label)
-                        sys.exit(1)
-                    logging.warning("WARN: %s — optional series missing, skipping.", label)
-                    return None
-
-            # === Post-loading logic ===
-            df = df.loc[df.index >= pd.Timestamp(DATA_START)]
-
-            logging.info(
-                "OK  : %-14s  %5d rows  %s to %s",
-                label, len(df), df.index.min().date(), df.index.max().date(),
-            )
-            return df
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    DATA_DIR = os.path.join(BASE_DIR, "data")
+    
 
     raw = {}
 
     # Mandatory for both strategies
-    raw["WIG"]     = _stooq("wig",       "WIG")
+    raw["WIG"]     = load_stooq_local("wig",       "WIG",     DATA_DIR, DATA_START)
     raw["WIG"]     = raw["WIG"].loc[raw["WIG"].index >= pd.Timestamp(WIG_DATA_FLOOR)]
-    raw["MMF"]     = _stooq("2720.n",    "MMF")
-    raw["WIBOR1M"] = _stooq("plopln1m",  "WIBOR1M", mandatory=False)
-    raw["PL10Y"]   = _stooq("10yply.b",  "PL10Y")
-    raw["DE10Y"]   = _stooq("10ydey.b",  "DE10Y")
+    raw["MMF"]     = load_stooq_local("fund_2720", "MMF",     DATA_DIR, DATA_START)
+    raw["WIBOR1M"] =  load_stooq_local("wibor1m",  "WIBOR1M", DATA_DIR, DATA_START, mandatory=False)
+    raw["PL10Y"]   = load_stooq_local("pl10y",    "PL10Y",   DATA_DIR, DATA_START)
+    raw["DE10Y"]   = load_stooq_local("de10y",    "DE10Y",   DATA_DIR, DATA_START)
 
     # Extended TBSP via Drive
     raw["TBSP"] = build_and_upload(
@@ -286,20 +247,20 @@ def download_all_data() -> dict:
         extension_source  = "stooq",
     )
     if raw["TBSP"] is None:
-        raw["TBSP"] = _stooq("^tbsp", "TBSP")
+        raw["TBSP"] = load_stooq_local("tbsp", "TBSP", DATA_DIR, DATA_START)
         if raw["TBSP"] is None:
-            logging.error("FAIL: TBSP unavailable."); sys.exit(1)
+            logging.error("FAIL: TBSP build/update failed.")
+            sys.exit(1)
+    logging.info("OK  %-14s  %5d rows  %s to %s",
+                 "TBSP", len(raw["TBSP"]), raw["TBSP"].index.min().date(), raw["TBSP"].index.max().date())
     for col in ["Najwyzszy", "Najnizszy"]:
         if col not in raw["TBSP"].columns:
             raw["TBSP"][col] = raw["TBSP"][CLOSE_COL]
-    logging.info("OK  %-14s  %5d rows  %s to %s",
-                 "TBSP", len(raw["TBSP"]),
-                 raw["TBSP"].index.min().date(), raw["TBSP"].index.max().date())
 
     # Candidate-mode-specific data
     if CANDIDATE_MODE == "msci_world":
         logging.info("Loading Mode B assets (MSCI World)...")
-        raw["USDPLN"] = _stooq("usdpln", "USDPLN")
+        raw["USDPLN"] = load_stooq_local("usdpln",    "USDPLN",   DATA_DIR, DATA_START)
         msciw_wsj = build_and_upload(
             folder_id         = folder_id,
             raw_filename      = "msci_world_wsj_raw.csv",
@@ -322,11 +283,11 @@ def download_all_data() -> dict:
 
     elif CANDIDATE_MODE == "global_equity":
         logging.info("Loading Mode A assets (SP500, STOXX600, Nikkei225)...")
-        raw["USDPLN"] = _stooq("usdpln", "USDPLN")
-        raw["EURPLN"] = _stooq("eurpln", "EURPLN")
-        raw["JPYPLN"] = _stooq("jpypln", "JPYPLN")
-        raw["SPX"]    = _stooq("^spx",   "SP500")
-        raw["NKX"]    = _stooq("^nkx",   "Nikkei225")
+        raw["USDPLN"] = load_stooq_local("usdpln",    "USDPLN",   DATA_DIR, DATA_START)
+        raw["EURPLN"] = load_stooq_local("eurpln",    "EURPLN",   DATA_DIR, DATA_START)
+        raw["JPYPLN"] = load_stooq_local("jpypln",    "JPYPLN",   DATA_DIR, DATA_START)
+        raw["SPX"]    = load_stooq_local("sp500",    "SP500",   DATA_DIR, DATA_START)
+        raw["NKX"]    = load_stooq_local("nk225",    "Nikkei225",   DATA_DIR, DATA_START)
         raw["STOXX600"] = build_and_upload(
             folder_id         = folder_id,
             raw_filename      = "stoxx600.csv",
