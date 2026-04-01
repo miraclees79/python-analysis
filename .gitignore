@@ -41,3 +41,4 @@ dev_single_asset_monitoring/__pycache__/strategy_test_library.cpython-314.pyc
 /current_development/__pycache__
 current_development/outputs/multiasset_signal_log.csv
 /current_development/outputs
+/multiasset_freeze_0_5/outputs
