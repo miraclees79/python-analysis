@@ -278,31 +278,41 @@ def download_csv(stooq_id) -> pd.Series | None:
     """
     Downloads daily NAV CSV for a stooq numeric fund ID.
     Returns a pd.Series indexed by date (datetime64, ascending), values = NAV.
-    Returns None on any unrecoverable failure.
     """
-
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     DATA_DIR = os.path.join(BASE_DIR, "data")
 
-   
-    path = os.path.join(DATA_DIR, f"fund_{stooq_id}.n.csv")
+    path = os.path.join(DATA_DIR, f"fund_{stooq_id}.csv")
     
+    # load_csv już: 
+    # 1. Czyści BOM (utf-8-sig)
+    # 2. Robi strip() na kolumnach
+    # 3. Konwertuje na datetime
+    # 4. Robi SET_INDEX("Data") <--- KLUCZOWE
     df = load_csv(path)
 
-    if df.empty or "Zamkniecie" not in df.columns:
-        log.warning("  stooq %s: missing Zamkniecie column or empty CSV", stooq_id)
+    # Sprawdzamy, czy load_csv nie zwróciło None
+    if df is None or df.empty:
+        log.warning(f"  stooq {stooq_id}: Failed to load or empty CSV")
         return None
 
-    df["Data"] = pd.to_datetime(df["Data"])
+    # Sprawdzamy "Zamkniecie" (teraz df ma indeks czasowy i kolumny)
+    if "Zamkniecie" not in df.columns:
+        log.warning("  stooq %s: missing Zamkniecie column", stooq_id)
+        return None
+
+    # USUWAMY linię df["Data"] = ... oraz set_index("Data") 
+    # Bo load_csv już to zrobiło!
+    
     series = (
-        df.sort_values("Data")
-        .set_index("Data")["Zamkniecie"]
+        df["Zamkniecie"]
+        .sort_index()  # Sortujemy po indeksie (czyli po dacie)
         .dropna()
-            )
+    )
 
     if len(series) < MIN_HISTORY_DAYS:
         log.warning("  stooq %s: only %d days (min %d) — skipping",
-                            stooq_id, len(series), MIN_HISTORY_DAYS)
+                    stooq_id, len(series), MIN_HISTORY_DAYS)
         return None
 
     return series

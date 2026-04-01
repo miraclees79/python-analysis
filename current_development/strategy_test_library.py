@@ -113,7 +113,7 @@ def load_csv(filename):
     
     
     try:
-        df = pd.read_csv(filename, on_bad_lines='skip', delimiter=',', decimal='.', encoding='utf-8')
+        df = pd.read_csv(filename, on_bad_lines='skip', delimiter=',', decimal='.', encoding='utf-8-sig')
     except Exception as e:
         logging.error(f" Error reading CSV file: {e}")
         return None
@@ -124,7 +124,7 @@ def load_csv(filename):
 
     # Strip whitespace and inspect column names
     df.columns = df.columns.str.strip()
-    logging.debug("Available columns after stripping:", df.columns)
+    logging.info("Available columns after stripping:", df.columns)
 
     date_column = 'Data'  # Expected date column
 

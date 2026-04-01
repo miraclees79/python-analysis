@@ -109,7 +109,7 @@ from msci_world_synthetic import (
     build_full_msci_world_extended,
     load_synthetic_from_drive,
 )
-
+from stooq_hybrid_updater import run_update
 
 # ============================================================
 # LOGGING SETUP
@@ -300,28 +300,29 @@ logging.info("=" * 80)
 
 tmp_dir = tempfile.gettempdir()
 
+run_update(get_funds=False) # load data from GDrive to /data subfolder
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
 def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
-    """Download a stooq series, clip to DATA_START, exit if mandatory and missing."""
-    url  = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
-    path = os.path.join(tmp_dir, f"ge_{label}.csv")
-    ok   = download_csv(url, path)
-    if not ok:
-        if mandatory:
-            logging.error("FAIL: %s (%s) — exiting.", label, ticker)
-            sys.exit(1)
-        logging.warning("WARN: %s (%s) — not available, skipping.", label, ticker)
-        return None
+    """
+    Load a stooq series from /data subfolder, clip to DATA_START.
+    """
+
+    path = os.path.join(DATA_DIR, f"{ticker}.csv")
+
     df = load_csv(path)
     if df is None:
         if mandatory:
             logging.error("FAIL: load_csv returned None for %s — exiting.", label)
             sys.exit(1)
-        return None
+            return None
     df = df.loc[df.index >= pd.Timestamp(DATA_START)]
     logging.info(
         "OK  : %-14s  %5d rows  %s to %s",
         label, len(df), df.index.min().date(), df.index.max().date(),
-    )
+        )
     return df
 
 # --- Shared across both modes ---
@@ -332,15 +333,15 @@ TBSP = build_and_upload(
           or GDRIVE_FOLDER_ID_DEFAULT.strip()),
       raw_filename       = "tbsp_extended_full.csv",
       combined_filename  = "tbsp_extended_combined.csv",
-      extension_ticker   = "^tbsp",
+      extension_ticker   = "tbsp",
       extension_source   = "stooq",
   )
 
-MMF  = _stooq("2720.n",  "MMF")
+MMF  = _stooq("fund_2720",  "MMF")
 
 # WIBOR 1M — used to extend MMF backwards to MMF_FLOOR
 # Not mandatory: if unavailable the MMF runs from its natural start (~1999)
-WIBOR1M = _stooq("plopln1m", "WIBOR1M", mandatory=False)
+WIBOR1M = _stooq("wibor1m", "WIBOR1M", mandatory=False)
 if WIBOR1M is None:
     logging.warning(
         "WIBOR1M (plopln1m) unavailable — MMF will not be extended. "
@@ -371,8 +372,8 @@ if PORTFOLIO_MODE == "global_equity":
     logging.info("--- Mode A: global_equity ---")
 
     WIG     = _stooq("wig",   "WIG")       # Polish broad market, 1991+
-    SPX     = _stooq("^spx",  "SP500")     # S&P 500
-    NKX     = _stooq("^nkx",   "Nikkei225")
+    SPX     = _stooq("sp500",  "SP500")     # S&P 500
+    NKX     = _stooq("nk225",   "Nikkei225")
 
     # STOXX 600: load from Drive (historical base + yfinance extension).
     # build_stoxx600() auto-selects first-build vs update mode:
