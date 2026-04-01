@@ -431,7 +431,7 @@ def _download_yfinance(ticker: str) -> pd.DataFrame | None:
 
     return None
 
-
+#### TO BE MODIFIED TO LOCAL
 def _download_stooq(ticker: str) -> pd.DataFrame | None:
     """Download daily OHLCV from stooq.pl, return stooq-format DataFrame."""
     if not _REQUESTS_AVAILABLE:

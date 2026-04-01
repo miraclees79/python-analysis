@@ -101,7 +101,7 @@ def _get_dynamic_tickers(service):
             sid = str(row['stooq_id']).lower()
             dynamic_list.append({
                 "label": f"fund_{sid}",        # Nowy format label
-                "stooq": sid,                  # Oryginalny id dla Stooq
+                "stooq": f"{sid}.n",                  # Oryginalny id dla Stooq
                 "yf": None,
                 "type": "fund_pl",
                 "knf": str(row['subfundId']),

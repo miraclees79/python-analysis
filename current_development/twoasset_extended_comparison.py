@@ -269,7 +269,7 @@ def download_all(tmp_dir):
 
     WIG   = _stooq("wig",       "WIG")
     WIG = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
-    MMF   = _stooq("fund_2720",    "MMF")
+    MMF   = _stooq("fund_2720.n",    "MMF")
     W1M   = _stooq("plopln1m",  "WIBOR1M", mandatory=False)
     PL10Y = _stooq("10yply.b",  "PL10Y")
     DE10Y = _stooq("10ydey.b",  "DE10Y")
