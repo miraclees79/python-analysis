@@ -102,7 +102,7 @@ jobs:
         id: strategy
         env:
           PYTHONIOENCODING: utf-8
-          PYTHONPATH: ${{ github.workspace }}/multiasset_freeze_0_5
+          PYTHONPATH: ${{ github.workspace }}/current_development
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           cd current_development
@@ -244,7 +244,7 @@ jobs:
         run: |
           {
             echo 'STATUS_TEXT<<ENDOFSTATUSTEXT'
-            cat multiasset_freeze_0_5/outputs/multiasset_signal_status.txt
+            cat current_development/outputs/multiasset_signal_status.txt
             echo
             echo ENDOFSTATUSTEXT
           } >> "$GITHUB_ENV"
@@ -270,7 +270,7 @@ jobs:
           cc:             ${{ secrets.NOTIFY_EMAIL_CC }}
           from:           "Multi-Asset Strategy <${{ secrets.GMAIL_USER }}>"
           body:           ${{ env.STATUS_TEXT }}
-          attachments:    multiasset_freeze_0_5/outputs/multiasset_equity_chart.png
+          attachments:    current_development/outputs/multiasset_equity_chart.png
           ignore_cert:    false
           convert_markdown: false
           priority:       normal
@@ -285,11 +285,11 @@ jobs:
         with:
           name: multiasset-outputs-${{ github.run_id }}
           path: |
-            multiasset_freeze_0_5/outputs/multiasset_signal_status.txt
-            multiasset_freeze_0_5/outputs/multiasset_signal_log.csv
-            multiasset_freeze_0_5/outputs/multiasset_equity_chart.png
-            multiasset_freeze_0_5/outputs/multiasset_signal_snapshot.json
-            multiasset_freeze_0_5/MultiassetDailyRun.log
+            current_development/outputs/multiasset_signal_status.txt
+            current_development/outputs/multiasset_signal_log.csv
+            current_development/outputs/multiasset_equity_chart.png
+            current_development/outputs/multiasset_signal_snapshot.json
+            current_development/MultiassetDailyRun.log
           retention-days: 30
 
       # ------------------------------------------------------------------
@@ -299,10 +299,10 @@ jobs:
         run: |
           MISSING=0
           for f in \
-            multiasset_freeze_0_5/outputs/multiasset_signal_snapshot.json \
-            multiasset_freeze_0_5/outputs/multiasset_signal_status.txt \
-            multiasset_freeze_0_5/outputs/multiasset_signal_log.csv \
-            multiasset_freeze_0_5/outputs/multiasset_equity_chart.png; do
+            current_development/outputs/multiasset_signal_snapshot.json \
+            current_development/outputs/multiasset_signal_status.txt \
+            current_development/outputs/multiasset_signal_log.csv \
+            current_development/outputs/multiasset_equity_chart.png; do
             if [ ! -f "$f" ]; then
               echo "MISSING: $f"
               MISSING=$((MISSING + 1))
