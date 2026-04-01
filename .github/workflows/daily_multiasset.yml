@@ -116,7 +116,7 @@ jobs:
       - name: Parse signal action
         id: parse
         run: |
-          SNAPSHOT="${{ github.workspace }}/multiasset_freeze_0_5/outputs/multiasset_signal_snapshot.json"
+          SNAPSHOT="${{ github.workspace }}/current_development/outputs/multiasset_signal_snapshot.json"
 
           if [ ! -f "$SNAPSHOT" ]; then
             echo "ERROR: multiasset_signal_snapshot.json not found at $SNAPSHOT"
@@ -199,7 +199,7 @@ jobs:
           ]
 
           for filename, mimetype in FILES:
-              path = Path("multiasset_freeze_0_5/outputs") / filename
+              path = Path("current_development/outputs") / filename
               if not path.exists():
                   print(f"SKIP (not found): {filename}", flush=True)
                   continue
