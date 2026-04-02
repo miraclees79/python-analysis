@@ -40,7 +40,8 @@ jobs:
           MIN_INDEX: 1000
           MAX_INDEX: 6000 
           CSV_BASE_URL: ${{ secrets.CSV_BASE_URL }}
-          FOLDER_NAME: ${{ secrets.FOLDER_NAME }} 
+          FOLDER_NAME: ${{ secrets.FOLDER_NAME }}
+          GDRIVE_FOLDER_ID:  ${{ secrets.GDRIVE_FOLDER_ID }} 
           
         run: |
           python current_development/download-oceny_v4-fi.py
