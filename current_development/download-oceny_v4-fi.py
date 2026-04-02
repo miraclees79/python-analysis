@@ -14,6 +14,8 @@ from googleapiclient.http import MediaIoBaseUpload
 
 import tempfile
 import logging
+from strategy_test_library import (load_csv, load_stooq_local)
+from stooq_hybrid_updater import run_update
 
 # Setup logging
 LOG_FILE = "download.log"
@@ -66,68 +68,7 @@ def get_folder_id(name):
 # List to store all results
 all_results = []
 
-def download_csv(url, filename, numer):
-    try:
-        headers = {"User-Agent": random.choice(USER_AGENTS)}
-        logging.info(f"Downloading {url} with User-Agent: {headers['User-Agent']}")
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
 
-        if not response.content.strip():
-            logging.warning(f"The file from {url} is empty.")
-            return False
-
-        # Save file locally
-        with open(filename, "wb") as f:
-            f.write(response.content)
-
-        logging.info(f"Downloaded and saved: {filename}")
-
-        # Build Drive file name
-        file_name = f"historia{numer}.csv"
-
-        # Locate folder
-        #folder_name = "Dane"
-        #query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        #res = drive_service.files().list(q=query, fields='files(id)').execute()
-        #items = res.get('files', [])
-
-        #if not items:
-        #    logging.error(f"Folder '{folder_name}' not found in Drive.")
-        #    return False
-
-        #folder_id = items[0]['id']
-        folder_id = FOLDER_ID
-
-        # Check if file exists in folder
-        query = f"name='{file_name}' and '{folder_id}' in parents and trashed=false"
-        res = drive_service.files().list(q=query, fields='files(id)').execute()
-        items = res.get('files', [])
-
-        with open(filename, "rb") as f:
-            media = MediaIoBaseUpload(f, mimetype='text/csv', resumable=True)
-
-            if items:
-                file_id = items[0]['id']
-                drive_service.files().update(fileId=file_id, media_body=media).execute()
-                logging.info(f"Updated file: {file_name}")
-            else:
-                metadata = {'name': file_name, 'parents': [folder_id]}
-                drive_service.files().create(body=metadata, media_body=media).execute()
-                logging.info(f"Created file: {file_name}")
-
-        return True
-
-    except requests.exceptions.Timeout:
-        logging.error(f"Timeout while downloading {url}")
-    except requests.exceptions.HTTPError as e:
-        logging.error(f"HTTP error: {e}")
-    except Exception as e:
-        logging.error(f"Unexpected error: {e}")
-
-    return False
-    
 
 # Function to calculate returns for given periods
 def calculate_returns(series, periods):
@@ -142,72 +83,7 @@ def calculate_22_day_statistics(returns_22):
     first_quartile = np.percentile(last_66_returns, 25)
     return min_return, max_return, first_quartile
 
-def load_csv(filename):
-    try:
-        df = pd.read_csv(filename, on_bad_lines='skip', delimiter=',', decimal='.', encoding='utf-8')
-    except Exception as e:
-        logging.error(f"❌ Error reading CSV file: {e}")
-        return None
 
-    if df.empty or df.columns.size == 0:
-        logging.error("❌ CSV file is empty or corrupted.")
-        return None
-
-    # Strip whitespace and inspect column names
-    df.columns = df.columns.str.strip()
-    print("Available columns after stripping:", df.columns)
-
-    date_column = 'Data'  # Expected date column
-
-    # Double-check the column names for hidden characters
-    if date_column not in df.columns:
-        exact_matches = [col for col in df.columns if col.strip() == date_column]
-        if exact_matches:
-            date_column = exact_matches[0]  # If a match is found, update the column name
-            logging.info(f"ℹ️ Using corrected column name: '{date_column}'")
-        else:
-            # If still not found, display and exit
-            logging.error(f"❌ Column '{date_column}' not found after processing. Available columns: {df.columns}")
-            return None
-
-    # Check if the date column contains valid data
-    if df[date_column].isnull().all():
-        logging.error(f"❌ Column '{date_column}' contains only NaN values.")
-        return None
-
-    # Convert to datetime, handling errors and dropping invalid dates
-    df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
-    df.dropna(subset=[date_column], inplace=True)
-
-    # Check if there are still valid dates left
-    if df.empty:
-        logging.error("❌ No valid dates after conversion. Data is discarded.")
-        return None
-
-    # Sort by date and set as index
-    df = df.sort_values(by=date_column).set_index(date_column)
-
-    # Check 1: Discard the data if the newest observation is older than 10 days
-    newest_date = df.index.max()
-    if (dt.datetime.now() - newest_date).days > 10:
-        logging.warning(f"⚠️ The newest observation ({newest_date}) is older than 10 days. Data is discarded.")
-        return None
-
-    # Check 2: Discard data before the most recent break longer than 30 days
-    date_diffs = df.index.to_series().diff().dt.days  # Calculate gaps in the date series
-    breaks = date_diffs[date_diffs > 30].index  # Identify breaks longer than 30 days
-
-    if not breaks.empty:
-        # Keep only the data from the newest observation to the most recent break
-        last_valid_date = breaks[-1]
-        df = df.loc[last_valid_date:]  # Slice the DataFrame from the break to the end
-        logging.info(f"ℹ️ Data contains a break longer than 30 days. Keeping data from {last_valid_date} onward.")
-    
-    logging.info("✅ CSV file loaded successfully and processed.")
-
-
-    
-    return df
     
 
 # Comparison with index
@@ -472,13 +348,13 @@ def process_data(url, numer, filename, index1_df, index2_df, index3_df, index4_d
 
   
   # Loop through each XXXX value
-min_index = int(os.getenv('MIN_INDEX'))
-# min_index = 1007
-max_index = int(os.getenv('MAX_INDEX'))
-# max_index = 1008
+#min_index = int(os.getenv('MIN_INDEX'))
+min_index = 1000
+#max_index = int(os.getenv('MAX_INDEX'))
+max_index = 6000
 
 
-
+run_update(get_funds=True)
 
 
 credentials_path=os.path.join(tmp_dir, "credentials.json")
@@ -496,6 +372,10 @@ download_csv('https://stooq.pl/q/d/l/?s=^gpwbbwz&i=d', csv_filename_wbbwz, 'wbbw
 
 # convert to dataframes
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
+
 INDEX_W20 = load_csv(csv_filename_w20tr)
 INDEX_M40 = load_csv(csv_filename_m40tr)
 INDEX_S80 = load_csv(csv_filename_s80tr)
@@ -505,11 +385,13 @@ INDEX_WBBW = load_csv(csv_filename_wbbwz)
 # separate download
 
 
+
 for xxxx in range(min_index, max_index+1):
-    csv_url = csv_base_url.format(xxxx)
+    #csv_url = csv_base_url.format(xxxx)
+    fund_path = os.path.join(DATA_DIR,f"fund_{xxxx}")
     
 
-    logging.info(f"Processing: {csv_url}")
+    logging.info(f"Processing: {xxxx}")
     result = process_data(csv_url, xxxx, csv_filename, INDEX_W20, INDEX_M40, INDEX_S80, INDEX_WBBW)
 
     all_results.append(result)
