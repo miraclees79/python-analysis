@@ -35,17 +35,8 @@ logging.getLogger().addHandler(console_handler)
 tmp_dir = tempfile.gettempdir()
 logging.info(f"Temporary directory: {tmp_dir}")
 
-# Create a temporary file inside the temp directory # Filepath for CSV
-csv_filename = os.path.join(tmp_dir, "data.csv")
-csv_filename_w20tr = os.path.join(tmp_dir, "w20tr.csv")
-csv_filename_m40tr = os.path.join(tmp_dir, "m40tr.csv")
-csv_filename_s80tr = os.path.join(tmp_dir, "s80tr.csv")
-csv_filename_wbbwz = os.path.join(tmp_dir, "wbbwz.csv")
 
-# csv_base_url = "https://stooq.pl/q/d/l/?s={}.n&i=d"
 
-# Base URLs
-csv_base_url = os.getenv('CSV_BASE_URL')
 
 
 # List of User-Agent headers for different browsers
@@ -233,10 +224,10 @@ def compare_to_index_portfolio(filename, index1_df, index2_df, index3_df):
 
 
 # Main function to process the data
-def process_data(url, numer, filename, index1_df, index2_df, index3_df, index4_df):
+def process_data( numer, filename, index1_df, index2_df, index3_df, index4_df):
     
     # download the fund data for analysis
-    download_csv(url, filename, numer)
+    
     data_series_df = load_csv(filename)
  
     
@@ -365,21 +356,21 @@ drive_service = build('drive', 'v3', credentials=creds)
 FOLDER_ID = get_folder_id("Dane")
 
 # download indexes for comparison
-download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr, 'w20t')
-download_csv('https://stooq.pl/q/d/l/?s=mwig40tr&i=d', csv_filename_m40tr, 'm40t')
-download_csv('https://stooq.pl/q/d/l/?s=swig80tr&i=d', csv_filename_s80tr, 's80t')
-download_csv('https://stooq.pl/q/d/l/?s=^gpwbbwz&i=d', csv_filename_wbbwz, 'wbbw')
+#download_csv('https://stooq.pl/q/d/l/?s=wig20tr&i=d', csv_filename_w20tr, 'w20t')
+#download_csv('https://stooq.pl/q/d/l/?s=mwig40tr&i=d', csv_filename_m40tr, 'm40t')
+#download_csv('https://stooq.pl/q/d/l/?s=swig80tr&i=d', csv_filename_s80tr, 's80t')
+#download_csv('https://stooq.pl/q/d/l/?s=^gpwbbwz&i=d', csv_filename_wbbwz, 'wbbw')
 
-# convert to dataframes
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
+DATA_START     = "1990-01-01"
 
-
-INDEX_W20 = load_csv(csv_filename_w20tr)
-INDEX_M40 = load_csv(csv_filename_m40tr)
-INDEX_S80 = load_csv(csv_filename_s80tr)
-INDEX_WBBW = load_csv(csv_filename_wbbwz)
+INDEX_W20 =  load_stooq_local("wig20tr",       "WIG20TR",     DATA_DIR, DATA_START)
+INDEX_M40 = load_stooq_local("mwig40tr",       "MWIG40TR",     DATA_DIR, DATA_START)
+INDEX_S80 =  load_stooq_local("swig80tr",       "SWIG80TR",     DATA_DIR, DATA_START)
+INDEX_WBBW =  load_stooq_local("wbbw",       "WBBW",     DATA_DIR, DATA_START)
 
 
 # separate download
@@ -387,23 +378,21 @@ INDEX_WBBW = load_csv(csv_filename_wbbwz)
 
 
 for xxxx in range(min_index, max_index+1):
-    #csv_url = csv_base_url.format(xxxx)
-    fund_path = os.path.join(DATA_DIR,f"fund_{xxxx}")
     
+    
+    fund_path = os.path.join(DATA_DIR, f"fund_{xxxx}")
+
+    # Sprawdzenie czy ścieżka (plik lub folder) istnieje
+    if not os.path.exists(fund_path):
+        logging.warning(f"⚠️ Pomijanie: Plik {fund_path} nie istnieje.")
+        continue  # Przejdź do następnego xxxx w pętli
 
     logging.info(f"Processing: {xxxx}")
-    result = process_data(csv_url, xxxx, csv_filename, INDEX_W20, INDEX_M40, INDEX_S80, INDEX_WBBW)
+    result = process_data(xxxx, fund_path, INDEX_W20, INDEX_M40, INDEX_S80, INDEX_WBBW)
 
     all_results.append(result)
   
-    # Delete CSV file after processing
-    if os.path.exists(csv_filename):
-        os.remove(csv_filename)
-    
-    delay = random.uniform(0.3, 0.7)
 
-    logging.info(f"Sleeping for {delay:.2f} seconds...")
-    time.sleep(delay)
 
     logging.info("Done!")  # Optional delay
     

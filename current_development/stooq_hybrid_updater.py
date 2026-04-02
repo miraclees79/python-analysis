@@ -54,6 +54,7 @@ DEFAULT_TICKERS = [
     {"label": "DE10Y", "stooq": "10YDEY.B", "yf": None, "type": "interest_rate", "knf": None},
     {"label": "PL10Y", "stooq": "10YPLY.B", "yf": None, "type": "interest_rate", "knf": None},
     {"label": "fund_2720", "stooq": "2720.n", "yf": None, "type": "index_pl", "knf": None},
+    {"label": "WBBW", "stooq": "^GPWBBWZ", "yf": None, "type": "index_pl", "knf": None},
 ]
 # fund_2720 used as MMF - classed as index_pl to ensure it always loads
 
