@@ -407,7 +407,7 @@ if PORTFOLIO_MODE == "global_equity":
 elif PORTFOLIO_MODE == "msci_world":
     logging.info("--- Mode B: msci_world ---")
 
-    WIG     = _stooq("wig",   "WIG")       # Polish broad market, 1991+WIG   = load_stooq_local("wig",       "WIG",     DATA_DIR, DATA_START)
+    WIG     = load_stooq_local("wig",       "WIG",     DATA_DIR, DATA_START)       # Polish broad market, 1991+WIG   = load_stooq_local("wig",       "WIG",     DATA_DIR, DATA_START)
     WIG   = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
     
     # MSCI World combined series from Google Drive

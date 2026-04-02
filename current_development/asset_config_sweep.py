@@ -224,7 +224,7 @@ WINDOW_CONFIGS = [
 # ---------------------------------------------------------------------------
 POSITION_MODE     = "full"
 VOL_WINDOW        = 20
-FORCE_FILTER_MODE = ["ma", "mom"]
+FORCE_FILTER_MODE = ["ma", "mom", "mom_blend"]
 OBJECTIVE         = "calmar"
 
 X_GRID      = [0.08, 0.10, 0.12, 0.15, 0.20]
@@ -234,6 +234,32 @@ SLOW_GRID   = [150, 200, 250]
 TV_GRID     = [0.08, 0.10, 0.12, 0.15, 0.20]
 SL_GRID     = [0.05, 0.08, 0.10, 0.15]
 MOM_LB_GRID = [252]
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# STOP MODE CONFIGURATIONS  ← ADD THIS BLOCK after the existing grids
+# ---------------------------------------------------------------------------
+
+N_ATR_GRID     = [0.08, 0.10, 0.12, 0.15, 0.20]   # same scale as X_GRID
+ATR_WINDOW     = 20
+
+STOP_MODE_CONFIGS = [
+    {
+        "stop_mode":    "fixed",
+        "use_atr_stop": False,
+        "atr_window":   ATR_WINDOW,
+        "N_atr_grid":   None,
+    },
+    {
+        "stop_mode":    "atr",
+        "use_atr_stop": True,
+        "atr_window":   ATR_WINDOW,
+        "N_atr_grid":   N_ATR_GRID,
+    },
+]
 
 # ---------------------------------------------------------------------------
 # Data floor dates
@@ -330,21 +356,18 @@ def _extract_window_rows(
     train_years: int,
     test_years:  int,
     wf_results:  pd.DataFrame,
+    stop_mode:   str = "fixed",       # ← NEW PARAMETER
 ) -> list[dict]:
-    """
-    Extract one dict per WF window from wf_results, capturing:
-      OOS CAGR / Sharpe / MaxDD / CalMAR for the window
-      Chosen filter_mode
-      Best params: X, Y, fast, slow, stop_loss
-      Whether any parameter changed vs the previous window
-    """
     rows = []
     prev_params = None
+
+    use_atr = stop_mode == "atr"
+    stop_col = "N_atr" if use_atr else "X"   # ← pick correct column
 
     for idx, row in wf_results.iterrows():
         cur_params = {
             "filter_mode": str(row.get("filter_mode", "")),
-            "X":           float(row.get("X",          np.nan)),
+            "stop_param":  float(row.get(stop_col, np.nan)),   # ← unified name
             "Y":           float(row.get("Y",          np.nan)),
             "fast":        int(row.get("fast",          0)),
             "slow":        int(row.get("slow",          0)),
@@ -359,18 +382,17 @@ def _extract_window_rows(
             "asset":         asset_name,
             "train_years":   train_years,
             "test_years":    test_years,
+            "stop_mode":     stop_mode,              # ← NEW
             "window_idx":    idx,
             "train_start":   str(pd.Timestamp(row["TrainStart"]).date()),
             "test_start":    str(pd.Timestamp(row["TestStart"]).date()),
             "test_end":      str(pd.Timestamp(row["TestEnd"]).date()),
-            # OOS metrics for this window
             "win_cagr":      round(float(row.get("CAGR",   np.nan)) * 100, 2),
             "win_sharpe":    round(float(row.get("Sharpe", np.nan)),        3),
             "win_maxdd":     round(float(row.get("MaxDD",  np.nan)) * 100,  2),
             "win_calmar":    round(float(row.get("CalMAR", np.nan)),         3),
-            # Filter and params
             "filter_mode":   cur_params["filter_mode"],
-            "X":             cur_params["X"],
+            "stop_param":    cur_params["stop_param"],  # ← replaces "X"
             "Y":             cur_params["Y"],
             "fast":          cur_params["fast"],
             "slow":          cur_params["slow"],
@@ -466,23 +488,23 @@ def _is_candidate(row: dict) -> bool:
 # ============================================================
 
 def run_config(
-    asset_name:  str,
-    df:          pd.DataFrame,
-    cash_df:     pd.DataFrame,
-    train_years: int,
-    test_years:  int,
-    n_mc:        int,
-    run_regime:  bool,
-    n_jobs:      int,
+    asset_name:   str,
+    df:           pd.DataFrame,
+    cash_df:      pd.DataFrame,
+    train_years:  int,
+    test_years:   int,
+    stop_cfg:     dict,              # ← NEW: replaces implicit fixed-stop
+    n_mc:         int,
+    run_regime:   bool,
+    n_jobs:       int,
 ) -> tuple[dict, list[dict]]:
-    """
-    Run one (asset, train_years, test_years) configuration.
 
-    Returns:
-        summary_row  : dict       — one row for sweep_results CSV
-        window_rows  : list[dict] — one row per WF window for sweep_windows CSV
-    """
-    label = f"{asset_name} [{train_years}+{test_years}]"
+    stop_mode    = stop_cfg["stop_mode"]
+    use_atr_stop = stop_cfg["use_atr_stop"]
+    atr_window   = stop_cfg["atr_window"]
+    N_atr_grid   = stop_cfg["N_atr_grid"]
+
+    label = f"{asset_name} [{train_years}+{test_years}] [{stop_mode}]"  # ← include stop_mode
     logging.info("")
     logging.info("=" * 70)
     logging.info("CONFIG: %s", label)
@@ -492,6 +514,7 @@ def run_config(
         "asset":       asset_name,
         "train_years": train_years,
         "test_years":  test_years,
+        "stop_mode":   stop_mode,    # ← NEW column
         "error_msg":   "",
         "candidate":   False,
     }
@@ -516,18 +539,23 @@ def run_config(
             objective             = OBJECTIVE,
             n_jobs                = n_jobs,
             fast_mode             = True,
+            use_atr_stop          = use_atr_stop,      # ← NEW
+            N_atr_grid            = N_atr_grid,         # ← NEW (None for fixed)
+            atr_window            = atr_window,         # ← NEW
         )
     except Exception as exc:
         logging.error("%s: walk-forward raised exception — %s", label, exc)
         summary["error_msg"] = f"wf_exception: {exc}"
         return summary, []
 
+    # ... rest of run_config is identical, just pass stop_mode to
+    # _extract_window_rows and carry it in summary ...
+
     if wf_equity.empty or wf_results.empty:
         logging.warning("%s: walk-forward produced no results.", label)
         summary["error_msg"] = "wf_empty"
         return summary, []
 
-    # ── OOS aggregate metrics ─────────────────────────────────────────────
     oos_metrics = {k: float(v) for k, v in compute_metrics(wf_equity).items()}
     summary.update({
         "oos_cagr":     round(oos_metrics["CAGR"]    * 100, 2),
@@ -540,13 +568,7 @@ def run_config(
         "oos_start":    str(wf_results["TestStart"].min().date()),
         "oos_end":      str(wf_results["TestEnd"].max().date()),
     })
-    logging.info(
-        "  WF complete: CAGR=%+.1f%%  CalMAR=%.2f  MaxDD=%.1f%%  Sharpe=%.2f",
-        summary["oos_cagr"], summary["oos_calmar"],
-        summary["oos_maxdd"], summary["oos_sharpe"],
-    )
 
-    # ── B&H comparison ───────────────────────────────────────────────────
     oos_start = wf_results["TestStart"].min()
     oos_end   = wf_results["TestEnd"].max()
     bh_equity = None
@@ -569,8 +591,11 @@ def run_config(
         for col in ("bh_cagr", "bh_sharpe", "bh_maxdd", "bh_calmar", "cagr_vs_bh"):
             summary[col] = np.nan
 
-    # ── Per-window summary ────────────────────────────────────────────────
-    window_rows = _extract_window_rows(asset_name, train_years, test_years, wf_results)
+    # ── Per-window rows ───────────────────────────────────────────────────
+    window_rows = _extract_window_rows(
+        asset_name, train_years, test_years, wf_results,
+        stop_mode=stop_mode,         # ← pass stop_mode
+    )
 
     if window_rows:
         win_cagrs = [w["win_cagr"] for w in window_rows if not np.isnan(w["win_cagr"])]
@@ -596,9 +621,11 @@ def run_config(
                     "dominant_filter", "filter_consistency"):
             summary[col] = np.nan
 
-    # ── Monte Carlo parameter robustness ─────────────────────────────────
-    # Column layout is fixed regardless of whether MC runs, so the CSV schema
-    # is always identical (no missing columns in skipped or errored rows).
+    # ── MC robustness ─────────────────────────────────────────────────────
+    # (MC columns setup, _set_mc_nan, and the MC run block are all unchanged)
+    # mc_results from extract_best_params_from_wf_results already handles
+    # ATR mode via the use_atr_stop flag stored in wf_results — no change needed
+
     MC_METRICS  = ["cagr", "sharpe", "maxdd", "calmar"]
     MC_STATS    = ["p05", "p25", "median", "p75", "p95", "p_worse"]
 
@@ -639,34 +666,18 @@ def run_config(
             summary["mc_n_samples"] = len(mc_df)
             summary["mc_p_loss"]    = round(float(mc_sum.get("p_loss", np.nan)), 4)
 
-            # Full p05/p25/median/p75/p95 distribution for each metric
-            METRIC_KEY_MAP = {   # analyze_robustness uses these keys
-                "cagr":   "CAGR",
-                "sharpe": "Sharpe",
-                "maxdd":  "MaxDD",
-                "calmar": "CalMAR",
-            }
-            STAT_KEY_MAP = {
-                "p05":    "p05",
-                "p25":    "p25",
-                "median": "median",
-                "p75":    "p75",
-                "p95":    "p95",
-                "p_worse": "p_worse_than_baseline",
-            }
+            METRIC_KEY_MAP = {"cagr": "CAGR", "sharpe": "Sharpe", "maxdd": "MaxDD", "calmar": "CalMAR"}
+            STAT_KEY_MAP   = {"p05": "p05", "p25": "p25", "median": "median",
+                              "p75": "p75", "p95": "p95", "p_worse": "p_worse_than_baseline"}
             for m in MC_METRICS:
                 ms = mc_sum.get(METRIC_KEY_MAP[m], {})
                 for s in MC_STATS:
-                    summary[f"mc_{m}_{s}"] = round(
-                        float(ms.get(STAT_KEY_MAP[s], np.nan)), 4
-                    )
+                    summary[f"mc_{m}_{s}"] = round(float(ms.get(STAT_KEY_MAP[s], np.nan)), 4)
 
             logging.info(
                 "  MC (%d samples): verdict=%s  p05_CAGR=%.2f%%  p_loss=%.1f%%",
-                len(mc_df),
-                summary["mc_verdict"],
-                summary["mc_cagr_p05"] * 100,
-                summary["mc_p_loss"] * 100,
+                len(mc_df), summary["mc_verdict"],
+                summary["mc_cagr_p05"] * 100, summary["mc_p_loss"] * 100,
             )
 
         except Exception as exc:
@@ -682,6 +693,7 @@ def run_config(
         _set_mc_nan()
 
     # ── Regime decomposition ─────────────────────────────────────────────
+    # unchanged — regime is independent of stop mode
     if run_regime:
         if bh_equity is not None:
             try:
@@ -694,19 +706,13 @@ def run_config(
                     ]}
                 )
                 summary.update(_extract_regime_stats(regime_results))
-                logging.info("  Regime decomp complete.")
             except Exception as exc:
                 logging.warning("%s: regime decomposition failed (non-fatal) — %s", label, exc)
-        else:
-            logging.warning(
-                "%s: skipping regime decomp — bh_equity unavailable.", label
-            )
 
-    # ── Candidate flag ────────────────────────────────────────────────────
     summary["candidate"] = _is_candidate(summary)
 
     logging.info(
-        "RESULT  %-26s  CAGR=%+5.1f%%  CalMAR=%5.2f  MaxDD=%5.1f%%  "
+        "RESULT  %-36s  CAGR=%+5.1f%%  CalMAR=%5.2f  MaxDD=%5.1f%%  "
         "MC=%-8s  candidate=%s",
         label,
         summary.get("oos_cagr",   np.nan),
@@ -716,8 +722,6 @@ def run_config(
         summary["candidate"],
     )
     return summary, window_rows
-
-
 # ============================================================
 # MAIN SWEEP LOOP
 # ============================================================
@@ -727,30 +731,23 @@ def run_sweep(
     n_mc:       int,
     run_regime: bool,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Run the full sweep over all (asset, window_config) pairs.
 
-    Returns:
-        summary_df  : pd.DataFrame  — one row per config
-        windows_df  : pd.DataFrame  — one row per WF window
-    """
     tmp_dir = tempfile.mkdtemp()
     n_jobs  = _cpu_jobs()
-    total   = len(assets) * len(WINDOW_CONFIGS)
+    # Total now: assets × window configs × stop modes
+    total   = len(assets) * len(WINDOW_CONFIGS) * len(STOP_MODE_CONFIGS)
 
-
- 
     logging.info("=" * 80)
     logging.info("ASSET CONFIG SWEEP  START: %s", dt.datetime.now())
-    logging.info("  Assets      : %s", assets)
+    logging.info("  Assets       : %s", assets)
     logging.info("  Window configs: %s", WINDOW_CONFIGS)
-    logging.info("  n_mc        : %d", n_mc)
-    logging.info("  run_regime  : %s", run_regime)
-    logging.info("  n_jobs      : %d", n_jobs)
+    logging.info("  Stop modes   : %s", [c["stop_mode"] for c in STOP_MODE_CONFIGS])
+    logging.info("  n_mc         : %d", n_mc)
+    logging.info("  run_regime   : %s", run_regime)
+    logging.info("  n_jobs       : %d", n_jobs)
     logging.info("  Total configs: %d", total)
     logging.info("=" * 80)
 
-    # Cash series shared across all assets and windows
     logging.info("Loading MMF cash series ...")
     cash_df = _load_cash(tmp_dir)
     if cash_df is None:
@@ -762,8 +759,7 @@ def run_sweep(
     run_count     = 0
 
     tmp_dir = tempfile.gettempdir()
-
-    run_update(get_funds=False) # load data from GDrive to /data subfolder
+    run_update(get_funds=False)
 
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -775,49 +771,52 @@ def run_sweep(
         df = _load_asset(asset_name, tmp_dir)
         if df is None:
             logging.warning(
-                "  Skipping all %d window configs for %s — data unavailable.",
-                len(WINDOW_CONFIGS), asset_name,
+                "  Skipping all configs for %s — data unavailable.",
+                asset_name,
             )
             for train_y, test_y in WINDOW_CONFIGS:
-                all_summaries.append({
-                    "asset":       asset_name,
-                    "train_years": train_y,
-                    "test_years":  test_y,
-                    "error_msg":   "data_unavailable",
-                    "candidate":   False,
-                })
+                for stop_cfg in STOP_MODE_CONFIGS:
+                    all_summaries.append({
+                        "asset":       asset_name,
+                        "train_years": train_y,
+                        "test_years":  test_y,
+                        "stop_mode":   stop_cfg["stop_mode"],
+                        "error_msg":   "data_unavailable",
+                        "candidate":   False,
+                    })
             continue
 
         for train_years, test_years in WINDOW_CONFIGS:
-            run_count += 1
-            logging.info(
-                "  [%d/%d]  %s  [%d+%d] ...",
-                run_count, total, asset_name, train_years, test_years,
-            )
-            summary, win_rows = run_config(
-                asset_name  = asset_name,
-                df          = df,
-                cash_df     = cash_df,
-                train_years = train_years,
-                test_years  = test_years,
-                n_mc        = n_mc,
-                run_regime  = run_regime,
-                n_jobs      = n_jobs,
-            )
-            all_summaries.append(summary)
-            all_windows.extend(win_rows)
+            for stop_cfg in STOP_MODE_CONFIGS:   # ← NEW inner loop
+                run_count += 1
+                logging.info(
+                    "  [%d/%d]  %s  [%d+%d]  [%s] ...",
+                    run_count, total, asset_name,
+                    train_years, test_years, stop_cfg["stop_mode"],
+                )
+                summary, win_rows = run_config(
+                    asset_name  = asset_name,
+                    df          = df,
+                    cash_df     = cash_df,
+                    train_years = train_years,
+                    test_years  = test_years,
+                    stop_cfg    = stop_cfg,      # ← pass stop config
+                    n_mc        = n_mc,
+                    run_regime  = run_regime,
+                    n_jobs      = n_jobs,
+                )
+                all_summaries.append(summary)
+                all_windows.extend(win_rows)
 
     summary_df = pd.DataFrame(all_summaries)
     windows_df = pd.DataFrame(all_windows)
 
-    # Sort: candidates first, then CalMAR descending
     if not summary_df.empty and "oos_calmar" in summary_df.columns:
         summary_df = summary_df.sort_values(
             ["candidate", "oos_calmar"], ascending=[False, False]
         ).reset_index(drop=True)
 
     return summary_df, windows_df
-
 
 # ============================================================
 # REPORTING AND SAVING
@@ -858,22 +857,24 @@ def _print_sweep_summary(summary_df: pd.DataFrame) -> None:
     logging.info("%s", sep)
 
     if not candidates.empty:
-        for _, r in candidates.iterrows():
-            p05_pct = (
-                round(r.get("mc_cagr_p05", np.nan) * 100, 1)
-                if not np.isnan(r.get("mc_cagr_p05", np.nan)) else np.nan
-            )
-            logging.info(
-                "  ✓  %-12s [%d+%d]  CAGR=%+5.1f%%  CalMAR=%5.2f  MaxDD=%5.1f%%  "
-                "MC=%-8s  p05=%.1f%%  filter=%s(%.0f%%)",
-                r["asset"], r["train_years"], r["test_years"],
-                r.get("oos_cagr",          np.nan),
-                r.get("oos_calmar",         np.nan),
-                r.get("oos_maxdd",          np.nan),
-                r.get("mc_verdict",         "N/A"),
-                p05_pct,
-                r.get("dominant_filter",    "?"),
-                r.get("filter_consistency", np.nan),
+        for stop_mode, grp in candidates.groupby("stop_mode"):
+            logging.info("  Stop mode: %s", stop_mode)
+            for _, r in grp.iterrows():
+                p05_pct = (
+                    round(r.get("mc_cagr_p05", np.nan) * 100, 1)
+                    if not np.isnan(r.get("mc_cagr_p05", np.nan)) else np.nan
+                )
+                logging.info(
+                    "    ✓  %-12s [%d+%d]  CAGR=%+5.1f%%  CalMAR=%5.2f  MaxDD=%5.1f%%  "
+                    "MC=%-8s  p05=%.1f%%  filter=%s(%.0f%%)",
+                    r["asset"], r["train_years"], r["test_years"],
+                    r.get("oos_cagr",          np.nan),
+                    r.get("oos_calmar",         np.nan),
+                    r.get("oos_maxdd",          np.nan),
+                    r.get("mc_verdict",         "N/A"),
+                    p05_pct,
+                    r.get("dominant_filter",    "?"),
+                    r.get("filter_consistency", np.nan),
             )
     else:
         logging.info("  No configurations passed all criteria.")
