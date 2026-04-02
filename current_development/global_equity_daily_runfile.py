@@ -236,55 +236,60 @@ logging.info("=" * 80)
 
 tmp_dir = tempfile.gettempdir()
 
-def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
-    """Download a stooq series, clip to DATA_START, exit if mandatory and missing."""
-    url  = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
-    path = os.path.join(tmp_dir, f"ge_{label}.csv")
-    ok   = download_csv(url, path)
-    if not ok:
-        if mandatory:
-            logging.error("FAIL: %s (%s) — exiting.", label, ticker)
-            sys.exit(1)
-        logging.warning("WARN: %s (%s) — not available, skipping.", label, ticker)
-        return None
-    df = load_csv(path)
-    if df is None:
-        if mandatory:
-            logging.error("FAIL: load_csv returned None for %s — exiting.", label)
-            sys.exit(1)
-        return None
-    df = df.loc[df.index >= pd.Timestamp(DATA_START)]
-    logging.info(
-        "OK  : %-14s  %5d rows  %s to %s",
-        label, len(df), df.index.min().date(), df.index.max().date(),
-    )
-    return df
+run_update(get_funds=False) # load data from GDrive to /data subfolder
 
-# --- Shared across both modes ---
-TBSP = _stooq("^tbsp",   "TBSP")
-MMF  = _stooq("2720.n",  "MMF")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
+
+# TBSP backcast (stooq ^tbsp extension, generic Date/Close format)
+TBSP = build_and_upload(
+      folder_id          = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()
+          or GDRIVE_FOLDER_ID_DEFAULT.strip()),
+      raw_filename       = "tbsp_extended_full.csv",
+      combined_filename  = "tbsp_extended_combined.csv",
+      extension_ticker   = "tbsp",
+      extension_source   = "stooq",
+  )
+
+MMF  = load_stooq_local("fund_2720",  "MMF", DATA_DIR, DATA_START)
 
 # WIBOR 1M — used to extend MMF backwards to MMF_FLOOR
 # Not mandatory: if unavailable the MMF runs from its natural start (~1999)
-WIBOR1M = _stooq("plopln1m", "WIBOR1M", mandatory=False)
+WIBOR1M = load_stooq_local("wibor1m", "WIBOR1M", DATA_DIR, DATA_START, mandatory=False)
 if WIBOR1M is None:
     logging.warning(
         "WIBOR1M (plopln1m) unavailable — MMF will not be extended. "
         "IS windows before 1999 will use ret_mmf=0 for cash returns."
     )
 
+# --- Extended MMF (both modes) ---
+# Chain-link WIBOR 1M backwards from first real MMF observation to MMF_FLOOR.
+# This gives realistic ~18-25% p.a. cash returns for 1994-1999 IS windows
+# in Mode A (global_equity), where WIG IS data goes back to 1994.
+if WIBOR1M is not None:
+    MMF_EXT = build_mmf_extended(MMF, WIBOR1M, floor_date=MMF_FLOOR)
+    logging.info(
+        "MMF extended: %s to %s (%d rows total; original MMF from %s)",
+        MMF_EXT.index.min().date(), MMF_EXT.index.max().date(),
+        len(MMF_EXT), MMF.index.min().date(),
+    )
+else:
+    MMF_EXT = MMF   # no extension available; falls back to original series
+
 # --- FX rates (downloaded always; applied only when FX_HEDGED=False) ---
-USDPLN = _stooq("usdpln", "USDPLN")
-EURPLN = _stooq("eurpln", "EURPLN")
-JPYPLN = _stooq("jpypln", "JPYPLN")
+USDPLN = load_stooq_local("usdpln", "USDPLN", DATA_DIR, DATA_START)
+EURPLN = load_stooq_local("eurpln", "EURPLN", DATA_DIR, DATA_START)
+JPYPLN = load_stooq_local("jpypln", "JPYPLN", DATA_DIR, DATA_START)
 
 # --- Mode-specific downloads ---
 if PORTFOLIO_MODE == "global_equity":
     logging.info("--- Mode A: global_equity ---")
 
-    WIG     = _stooq("wig",   "WIG")       # Polish broad market, 1991+
-    SPX     = _stooq("^spx",  "SP500")     # S&P 500
-    NKX     = _stooq("^nkx",   "Nikkei225")
+    WIG   = load_stooq_local("wig",       "WIG",     DATA_DIR, DATA_START)
+    WIG   = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
+    SPX     = load_stooq_local("sp500",  "SP500", DATA_DIR, DATA_START)     # S&P 500
+    NKX     = load_stooq_local("nk225",   "Nikkei225", DATA_DIR, DATA_START)
 
     # STOXX 600: load from Drive (historical base + yfinance extension).
     # build_stoxx600() auto-selects first-build vs update mode:
@@ -300,7 +305,13 @@ if PORTFOLIO_MODE == "global_equity":
             "Set GDRIVE_FOLDER_ID_DEFAULT or the env var."
         )
         sys.exit(1)
-    STOXX600 = build_stoxx600(folder_id=_stoxx_folder)
+    # STOXX 600 (yfinance ^STOXX extension, generic Date/Close format)
+    STOXX600 = build_and_upload(
+        folder_id          = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()  or GDRIVE_FOLDER_ID_DEFAULT.strip()),
+        raw_filename       = "stoxx600.csv",
+        combined_filename  = "stoxx600_combined.csv",
+        extension_ticker   = "^STOXX",
+    )
     if STOXX600 is None:
         logging.error(
             "FAIL: STOXX 600 build/update failed. "
@@ -323,35 +334,38 @@ if PORTFOLIO_MODE == "global_equity":
 elif PORTFOLIO_MODE == "msci_world":
     logging.info("--- Mode B: msci_world ---")
 
-    WIG20TR  = _stooq("wig20tr",  "WIG20TR")
-    MWIG40TR = _stooq("mwig40tr", "MWIG40TR")
-    SWIG80TR = _stooq("swig80tr", "SWIG80TR")
-
+    WIG     = load_stooq_local("wig",       "WIG",     DATA_DIR, DATA_START)       # Polish broad market, 1991+WIG   = load_stooq_local("wig",       "WIG",     DATA_DIR, DATA_START)
+    WIG   = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
+    
     # MSCI World combined series from Google Drive
-    folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip() or GDRIVE_FOLDER_ID_DEFAULT.strip()
-    if not folder_id:
-        logging.error(
-            "FAIL: GDRIVE_FOLDER_ID not set.\n"
-            "  Set GDRIVE_FOLDER_ID_DEFAULT in USER SETTINGS or the env var.\n"
-            "  Build the combined file first with: python wsj_msci_world.py"
+    MSCIW_wsj = build_and_upload(
+        folder_id         = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()  
+                             or GDRIVE_FOLDER_ID_DEFAULT.strip()),
+        raw_filename      = "msci_world_wsj_raw.csv",
+        combined_filename = "msci_world_combined.csv",
+        extension_ticker  = "URTH",
         )
+    if MSCIW_wsj is None:
+        logging.error("FAIL: MSCI World (WSJ+URTH) build failed — exiting.")
         sys.exit(1)
-    MSCIW = build_MSCIWORLD(folder_id=folder_id)
-    if MSCIW is None:
-        logging.error(
-            "FAIL: msci_world_combined.csv not found in Drive folder %s.\n"
-            "  Run wsj_msci_world.py to build it, then retry.",
-            folder_id,
+
+    # Prepend synthetic backcast (1990–2009) from Drive
+    # If msci_world_synthetic.csv is not on Drive yet, MSCIW_wsj is used as-is
+    # and Mode B OOS start remains ~2019. Run msci_world_synthetic.build_and_upload_synthetic()
+    # once to generate it.
+    MSCIW = build_full_msci_world_extended(
+        wsj_combined_df = MSCIW_wsj,
+        folder_id       = (os.environ.get("GDRIVE_FOLDER_ID", "").strip()  
+                           or GDRIVE_FOLDER_ID_DEFAULT.strip()),
         )
-        sys.exit(1)
     logging.info(
         "OK  : %-14s  %5d rows  %s to %s",
         "MSCI_World", len(MSCIW),
         MSCIW.index.min().date(), MSCIW.index.max().date(),
-    )
+        )
 
     # Mode B does not use these
-    WIG      = None
+    
     SPX      = None
     NKX      = None
     STOXX600 = None
