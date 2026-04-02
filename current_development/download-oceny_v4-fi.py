@@ -380,11 +380,11 @@ INDEX_WBBW =  load_stooq_local("wbbw",       "WBBW",     DATA_DIR, DATA_START)
 for xxxx in range(min_index, max_index+1):
     
     
-    fund_path = os.path.join(DATA_DIR, f"fund_{xxxx}")
+    fund_path = os.path.join(DATA_DIR, f"fund_{xxxx}.csv")
 
     # Sprawdzenie czy ścieżka (plik lub folder) istnieje
     if not os.path.exists(fund_path):
-        logging.warning(f"⚠️ Pomijanie: Plik {fund_path} nie istnieje.")
+        logging.info(f"⚠️ Pomijanie: Plik {fund_path} nie istnieje.")
         continue  # Przejdź do następnego xxxx w pętli
 
     logging.info(f"Processing: {xxxx}")
