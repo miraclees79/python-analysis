@@ -21,6 +21,7 @@ jobs:
       - name: Install python deps
         run: |
           pip install  pandas numpy requests  google-api-python-client
+          pip install -r current_development/requirements.txt
 
       
       - name: Create Google Credentials File
