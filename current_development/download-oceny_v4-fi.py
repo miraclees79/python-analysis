@@ -27,9 +27,9 @@ logging.basicConfig(
 )
 
 # Also log to console
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-logging.getLogger().addHandler(console_handler)
+#console_handler = logging.StreamHandler()
+#console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+#logging.getLogger().addHandler(console_handler)
 
 # Get the temporary directory
 tmp_dir = tempfile.gettempdir()
