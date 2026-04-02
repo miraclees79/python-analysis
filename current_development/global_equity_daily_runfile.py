@@ -55,15 +55,13 @@ from global_equity_library import (
     DATA_START,
 )
 
-from wsj_msci_world import (
-    load_combined_from_drive as load_MSCIWORLD_from_drive,
-    build_and_upload as build_MSCIWORLD,
-    COMBINED_DRIVE_FILENAME as MSCI_COMBINED_FILENAME)
-from stoxx600 import (
-    load_combined_from_drive as load_stoxx600_from_drive,
-    build_and_upload as build_stoxx600,
-    COMBINED_DRIVE_FILENAME as STOXX600_COMBINED_FILENAME,
+from price_series_builder import build_and_upload, load_combined_from_drive
+from global_equity_daily_output import build_daily_outputs
+from msci_world_synthetic import (
+    build_full_msci_world_extended,
+    load_synthetic_from_drive,
 )
+from stooq_hybrid_updater import run_update
 from global_equity_daily_output import build_daily_outputs
 
 
