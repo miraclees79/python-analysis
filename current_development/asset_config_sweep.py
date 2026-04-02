@@ -171,7 +171,7 @@ ASSET_REGISTRY = {
     },
     "NASDAQ100": {
         "source": "stooq",
-        "ticker": "ndq",
+        "ticker": "ndq100",
     },
     "Nikkei225": {
         "source": "stooq",
@@ -738,6 +738,8 @@ def run_sweep(
     n_jobs  = _cpu_jobs()
     total   = len(assets) * len(WINDOW_CONFIGS)
 
+
+ 
     logging.info("=" * 80)
     logging.info("ASSET CONFIG SWEEP  START: %s", dt.datetime.now())
     logging.info("  Assets      : %s", assets)
