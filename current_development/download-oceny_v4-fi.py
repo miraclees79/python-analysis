@@ -104,8 +104,8 @@ def compare_to_index(filename, index2_df):
     # Get the price column name (e.g., 'Price', or any other column with prices)
     prices_column_name = data_series_df.columns[3]  # - USING Column indexed as 3 - close price
     
-    #print(f"For the prices of FI, the columns ar named:  {data_series_df.columns[0] } {data_series_df.columns[1] } {data_series_df.columns[2] } {data_series_df.columns[3] }")
-    #print(f"For the prices of FI, I am using column named:  {prices_column_name} ")
+    #logging.info(f"For the prices of FI, the columns ar named:  {data_series_df.columns[0] } {data_series_df.columns[1] } {data_series_df.columns[2] } {data_series_df.columns[3] }")
+    #logging.info(f"For the prices of FI, I am using column named:  {prices_column_name} ")
     
 
 
@@ -114,8 +114,8 @@ def compare_to_index(filename, index2_df):
     # Get index-2 returns for comparison
     
     index_2_column_name = data_index2_df.columns[3]
-    #print(f"For the index, the columns ar named:  {data_index2_df.columns[0] } {data_index2_df.columns[1] } {data_index2_df.columns[2] } {data_index2_df.columns[3] }")
-    #print(f"For the prices of index, I am using column named:  {index_2_column_name} ")
+    #logging.info(f"For the index, the columns ar named:  {data_index2_df.columns[0] } {data_index2_df.columns[1] } {data_index2_df.columns[2] } {data_index2_df.columns[3] }")
+    #logging.info(f"For the prices of index, I am using column named:  {index_2_column_name} ")
     
     index_2 = data_index2_df[index_2_column_name]
 
@@ -263,9 +263,9 @@ def process_data( numer, filename, index1_df, index2_df, index3_df, index4_df):
     percentages, latest_252_day_return_series, latest_252_day_return_index  = compare_to_index(filename, index1_df)
 
     # Display the results
-    print("Comparison results:")
+    logging.info("Comparison results:")
     for period, percentage in percentages.items():
-        print(f"  {period} return: {percentage:.2f}% of events where the comparison series had a higher return than Index 1")
+        logging.info(f"  {period} return: {percentage:.2f}% of events where the comparison series had a higher return than Index 1")
     
     # Save the required data into an array
     result = [
@@ -286,9 +286,9 @@ def process_data( numer, filename, index1_df, index2_df, index3_df, index4_df):
     percentages, latest_252_day_return_series, latest_252_day_return_index  = compare_to_index(filename, index2_df)
 
     # Display the results
-    print("Comparison results:")
+    logging.info("Comparison results:")
     for period, percentage in percentages.items():
-        print(f"  {period} return: {percentage:.2f}% of events where the comparison series had a higher return than Index 2")
+        logging.info(f"  {period} return: {percentage:.2f}% of events where the comparison series had a higher return than Index 2")
 
     # Add percentages to the result array
     result.extend(list(percentages.values()))  # Add the values from percentages (22-day, 66-day, 252-day)  
@@ -299,9 +299,9 @@ def process_data( numer, filename, index1_df, index2_df, index3_df, index4_df):
     percentages, latest_252_day_return_series, latest_252_day_return_index   = compare_to_index(filename, index3_df)
 
     # Display the results
-    print("Comparison results:")
+    logging.info("Comparison results:")
     for period, percentage in percentages.items():
-        print(f"  {period} return: {percentage:.2f}% of events where the comparison series had a higher return than Index 3")
+        logging.info(f"  {period} return: {percentage:.2f}% of events where the comparison series had a higher return than Index 3")
 
     # Add percentages to the result array
     result.extend(list(percentages.values()))  # Add the values from percentages (22-day, 66-day, 252-day)  
@@ -311,9 +311,9 @@ def process_data( numer, filename, index1_df, index2_df, index3_df, index4_df):
     percentages, latest_252_day_return_series, latest_252_day_return_index   = compare_to_index(filename, index4_df)
 
     # Display the results
-    print("Comparison results:")
+    logging.info("Comparison results:")
     for period, percentage in percentages.items():
-        print(f"  {period} return: {percentage:.2f}% of events where the comparison series had a higher return than Index 4")
+        logging.info(f"  {period} return: {percentage:.2f}% of events where the comparison series had a higher return than Index 4")
 
     # Add percentages to the result array
     result.extend(list(percentages.values()))  # Add the values from percentages (22-day, 66-day, 252-day)  
@@ -324,9 +324,9 @@ def process_data( numer, filename, index1_df, index2_df, index3_df, index4_df):
     percentages, latest_252_day_return_index = compare_to_index_portfolio(filename, index1_df, index2_df, index3_df)
 
     # Display the results
-    print("Comparison results:")
+    logging.info("Comparison results:")
     for period, percentage in percentages.items():
-        print(f"  {period} return: {percentage:.2f}% of events where the comparison series had a higher return than average return on indexes 1 through 3")
+        logging.info(f"  {period} return: {percentage:.2f}% of events where the comparison series had a higher return than average return on indexes 1 through 3")
 
     # Add percentages to the result array
     result.extend(list(percentages.values()))  # Add the values from percentages (22-day, 66-day, 252-day)  
@@ -428,8 +428,8 @@ final_df = pd.DataFrame(cleaned_results,
                                  "Latest 252-day Return - AVG204080"
                                  ])
 csv_data = final_df.to_csv(index=False, header=True, sep=";").encode('utf-8')
-print(final_df.head())
-
+#print(final_df.head())
+logging.info("Done!")
 
 
 
@@ -456,7 +456,7 @@ if items:
     # The MediaIoBaseUpload class needs to be called directly, not as an attribute of drive_service.
     media = MediaIoBaseUpload(io.BytesIO(csv_data), mimetype='text/csv', resumable=True)
     updated_file = drive_service.files().update(fileId=file_id, media_body=media).execute()
-    print(f"File '{file_name}' updated as a new version. File ID: {file_id}")
+    logging.info(f"File '{file_name}' updated as a new version. File ID: {file_id}")
 else:
     # If the file doesn't exist, create it
     file_metadata = {
@@ -467,7 +467,7 @@ else:
     media = MediaIoBaseUpload(io.BytesIO(csv_data), mimetype='text/csv', resumable=True)
     created_file = drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
     file_id = created_file.get('id')
-    print(f"File '{file_name}' created. File ID: {file_id}")
+    logging.info(f"File '{file_name}' created. File ID: {file_id}")
 
 logging.info(f"Analysis complete. Extracted data from {len(cleaned_results)} pages saved in {file_name}.")
 
