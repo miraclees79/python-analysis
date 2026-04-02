@@ -32,7 +32,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from strategy_test_library import (
-    download_csv,
+    load_stooq_local,
     load_csv,
     walk_forward,
     compute_metrics,
