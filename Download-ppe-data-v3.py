@@ -20,7 +20,7 @@ LOG_FILE = "download.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHeader(LOG_FILE, mode='w'), logging.StreamHandler(sys.stdout)]
+    handlers=[logging.FileHandler(LOG_FILE, mode='w'), logging.StreamHandler(sys.stdout)]
 )
 
 # Regex for Date (DD.MM.YYYY) and 5 decimal/comma columns
