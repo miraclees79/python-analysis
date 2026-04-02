@@ -221,6 +221,17 @@ SLOW_BD   = [200, 300, 400, 500]
 TV_BD     = [0.08, 0.10, 0.12]
 SL_BD     = [0.01, 0.02, 0.03]
  
+
+USE_ATR_STOP    = True          # Equity trailing stop mode
+ATR_WINDOW      = 20             # Rolling window for ATR estimate (days)
+N_ATR_GRID      = [0.08, 0.10, 0.12, 0.15, 0.20]   # Normalised ATR grid (same scale as X_GRID_EQ)
+
+USE_ATR_STOP_BD = False          # Bond trailing stop mode (can differ from equity)
+ATR_WINDOW_BD   = 20
+N_ATR_GRID_BD   = [0.05, 0.08, 0.10, 0.15]          # Normalised ATR grid (same scale as X_GRID_BD)
+
+FAST_MODE = True
+
 # ---------------------------------------------------------------------------
 # PARALLELISM
 # ---------------------------------------------------------------------------
@@ -568,7 +579,10 @@ def _run_equity_wf(price_df: pd.DataFrame, label: str):
         mom_lookback_grid     = MOM_LB_EQ,
         objective             = "calmar",
         n_jobs                = N_JOBS,
-        fast_mode=FAST_MODE
+        fast_mode             = FAST_MODE,
+        use_atr_stop          = USE_ATR_STOP,
+        N_atr_grid            = N_ATR_GRID if USE_ATR_STOP else None,
+        atr_window            = ATR_WINDOW,
     )
     m = compute_metrics(wf_eq)
     logging.info(
@@ -623,7 +637,10 @@ wf_eq_TBSP, wf_res_TBSP, wf_tr_TBSP = walk_forward(
     mom_lookback_grid     = [252],
     objective             = "calmar",
     n_jobs                = N_JOBS,
-    fast_mode=FAST_MODE
+    fast_mode=FAST_MODE,
+    use_atr_stop          = USE_ATR_STOP_BD,
+    N_atr_grid            = N_ATR_GRID_BD if USE_ATR_STOP_BD else None,
+    atr_window            = ATR_WINDOW,
 )
 
 m_tbsp = compute_metrics(wf_eq_TBSP)

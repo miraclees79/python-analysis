@@ -119,6 +119,29 @@ WIG_DATA_FLOOR = "1995-01-02"
 MMF_FLOOR      = "1995-01-02"
 DATA_START     = "1990-01-01"
 
+# --- Trailing stop mode ---
+# USE_ATR_STOP = False : fixed percentage trailing stop (current default)
+#     X_GRID_EQ is used; stop fires when price < (1 - X) * peak
+# USE_ATR_STOP = True  : ATR-scaled Chandelier exit
+#     N_ATR_GRID is used; stop fires when price < peak - N * ATR
+#     ATR = rolling mean of |daily price change| over ATR_WINDOW bars
+#     Recommended N_ATR range for WIG: 3–6 (wider = more room to breathe)
+#     ATR_WINDOW: 20 matches VOL_WINDOW; increase to 40–60 for a slower ATR
+#
+# The bond walk-forward (Phase 3) uses a separate flag USE_ATR_STOP_BD
+# so equity and bond stops can be tuned independently.
+# Set USE_ATR_STOP_BD = USE_ATR_STOP to keep them in sync.
+#
+USE_ATR_STOP    = True          # Equity trailing stop mode
+ATR_WINDOW      = 20             # Rolling window for ATR estimate (days)
+N_ATR_GRID      = [0.08, 0.10, 0.12, 0.15, 0.20]   # Normalised ATR grid (same scale as X_GRID_EQ)
+
+USE_ATR_STOP_BD = False          # Bond trailing stop mode (can differ from equity)
+ATR_WINDOW_BD   = 20
+N_ATR_GRID_BD   = [0.05, 0.08, 0.10, 0.15]          # Normalised ATR grid (same scale as X_GRID_BD)
+
+FAST_MODE = True
+
 LAST_5_YEARS = [2021, 2022, 2023, 2024, 2025]
 
 SWITCH_CAGR_MARGIN   =  0.005
@@ -243,6 +266,11 @@ def run_equity_wf(data: dict, eq_obj: str):
         mom_lookback_grid     = MOM_LB_EQ,
         objective             = eq_obj,
         n_jobs                = get_n_jobs(),
+        fast_mode             = FAST_MODE,
+        use_atr_stop          = USE_ATR_STOP,
+        N_atr_grid            = N_ATR_GRID if USE_ATR_STOP else None,
+        atr_window            = ATR_WINDOW,
+        
     )
 
 
@@ -266,6 +294,10 @@ def run_bond_wf(data: dict, bd_obj: str):
         objective             = bd_obj,
         n_jobs                = get_n_jobs(),
         entry_gate_series     = data["bond_entry_gate"],
+        fast_mode=FAST_MODE,
+        use_atr_stop          = USE_ATR_STOP_BD,
+        N_atr_grid            = N_ATR_GRID_BD if USE_ATR_STOP_BD else None,
+        atr_window            = ATR_WINDOW,
     )
 
 

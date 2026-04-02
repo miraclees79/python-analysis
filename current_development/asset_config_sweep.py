@@ -122,7 +122,7 @@ from mc_robustness import (
 )
 from global_equity_library import build_mmf_extended
 from price_series_builder import build_and_upload
-
+from stooq_hybrid_updater import run_update
 
 # ============================================================
 # LOGGING
@@ -236,8 +236,9 @@ SL_GRID     = [0.05, 0.08, 0.10, 0.15]
 MOM_LB_GRID = [252]
 
 
-
-
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+FAST_MODE  = True
 
 # ---------------------------------------------------------------------------
 # STOP MODE CONFIGURATIONS  ← ADD THIS BLOCK after the existing grids
@@ -264,8 +265,10 @@ STOP_MODE_CONFIGS = [
 # ---------------------------------------------------------------------------
 # Data floor dates
 # ---------------------------------------------------------------------------
-MMF_FLOOR  = "1994-10-03"
-DATA_START = "1990-01-01"
+WIG_DATA_FLOOR = "1995-01-02"
+MMF_FLOOR      = "1995-01-02"
+DATA_START     = "1990-01-01"
+
 
 # ---------------------------------------------------------------------------
 # Candidate selection thresholds
@@ -761,8 +764,7 @@ def run_sweep(
     tmp_dir = tempfile.gettempdir()
     run_update(get_funds=False)
 
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    DATA_DIR = os.path.join(BASE_DIR, "data")
+
 
     for asset_name in assets:
         logging.info("")
