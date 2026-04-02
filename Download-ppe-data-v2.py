@@ -14,6 +14,7 @@ import re
 import pandas as pd
 import io
 import logging
+import sys
 
 # Setup logging
 LOG_FILE = "download.log"
@@ -100,7 +101,7 @@ if response.status_code == 200:
     logging.info(f"✅ ZIP file downloaded successfully: {zip_path}")
 else:
     logging.error("❌ Failed to download ZIP file")
-    exit()
+    sys.exit(1)
 
 # -----------------------------
 # 2️⃣ EXTRACT PDF FROM PASSWORD-PROTECTED ZIP
@@ -119,7 +120,7 @@ with pyzipper.AESZipFile(zip_path, 'r') as zf:
         logging.info(f"✅ PDF extracted: {pdf_path}")
     except Exception as e:
         logging.error(f"❌ Error extracting PDF: {e}")
-        exit()
+        sys.exit(1)
 
 
 ## -----------------------------
@@ -245,7 +246,7 @@ if items:
     folder_id = items[0]['id']
 else:
     logging.error(f"❌ Folder '{folder_name}' not found in Google Drive.")
-    exit()
+    sys.exit(1)
 
 # Now use the correct folder ID in the file search query
 query = f"name='{file_name}' and '{folder_id}' in parents"
