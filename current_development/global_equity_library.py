@@ -60,7 +60,7 @@ DEPENDENCIES
 ------------
   pandas, numpy, yfinance, requests, joblib
   strategy_test_library (download_csv, load_csv, compute_metrics,
-                         build_signal_series)
+                         )
 
 PORTFOLIO MODES
 ---------------
@@ -88,7 +88,7 @@ from strategy_test_library import (
     compute_metrics,
     
 )
-from multiasset_library import build_signal_series
+
 
 # ============================================================
 # CONSTANTS
