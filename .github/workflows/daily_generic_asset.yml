@@ -31,11 +31,11 @@
 name: Daily GENERIC Signal    # <-- change this per asset
 
 on:
-  schedule:
+  #schedule:
     # 19:30 UTC (winter: UTC+1 = 20:30 Warsaw)
-    - cron: "30 19 * * 1-5"
+    #- cron: "30 19 * * 1-5"
     # 18:30 UTC (summer: UTC+2 = 20:30 Warsaw)
-    - cron: "30 18 * * 1-5"
+    #- cron: "30 18 * * 1-5"
   workflow_dispatch:
     inputs:
       force_notify:

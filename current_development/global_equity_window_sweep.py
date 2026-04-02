@@ -74,7 +74,8 @@ if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
 from strategy_test_library import (
- 
+    load_stooq_local,       # consolidated loader — replaces per-runfile _stooq()
+    load_csv,
     load_csv,
     walk_forward,
     compute_metrics,

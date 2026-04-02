@@ -70,9 +70,9 @@ from stooq_hybrid_updater import run_update
 # ============================================================
 
 ASSET_NAME    = "MSCI_World"          # <- key in ASSET_REGISTRY below
-OUTPUT_PREFIX = "msci"          # <- unique lowercase file prefix
+OUTPUT_PREFIX = "msci_world"          # <- unique lowercase file prefix
 TRAIN_YEARS   = 8                   # <- from sweep candidate results
-TEST_YEARS    = 2                   # <- from sweep candidate results
+TEST_YEARS    =1                   # <- from sweep candidate results
 FORCE_FILTER_MODE = ["ma", "mom"]   # <- None for auto, or e.g. ["ma"]
 
 

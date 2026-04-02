@@ -69,13 +69,12 @@ from stooq_hybrid_updater import run_update
 # ██████████████████████████████████████████████████████████
 # ============================================================
 
-ASSET_NAME    = "SP500"          # <- key in ASSET_REGISTRY below
-OUTPUT_PREFIX = "sp500"          # <- unique lowercase file prefix
-TRAIN_YEARS   = 6                   # <- from sweep candidate results
+ASSET_NAME    = "SWIG80TR"          # <- key in ASSET_REGISTRY below
+OUTPUT_PREFIX = "swig80tr"          # <- unique lowercase file prefix
+TRAIN_YEARS   = 8                   # <- from sweep candidate results
 TEST_YEARS    = 2                   # <- from sweep candidate results
 FORCE_FILTER_MODE = ["ma", "mom"]   # <- None for auto, or e.g. ["ma"]
-# Set from sweep candidate results.
-# SP500 6+2 double robust on 24/03/2026
+
 
 # ============================================================
 # ASSET REGISTRY  (shared across all generic daily runners)
@@ -98,7 +97,7 @@ ASSET_REGISTRY = {
     },
     "SP500": {
         "source": "stooq",
-        "ticker": "sp500",
+        "ticker": "^spx",
     },
     "NASDAQ100": {
         "source": "stooq",

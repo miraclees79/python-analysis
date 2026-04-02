@@ -68,7 +68,7 @@ jobs:
         with:
           python-version: "3.14"
           cache: "pip"
-          cache-dependency-path: dev_single_asset_monitoring/requirements.txt
+          cache-dependency-path: current_development/requirements.txt
 
       # ------------------------------------------------------------------
       # 3. Install dependencies
@@ -76,7 +76,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install -r dev_single_asset_monitoring/requirements.txt
+          pip install -r current_development/requirements.txt
 
       # ------------------------------------------------------------------
       # 4. Write Google credentials
@@ -97,11 +97,11 @@ jobs:
         id: strategy
         env:
           PYTHONIOENCODING: utf-8
-          PYTHONPATH: ${{ github.workspace }}/dev_single_asset_monitoring
+          PYTHONPATH: ${{ github.workspace }}/current_development
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
-          cd dev_single_asset_monitoring
-          python daily_runfile_swig80.py
+          cd current_development
+          python daily_runfile_swig80tr.py
 
       # ------------------------------------------------------------------
       # 6. Parse action from snapshot JSON
@@ -110,7 +110,7 @@ jobs:
       - name: Parse signal action
         id: parse
         run: |
-          SNAPSHOT="${{ github.workspace }}/dev_single_asset_monitoring/outputs/${{ env.OUTPUT_PREFIX }}_signal_snapshot.json"
+          SNAPSHOT="${{ github.workspace }}/current_development/outputs/${{ env.OUTPUT_PREFIX }}_signal_snapshot.json"
 
           if [ ! -f "$SNAPSHOT" ]; then
             echo "ERROR: ${{ env.OUTPUT_PREFIX }}_signal_snapshot.json not found."
@@ -174,7 +174,7 @@ jobs:
               (f"{prefix}_signal_snapshot.json",  "application/json"),
           ]
 
-          outputs_dir = Path("dev_single_asset_monitoring/outputs")
+          outputs_dir = Path("current_development/outputs")
 
           for filename, mimetype in FILES:
               path = outputs_dir / filename
@@ -215,7 +215,7 @@ jobs:
         run: |
           {
             echo 'STATUS_TEXT<<ENDOFSTATUSTEXT'
-            cat "dev_single_asset_monitoring/outputs/${{ env.OUTPUT_PREFIX }}_signal_status.txt"
+            cat "current_development/outputs/${{ env.OUTPUT_PREFIX }}_signal_status.txt"
             echo
             echo ENDOFSTATUSTEXT
           } >> "$GITHUB_ENV"
@@ -239,7 +239,7 @@ jobs:
           cc:             ${{ secrets.NOTIFY_EMAIL_CC }}
           from:           "${{ env.OUTPUT_PREFIX }} Strategy <${{ secrets.GMAIL_USER }}>"
           body:           ${{ env.STATUS_TEXT }}
-          attachments:    "dev_single_asset_monitoring/outputs/${{ env.OUTPUT_PREFIX }}_equity_chart.png"
+          attachments:    "current_development/outputs/${{ env.OUTPUT_PREFIX }}_equity_chart.png"
           ignore_cert:    false
           convert_markdown: false
           priority:       normal
@@ -253,11 +253,11 @@ jobs:
         with:
           name: ${{ env.OUTPUT_PREFIX }}-outputs-${{ github.run_id }}
           path: |
-            dev_single_asset_monitoring/outputs/${{ env.OUTPUT_PREFIX }}_signal_status.txt
-            dev_single_asset_monitoring/outputs/${{ env.OUTPUT_PREFIX }}_signal_log.csv
-            dev_single_asset_monitoring/outputs/${{ env.OUTPUT_PREFIX }}_equity_chart.png
-            dev_single_asset_monitoring/outputs/${{ env.OUTPUT_PREFIX }}_signal_snapshot.json
-            dev_single_asset_monitoring/${{ env.OUTPUT_PREFIX }}_DailyRun.log
+            current_development/outputs/${{ env.OUTPUT_PREFIX }}_signal_status.txt
+            current_development/outputs/${{ env.OUTPUT_PREFIX }}_signal_log.csv
+            current_development/outputs/${{ env.OUTPUT_PREFIX }}_equity_chart.png
+            current_development/outputs/${{ env.OUTPUT_PREFIX }}_signal_snapshot.json
+            current_development/${{ env.OUTPUT_PREFIX }}_DailyRun.log
           retention-days: 30
 
       # ------------------------------------------------------------------
@@ -266,7 +266,7 @@ jobs:
       - name: Verify outputs
         run: |
           PREFIX="${{ env.OUTPUT_PREFIX }}"
-          BASE="dev_single_asset_monitoring/outputs"
+          BASE="current_development/outputs"
           MISSING=0
 
           for f in \

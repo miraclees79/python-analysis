@@ -105,7 +105,7 @@ import pandas as pd
 # Strategy machinery — same imports as strat_test_runfile_with_MC.py
 # ---------------------------------------------------------------------------
 from strategy_test_library import (
-    download_csv,
+    load_stooq_local,       # consolidated loader — replaces per-runfile _stooq()
     load_csv,
     walk_forward,
     compute_metrics,
@@ -167,15 +167,15 @@ ASSET_REGISTRY = {
     },
     "SP500": {
         "source": "stooq",
-        "ticker": "^spx",
+        "ticker": "sp500",
     },
     "NASDAQ100": {
         "source": "stooq",
-        "ticker": "^ndq",
+        "ticker": "ndq",
     },
     "Nikkei225": {
         "source": "stooq",
-        "ticker": "^nkx",
+        "ticker": "nk225",
     },
     "STOXX600": {
         "source": "drive",
@@ -260,23 +260,7 @@ def _cpu_jobs() -> int:
     return max(1, n - 1) if n > 3 and sys.platform == "win32" else n
 
 
-def _load_stooq(ticker: str, label: str, tmp_dir: str) -> pd.DataFrame | None:
-    url  = f"https://stooq.pl/q/d/l/?s={ticker}&i=d"
-    path = os.path.join(tmp_dir, f"sweep_{label}.csv")
-    ok   = download_csv(url, path)
-    if not ok:
-        logging.warning("SKIP: %s (%s) — stooq download failed.", label, ticker)
-        return None
-    df = load_csv(path)
-    if df is None:
-        logging.warning("SKIP: %s — load_csv returned None.", label)
-        return None
-    df = df.loc[df.index >= pd.Timestamp(DATA_START)]
-    logging.info(
-        "Loaded %-14s: %5d rows  %s to %s",
-        label, len(df), df.index.min().date(), df.index.max().date(),
-    )
-    return df
+
 
 
 def _load_asset(asset_name: str, tmp_dir: str) -> pd.DataFrame | None:
@@ -286,7 +270,7 @@ def _load_asset(asset_name: str, tmp_dir: str) -> pd.DataFrame | None:
         return None
 
     if cfg["source"] == "stooq":
-        return _load_stooq(cfg["ticker"], asset_name, tmp_dir)
+        return load_stooq_local(cfg["ticker"], asset_name, DATA_DIR, DATA_START)
 
     if cfg["source"] == "drive":
         folder_id = (
@@ -317,11 +301,11 @@ def _load_asset(asset_name: str, tmp_dir: str) -> pd.DataFrame | None:
 
 def _load_cash(tmp_dir: str) -> pd.DataFrame | None:
     """Load MMF and extend backwards with WIBOR 1M if available."""
-    mmf = _load_stooq("2720.n", "MMF", tmp_dir)
+    mmf = load_stooq_local("fund_2720",  "MMF", DATA_DIR, DATA_START)
     if mmf is None:
         logging.error("Failed to load MMF — cannot run sweep without cash series.")
         return None
-    wibor1m = _load_stooq("plopln1m", "WIBOR1M", tmp_dir)
+    wibor1m =  load_stooq_local("wibor1m", "WIBOR1M", DATA_DIR, DATA_START, mandatory=False)
     if wibor1m is not None:
         mmf = build_mmf_extended(mmf, wibor1m, floor_date=MMF_FLOOR)
         logging.info(
@@ -774,6 +758,13 @@ def run_sweep(
     all_summaries = []
     all_windows   = []
     run_count     = 0
+
+    tmp_dir = tempfile.gettempdir()
+
+    run_update(get_funds=False) # load data from GDrive to /data subfolder
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    DATA_DIR = os.path.join(BASE_DIR, "data")
 
     for asset_name in assets:
         logging.info("")

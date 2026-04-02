@@ -65,7 +65,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from strategy_test_library import (
-    download_csv,
+    load_stooq_local,       # consolidated loader — replaces per-runfile _stooq()
     load_csv,
     walk_forward,
     compute_metrics,
@@ -269,7 +269,16 @@ ALLOC_ROBUSTNESS_MIN_MEAN_WEIGHT = 0.05
 # ---------------------------------------------------------------------------
 OUTPUT_DIR = "global_equity_outputs"   # local directory for daily artefacts
  
+ # WIG (Mode A only): daily continuous trading started 1994-10-03.
+#   Earlier data has multi-day gaps that distort the breakout trough
+#   calculation and MA windows.  Clipped after download in Phase 2.
+WIG_DATA_FLOOR = "1995-01-02"
  
+# MMF extension: chain-link WIBOR 1M backwards from first MMF NAV to this
+#   date. Ensures IS windows starting before 1999 have realistic cash returns
+#   rather than ret_mmf=0 on signal-off days. Applied in Phase 2.
+MMF_FLOOR = "1995-01-02"
+DATA_START = "1990-01-01"  # hard floor for all series
 
 
 # ============================================================
@@ -305,27 +314,6 @@ run_update(get_funds=False) # load data from GDrive to /data subfolder
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
-def _stooq(ticker: str, label: str, mandatory: bool = True) -> pd.DataFrame | None:
-    """
-    Load a stooq series from /data subfolder, clip to DATA_START.
-    """
-
-    path = os.path.join(DATA_DIR, f"{ticker}.csv")
-
-    df = load_csv(path)
-    if df is None:
-        if mandatory:
-            logging.error("FAIL: load_csv returned None for %s — exiting.", label)
-            sys.exit(1)
-            return None
-    df = df.loc[df.index >= pd.Timestamp(DATA_START)]
-    logging.info(
-        "OK  : %-14s  %5d rows  %s to %s",
-        label, len(df), df.index.min().date(), df.index.max().date(),
-        )
-    return df
-
-# --- Shared across both modes ---
 
 # TBSP backcast (stooq ^tbsp extension, generic Date/Close format)
 TBSP = build_and_upload(
@@ -337,11 +325,11 @@ TBSP = build_and_upload(
       extension_source   = "stooq",
   )
 
-MMF  = _stooq("fund_2720",  "MMF")
+MMF  = load_stooq_local("fund_2720",  "MMF", DATA_DIR, DATA_START)
 
 # WIBOR 1M — used to extend MMF backwards to MMF_FLOOR
 # Not mandatory: if unavailable the MMF runs from its natural start (~1999)
-WIBOR1M = _stooq("wibor1m", "WIBOR1M", mandatory=False)
+WIBOR1M = load_stooq_local("wibor1m", "WIBOR1M", DATA_DIR, DATA_START, mandatory=False)
 if WIBOR1M is None:
     logging.warning(
         "WIBOR1M (plopln1m) unavailable — MMF will not be extended. "
@@ -363,17 +351,18 @@ else:
     MMF_EXT = MMF   # no extension available; falls back to original series
 
 # --- FX rates (downloaded always; applied only when FX_HEDGED=False) ---
-USDPLN = _stooq("usdpln", "USDPLN")
-EURPLN = _stooq("eurpln", "EURPLN")
-JPYPLN = _stooq("jpypln", "JPYPLN")
+USDPLN = load_stooq_local("usdpln", "USDPLN", DATA_DIR, DATA_START)
+EURPLN = load_stooq_local("eurpln", "EURPLN", DATA_DIR, DATA_START)
+JPYPLN = load_stooq_local("jpypln", "JPYPLN", DATA_DIR, DATA_START)
 
 # --- Mode-specific downloads ---
 if PORTFOLIO_MODE == "global_equity":
     logging.info("--- Mode A: global_equity ---")
 
-    WIG     = _stooq("wig",   "WIG")       # Polish broad market, 1991+
-    SPX     = _stooq("sp500",  "SP500")     # S&P 500
-    NKX     = _stooq("nk225",   "Nikkei225")
+    WIG   = load_stooq_local("wig",       "WIG",     DATA_DIR, DATA_START)
+    WIG   = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
+    SPX     = load_stooq_local("sp500",  "SP500", DATA_DIR, DATA_START)     # S&P 500
+    NKX     = load_stooq_local("nk225",   "Nikkei225", DATA_DIR, DATA_START)
 
     # STOXX 600: load from Drive (historical base + yfinance extension).
     # build_stoxx600() auto-selects first-build vs update mode:
@@ -418,7 +407,8 @@ if PORTFOLIO_MODE == "global_equity":
 elif PORTFOLIO_MODE == "msci_world":
     logging.info("--- Mode B: msci_world ---")
 
-    WIG     = _stooq("wig",   "WIG")       # Polish broad market, 1991+
+    WIG     = _stooq("wig",   "WIG")       # Polish broad market, 1991+WIG   = load_stooq_local("wig",       "WIG",     DATA_DIR, DATA_START)
+    WIG   = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
     
     # MSCI World combined series from Google Drive
     MSCIW_wsj = build_and_upload(
@@ -467,16 +457,6 @@ fx_usd = USDPLN[CLOSE_COL] if USDPLN is not None else None
 fx_eur = EURPLN[CLOSE_COL] if EURPLN is not None else None
 fx_jpy = JPYPLN[CLOSE_COL] if JPYPLN is not None else None
 
-# --- WIG floor (Mode A only) ---
-# Clip WIG to the daily-continuous-trading era. Earlier data has multi-day
-# gaps that distort the breakout trough and MA signal calculations.
-if PORTFOLIO_MODE == "global_equity" and WIG is not None:
-    _wig_before = len(WIG)
-    WIG = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
-    logging.info(
-        "WIG clipped to %s: %d → %d rows",
-        WIG_DATA_FLOOR, _wig_before, len(WIG),
-    )
 
 
 
