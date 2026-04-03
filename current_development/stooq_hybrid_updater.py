@@ -58,6 +58,38 @@ DEFAULT_TICKERS = [
 ]
 # fund_2720 used as MMF - classed as index_pl to ensure it always loads
 
+# - ETFs z GPW
+ETF_TICKERS - [
+    {"label": "ETFBDIVPL", "stooq": "ETFBDIVPL.PL", "yf": "ETFBDIVPL.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFBM40TR", "stooq": "ETFBM40TR.PL", "yf": "ETFBM40TR.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFBS80TR", "stooq": "ETFBS80TR.PL", "yf": "ETFBS80TR.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFBW20LV", "stooq": "ETFBW20LV.PL", "yf": "ETFBW20LV.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFBW20ST", "stooq": "ETFBW20ST.PL", "yf": "ETFBW20ST.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFBW20TR", "stooq": "ETFBW20TR.PL", "yf": "ETFBW20TR.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFPZUW20M40", "stooq": "ETFPZUW20M40.PL", "yf": "ETFPZUW20M40.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFBCASH", "stooq": "ETFBCASH.PL", "yf": "ETFBCASH.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFBTBSP", "stooq": "ETFBTBSP.PL", "yf": "ETFBTBSP.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFBNDXPL", "stooq": "ETFBNDXPL.PL", "yf": "ETFBNDXPL.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFBNQ2ST", "stooq": "ETFBNQ2ST.PL", "yf": "ETFBNQ2ST.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFBSPXPL", "stooq": "ETFBSPXPL.PL", "yf": "ETFBSPXPL.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFSP500", "stooq": "ETFSP500.PL", "yf": "ETFSP500.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFDAX", "stooq": "ETFDAX.PL", "yf": "ETFDAX.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFAIFS", "stooq": "ETFAIFS.PL", "yf": "ETFAIFS.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFEUNM", "stooq": "ETFEUNM.PL", "yf": "ETFEUNM.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFISIJPA", "stooq": "ETFISIJPA.PL", "yf": "ETFISIJPA.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFIWDA", "stooq": "ETFIWDA.PL", "yf": "ETFIWDA.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFNATO", "stooq": "ETFNATO.PL", "yf": "ETFNATO.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFV60A", "stooq": "ETFV60A.PL", "yf": "ETFV60A.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETCGLDRMAU", "stooq": "ETCGLDRMAU.PL", "yf": "ETCGLDRMAU.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFSLVR", "stooq": "ETFSLVR.PL", "yf": "ETFSLVR.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETFBTCPL", "stooq": "ETFBTCPL.PL", "yf": "ETFBTCPL.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETNVIRBTCP", "stooq": "ETNVIRBTCP.PL", "yf": "ETNVIRBTCP.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETNVIRETH", "stooq": "ETNVIRETH.PL", "yf": "ETNVIRETH.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETNVIRSOL", "stooq": "ETNVIRSOL.PL", "yf": "ETNVIRSOL.WA", "type": "etf_pl", "knf": None},
+    {"label": "ETNVIRXRP", "stooq": "ETNVIRXRP.PL", "yf": "ETNVIRXRP.WA", "type": "etf_pl", "knf": None},
+    
+]
+
 
 # --- FUNKCJE GOOGLE DRIVE ---
 
@@ -209,7 +241,7 @@ def run_update(get_funds = True):
     service = _get_drive_service()
     if get_funds: 
         dynamic_tickers = _get_dynamic_tickers(service)
-        full_tickers_table = DEFAULT_TICKERS + dynamic_tickers
+        full_tickers_table = DEFAULT_TICKERS + dynamic_tickers + ETF_TICKERS
         
         def get_folder_id(name):
             query = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
@@ -227,7 +259,7 @@ def run_update(get_funds = True):
         ticker_stooq = row['stooq']
         data_type = row['type']
         
-        if data_type == "fund_pl" and not get_funds:
+        if data_type in ["fund_pl", "etf_pl"] and not get_funds:
             continue
         if data_type == "fund_pl" :
             name = row['original_name']
@@ -236,7 +268,7 @@ def run_update(get_funds = True):
             logging.info(f"--- Przetwarzanie: {label} ------")
         
         # 1. Pobierz dane historyczne z ZIPa na GDrive
-        zip_name = "d_pl_txt.zip" if data_type in ["index_pl", "fund_pl"] else "d_world_txt.zip"
+        zip_name = "d_pl_txt.zip" if data_type in ["index_pl", "fund_pl", "etf_pl"] else "d_world_txt.zip"
         zip_content = _get_zip_from_gdrive(service, zip_name)
         
         df_hist = None
@@ -273,9 +305,12 @@ def run_update(get_funds = True):
                 df_validated.to_csv(out_path)
                 logging.info(f"ZAPISANO: {out_path} ({len(df_validated)} wierszy)")
                 
-                if get_funds and data_type == "fund_pl":
+                if get_funds and data_type in ["fund_pl", "etf_pl"]:
                     # Build Drive file name
-                    file_name = f"historia{ticker_stooq[:4]}.csv"
+                    if data_type == "fund_pl":
+                        file_name = f"historia{ticker_stooq[:4]}.csv"
+                    else:
+                        file_name = f"historia{ticker_stooq}.csv"
 
                    
                     folder_id = FOLDER_ID
