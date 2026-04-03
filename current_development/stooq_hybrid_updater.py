@@ -59,7 +59,7 @@ DEFAULT_TICKERS = [
 # fund_2720 used as MMF - classed as index_pl to ensure it always loads
 
 # - ETFs z GPW
-ETF_TICKERS - [
+ETF_TICKERS = [
     {"label": "ETFBDIVPL", "stooq": "ETFBDIVPL.PL", "yf": "ETFBDIVPL.WA", "type": "etf_pl", "knf": None},
     {"label": "ETFBM40TR", "stooq": "ETFBM40TR.PL", "yf": "ETFBM40TR.WA", "type": "etf_pl", "knf": None},
     {"label": "ETFBS80TR", "stooq": "ETFBS80TR.PL", "yf": "ETFBS80TR.WA", "type": "etf_pl", "knf": None},
