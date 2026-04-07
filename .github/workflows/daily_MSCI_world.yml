@@ -101,7 +101,7 @@ jobs:
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           cd current_development
-          python daily_MSCI_world.py
+          python daily_runfile_msci.py
 
       # ------------------------------------------------------------------
       # 6. Parse action from snapshot JSON
