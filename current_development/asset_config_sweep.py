@@ -64,17 +64,22 @@ USAGE
   # Smoke test — n_mc=20, no regime, fast verification
   python asset_config_sweep.py --mode smoke
 
-  # Full sweep — n_mc=1000, with regime decomp
+  # Default — MC only, no bootstrap
   python asset_config_sweep.py --mode full
 
-  # Custom n_mc
-  python asset_config_sweep.py --mode full --n_mc 500
+  # Enable bootstrap (n=500 default)
+  python asset_config_sweep.py --mode full --bootstrap
 
-  # Targeted re-run (specific assets only)
-  python asset_config_sweep.py --assets WIG20TR SP500 --mode full
+  # Bootstrap with reduced iterations for a quick check
+  python asset_config_sweep.py --mode full --bootstrap --n_bootstrap 50
 
-  # Skip regime decomp (saves ~20% runtime)
-  python asset_config_sweep.py --mode full --no_regime
+  # Targeted: one asset, both stop modes, with bootstrap
+  python asset_config_sweep.py --assets SWIG80TR --mode full --bootstrap
+
+  # Smoke test — bootstrap always disabled regardless
+  python asset_config_sweep.py --mode smoke --bootstrap   # bootstrap silently ignored
+
+  # IDE: set RUN_BOOTSTRAP_DEFAULT = True at module level, then run directly
 
 -----------------------------------------------------------------------
 RUNTIME ESTIMATE
@@ -86,6 +91,10 @@ Full sweep (8 assets × 5 window configs = 40 configs):
   Total                    : ~6-8h on a 4-core machine
   Recommended: run overnight.
 
+    At n=500 bootstrap per config, with 8 assets × 8 window configs × 2 stop modes = 128 configs, 
+    bootstrap would take ~48h on a 12-core machine. 
+    In practice --assets targeting is essential: 
+    run bootstrap only on configs that already passed MC as candidates
 Smoke test (n_mc=20): ~30 min total.  Use to verify all assets load
 and the pipeline runs end-to-end before committing to a full run.
 """
@@ -118,7 +127,10 @@ from mc_robustness import (
     analyze_robustness,
     extract_windows_from_wf_results,
     extract_best_params_from_wf_results,
+    run_block_bootstrap_robustness,   # ← ADD this line
+    analyze_bootstrap,                # ← ADD this line
     EQUITY_THRESHOLDS_MC,
+    EQUITY_THRESHOLDS_BOOTSTRAP,
 )
 from global_equity_library import build_mmf_extended
 from price_series_builder import build_and_upload
@@ -261,7 +273,17 @@ STOP_MODE_CONFIGS = [
         "N_atr_grid":   N_ATR_GRID,
     },
 ]
-
+# ---------------------------------------------------------------------------
+# BOOTSTRAP SETTINGS
+# ---------------------------------------------------------------------------
+# RUN_BOOTSTRAP : module-level default — set True here to enable in IDE
+# N_BOOTSTRAP   : number of synthetic histories (500 = full, 10 = smoke test)
+# Both are overridable from the command line via --bootstrap / --no_bootstrap
+# and --n_bootstrap.
+# Bootstrap is always disabled in smoke mode regardless of these settings.
+# ---------------------------------------------------------------------------
+RUN_BOOTSTRAP_DEFAULT = False   # <- set True here for IDE runs
+N_BOOTSTRAP           = 500     # <- set to 10 for a quick smoke test
 # ---------------------------------------------------------------------------
 # Data floor dates
 # ---------------------------------------------------------------------------
@@ -487,6 +509,135 @@ def _is_candidate(row: dict) -> bool:
 
 
 # ============================================================
+# BOOTSTRAP HELPERS
+# ============================================================
+
+# Column names for bootstrap output — mirrors the mc_ convention
+BB_METRICS = ["cagr", "sharpe", "maxdd", "calmar"]
+BB_STATS   = ["p05", "p25", "median", "p75", "p95"]
+
+
+def _set_bb_nan(summary: dict) -> None:
+    """Fill all bootstrap output columns with NaN / SKIPPED sentinel."""
+    for m in BB_METRICS:
+        for s in BB_STATS:
+            summary[f"bb_{m}_{s}"] = np.nan
+    summary["bb_p_loss"]    = np.nan
+    summary["bb_n_samples"] = 0
+    summary["bb_verdict"]   = "SKIPPED"
+
+
+def _run_bootstrap_for_config(
+    summary:      dict,
+    df:           pd.DataFrame,
+    cash_df:      pd.DataFrame,
+    train_years:  int,
+    test_years:   int,
+    stop_cfg:     dict,
+    n_jobs:       int,
+    n_bootstrap:  int,
+    wf_equity:    pd.Series,
+    oos_metrics:  dict,
+) -> None:
+    """
+    Run block bootstrap robustness for one (asset, train, test, stop_mode)
+    configuration and write results into summary in-place.
+
+    The walk_forward kwargs passed to run_block_bootstrap_robustness must
+    exactly mirror the walk_forward call in run_config so that each
+    synthetic history is optimised with the same search space.
+
+    ATR parameters are threaded from stop_cfg, identical to run_config.
+    Bootstrap uses EQUITY_THRESHOLDS_BOOTSTRAP (looser than MC thresholds
+    because block reshuffling suppresses multi-year trends).
+    """
+    use_atr_stop = stop_cfg["use_atr_stop"]
+    N_atr_grid   = stop_cfg["N_atr_grid"]
+    atr_window   = stop_cfg["atr_window"]
+    stop_mode    = stop_cfg["stop_mode"]
+
+    logging.info(
+        "  Block bootstrap: n=%d  block=250d  stop_mode=%s",
+        n_bootstrap, stop_mode,
+    )
+    try:
+        bb_df = run_block_bootstrap_robustness(
+            df                    = df,
+            cash_df               = cash_df,
+            price_col             = "Zamkniecie",
+            cash_price_col        = "Zamkniecie",
+            n_samples             = n_bootstrap,
+            block_size            = 250,
+            # ── walk_forward kwargs — must mirror run_config exactly ──────
+            train_years           = train_years,
+            test_years            = test_years,
+            vol_window            = VOL_WINDOW,
+            funds_df              = None,
+            fund_params_grid      = None,
+            selected_mode         = POSITION_MODE,
+            filter_modes_override = FORCE_FILTER_MODE,
+            X_grid                = X_GRID,
+            Y_grid                = Y_GRID,
+            fast_grid             = FAST_GRID,
+            slow_grid             = SLOW_GRID,
+            tv_grid               = TV_GRID,
+            sl_grid               = SL_GRID,
+            mom_lookback_grid     = MOM_LB_GRID,
+            objective             = OBJECTIVE,
+            n_jobs                = n_jobs,
+            fast_mode             = True,
+            use_atr_stop          = use_atr_stop,
+            N_atr_grid            = N_atr_grid,
+            atr_window            = atr_window,
+        )
+
+        bb_sum = analyze_bootstrap(
+            bb_df,
+            oos_metrics,
+            thresholds=EQUITY_THRESHOLDS_BOOTSTRAP,
+        )
+
+        summary["bb_verdict"]   = bb_sum.get("verdict", "UNKNOWN")
+        summary["bb_n_samples"] = len(bb_df)
+        summary["bb_p_loss"]    = round(float(bb_sum.get("p_loss", np.nan)), 4)
+
+        METRIC_KEY_MAP = {
+            "cagr":   "CAGR",
+            "sharpe": "Sharpe",
+            "maxdd":  "MaxDD",
+            "calmar": "CalMAR",
+        }
+        STAT_KEY_MAP = {
+            "p05": "p05", "p25": "p25", "median": "median",
+            "p75": "p75", "p95": "p95",
+        }
+        for m in BB_METRICS:
+            ms = bb_sum.get(METRIC_KEY_MAP[m], {})
+            for s in BB_STATS:
+                summary[f"bb_{m}_{s}"] = round(
+                    float(ms.get(STAT_KEY_MAP[s], np.nan)), 4
+                )
+
+        logging.info(
+            "  Bootstrap done: verdict=%s  p05_CAGR=%.2f%%  "
+            "p_loss=%.1f%%  n=%d",
+            summary["bb_verdict"],
+            summary["bb_cagr_p05"] * 100,
+            summary["bb_p_loss"]   * 100,
+            summary["bb_n_samples"],
+        )
+
+    except Exception as exc:
+        logging.error("  Bootstrap exception — %s", exc)
+        _set_bb_nan(summary)
+        summary["bb_verdict"] = "ERROR"
+        summary["error_msg"]  = (
+            (summary.get("error_msg", "") + " | " if summary.get("error_msg") else "")
+            + f"bb_exception: {exc}"
+        )
+
+
+# ============================================================
 # SINGLE CONFIGURATION RUN
 # ============================================================
 
@@ -496,10 +647,12 @@ def run_config(
     cash_df:      pd.DataFrame,
     train_years:  int,
     test_years:   int,
-    stop_cfg:     dict,              # ← NEW: replaces implicit fixed-stop
+    stop_cfg:     dict,
     n_mc:         int,
     run_regime:   bool,
     n_jobs:       int,
+    run_bootstrap: bool = False,   # ← NEW
+    n_bootstrap:   int  = 500,     # ← NEW
 ) -> tuple[dict, list[dict]]:
 
     stop_mode    = stop_cfg["stop_mode"]
@@ -521,7 +674,8 @@ def run_config(
         "error_msg":   "",
         "candidate":   False,
     }
-
+    # Initialise bootstrap columns to SKIPPED — overwritten below if run_bootstrap=True
+    _set_bb_nan(summary)
     # ── Walk-forward ─────────────────────────────────────────────────────
     try:
         wf_equity, wf_results, wf_trades = walk_forward(
@@ -711,7 +865,21 @@ def run_config(
                 summary.update(_extract_regime_stats(regime_results))
             except Exception as exc:
                 logging.warning("%s: regime decomposition failed (non-fatal) — %s", label, exc)
-
+    # ── Block bootstrap robustness ────────────────────────────────────────
+    if run_bootstrap and not wf_equity.empty:
+        _run_bootstrap_for_config(
+            summary      = summary,
+            df           = df,
+            cash_df      = cash_df,
+            train_years  = train_years,
+            test_years   = test_years,
+            stop_cfg     = stop_cfg,
+            n_jobs       = n_jobs,
+            n_bootstrap  = n_bootstrap,
+            wf_equity    = wf_equity,
+            oos_metrics  = oos_metrics,
+        )
+    # else: bb columns already set to SKIPPED by _set_bb_nan above
     summary["candidate"] = _is_candidate(summary)
 
     logging.info(
@@ -730,9 +898,11 @@ def run_config(
 # ============================================================
 
 def run_sweep(
-    assets:     list[str],
-    n_mc:       int,
-    run_regime: bool,
+    assets:       list[str],
+    n_mc:         int,
+    run_regime:   bool,
+    run_bootstrap: bool = False,   # ← NEW
+    n_bootstrap:   int  = 500,     # ← NEW
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     tmp_dir = tempfile.mkdtemp()
@@ -749,6 +919,7 @@ def run_sweep(
     logging.info("  run_regime   : %s", run_regime)
     logging.info("  n_jobs       : %d", n_jobs)
     logging.info("  Total configs: %d", total)
+    logging.info("  run_bootstrap: %s (n=%d)", run_bootstrap, n_bootstrap)
     logging.info("=" * 80)
 
     logging.info("Loading MMF cash series ...")
@@ -785,6 +956,8 @@ def run_sweep(
                         "stop_mode":   stop_cfg["stop_mode"],
                         "error_msg":   "data_unavailable",
                         "candidate":   False,
+                        "bb_verdict":   "SKIPPED",   # ← ADD
+                        "bb_n_samples": 0,            # ← ADD
                     })
             continue
 
@@ -806,6 +979,8 @@ def run_sweep(
                     n_mc        = n_mc,
                     run_regime  = run_regime,
                     n_jobs      = n_jobs,
+                    run_bootstrap = run_bootstrap,   # ← NEW
+                    n_bootstrap   = n_bootstrap,     # ← NEW
                 )
                 all_summaries.append(summary)
                 all_windows.extend(win_rows)
@@ -885,7 +1060,43 @@ def _print_sweep_summary(summary_df: pd.DataFrame) -> None:
             "or CANDIDATE_MIN_P05_CAGR (currently %.2f) in the config block.",
             CANDIDATE_MIN_CALMAR, CANDIDATE_MIN_P05_CAGR,
         )
+    # ── Bootstrap verdict summary (only when bootstrap was run) ──────────
+    bb_run = (
+        "bb_verdict" in summary_df.columns
+        and (summary_df["bb_verdict"] != "SKIPPED").any()
+    )
+    if bb_run:
+        logging.info("")
+        logging.info("  BOOTSTRAP VERDICTS (configs where bootstrap ran):")
+        bb_rows = summary_df[summary_df["bb_verdict"] != "SKIPPED"].copy()
 
+        for stop_mode, grp in bb_rows.groupby("stop_mode"):
+            logging.info("  Stop mode: %s", stop_mode)
+            for _, r in grp.iterrows():
+                both = (
+                    r.get("mc_verdict", "") == "ROBUST"
+                    and r.get("bb_verdict", "") == "ROBUST"
+                )
+                flag = "  *** DOUBLE ROBUST ***" if both else ""
+                logging.info(
+                    "    %-12s [%d+%d]  BB=%-8s  MC=%-8s  "
+                    "p05=%.1f%%  p_loss=%.1f%%%s",
+                    r["asset"], r["train_years"], r["test_years"],
+                    r.get("bb_verdict",    "N/A"),
+                    r.get("mc_verdict",    "N/A"),
+                    r.get("bb_cagr_p05",   np.nan) * 100,
+                    r.get("bb_p_loss",     np.nan) * 100,
+                    flag,
+                )
+
+        double_robust = bb_rows[
+            (bb_rows["mc_verdict"] == "ROBUST") &
+            (bb_rows["bb_verdict"] == "ROBUST")
+        ]
+        logging.info(
+            "\n  %d / %d bootstrap configs are DOUBLE ROBUST (MC + Bootstrap).",
+            len(double_robust), len(bb_rows),
+        )
     logging.info("%s", sep)
 
 
@@ -937,7 +1148,7 @@ def main():
     parser.add_argument(
         "--mode", choices=["smoke", "full"], default="full",
         help=(
-            "smoke = n_mc=20, no regime (fast verification);\n"
+            "smoke = n_mc=20, no regime, no bootstrap (fast verification);\n"
             "full  = n_mc=1000, with regime decomp (production run)"
         ),
     )
@@ -946,33 +1157,54 @@ def main():
         help="Override n_mc (takes precedence over --mode default).",
     )
     parser.add_argument(
+        "--n_bootstrap", type=int, default=None,
+        help="Override bootstrap sample count (default 500).",
+    )
+    parser.add_argument(
         "--assets", nargs="+", default=None,
-        help=(
-            "Asset keys to include. Must match ASSET_REGISTRY keys. "
-            "Default: all 8 assets. E.g. --assets WIG20TR SP500"
-        ),
+        help="Asset keys to include. Must match ASSET_REGISTRY keys.",
     )
     parser.add_argument(
         "--no_regime", action="store_true",
         help="Skip regime decomposition (~20%% faster).",
     )
     parser.add_argument(
+        "--bootstrap", dest="run_bootstrap", action="store_true", default=None,
+        help="Enable block bootstrap robustness (slow, off by default).",
+    )
+    parser.add_argument(
+        "--no_bootstrap", dest="run_bootstrap", action="store_false",
+        help="Disable block bootstrap robustness.",
+    )
+    parser.add_argument(
         "--list", action="store_true",
         help="Print available assets and window configs, then exit.",
     )
+    parser.set_defaults(run_bootstrap=None)   # None → use RUN_BOOTSTRAP_DEFAULT
     args = parser.parse_args()
 
     if args.list:
         _list_configs()
         sys.exit(0)
 
-    # Resolve run settings
+    # ── Resolve run settings ─────────────────────────────────────────────
     if args.mode == "smoke":
-        n_mc       = args.n_mc if args.n_mc is not None else 20
-        run_regime = False   # always skip in smoke mode
+        n_mc          = args.n_mc if args.n_mc is not None else 20
+        run_regime    = False
+        run_bootstrap = False     # always off in smoke — bootstrap is too slow
+        n_bootstrap   = 0
     else:
-        n_mc       = args.n_mc if args.n_mc is not None else 1000
-        run_regime = not args.no_regime
+        n_mc          = args.n_mc if args.n_mc is not None else 1000
+        run_regime    = not args.no_regime
+        # CLI flag > module-level default
+        run_bootstrap = (
+            args.run_bootstrap
+            if args.run_bootstrap is not None
+            else RUN_BOOTSTRAP_DEFAULT
+        )
+        n_bootstrap = (
+            args.n_bootstrap if args.n_bootstrap is not None else N_BOOTSTRAP
+        )
 
     assets = args.assets if args.assets else DEFAULT_ASSETS
 
@@ -985,15 +1217,18 @@ def main():
         sys.exit(1)
 
     logging.info(
-        "Settings: mode=%s  n_mc=%d  run_regime=%s  assets=%s",
-        args.mode, n_mc, run_regime, assets,
+        "Settings: mode=%s  n_mc=%d  run_regime=%s  "
+        "run_bootstrap=%s  n_bootstrap=%d  assets=%s",
+        args.mode, n_mc, run_regime, run_bootstrap, n_bootstrap, assets,
     )
 
-    # Run
+    # ── Run ──────────────────────────────────────────────────────────────
     summary_df, windows_df = run_sweep(
-        assets     = assets,
-        n_mc       = n_mc,
-        run_regime = run_regime,
+        assets        = assets,
+        n_mc          = n_mc,
+        run_regime    = run_regime,
+        run_bootstrap = run_bootstrap,   # ← NEW
+        n_bootstrap   = n_bootstrap,     # ← NEW
     )
 
     if summary_df.empty:
