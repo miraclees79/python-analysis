@@ -32,6 +32,7 @@ import logging
 import requests
 import pandas as pd
 from datetime import date
+import tempfile
 
 logging.basicConfig(
     format="%(asctime)s  %(levelname)-8s  %(message)s",
@@ -50,7 +51,7 @@ HISTORY_N     = int(os.getenv("HISTORY_SAMPLE_N",  "50"))
 HISTORY_FROM  = os.getenv("HISTORY_FROM_DATE",     "2000-01-01")
 OUTPUT_DIR    = os.getenv("OUTPUT_DIR",             "/tmp/knf_outputs")
 GDRIVE_FOLDER = os.getenv("GDRIVE_FOLDER_ID",       "")
-CREDS_PATH    = "/tmp/credentials.json"
+CREDS_PATH    = os.path.join(tempfile.gettempdir(), "credentials.json")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
