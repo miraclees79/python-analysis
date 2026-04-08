@@ -1167,7 +1167,7 @@ def main():
     )
     
     parser.add_argument(
-        "--windows", nargs="+", default=None,
+        "--windows",  default=None,
         help="Window lengths (train years, test years).",
     )
     parser.add_argument(
