@@ -50,7 +50,7 @@ jobs:
           FOLDER_NAME: ${{ secrets.FOLDER_NAME }} 
           
         run: |
-          python current_development/asset_config_sweep.py --assets WIG20TR  --mode full
+          python current_development/asset_config_sweep.py --assets MWIG40TR  --mode full --windows [(8,2)] --bootstrap
       
 
       

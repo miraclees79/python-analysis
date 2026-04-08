@@ -901,6 +901,7 @@ def run_sweep(
     assets:       list[str],
     n_mc:         int,
     run_regime:   bool,
+    window_configs = WINDOW_CONFIGS,
     run_bootstrap: bool = False,   # ← NEW
     n_bootstrap:   int  = 500,     # ← NEW
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -913,7 +914,7 @@ def run_sweep(
     logging.info("=" * 80)
     logging.info("ASSET CONFIG SWEEP  START: %s", dt.datetime.now())
     logging.info("  Assets       : %s", assets)
-    logging.info("  Window configs: %s", WINDOW_CONFIGS)
+    logging.info("  Window configs: %s", window_configs)
     logging.info("  Stop modes   : %s", [c["stop_mode"] for c in STOP_MODE_CONFIGS])
     logging.info("  n_mc         : %d", n_mc)
     logging.info("  run_regime   : %s", run_regime)
@@ -1164,6 +1165,11 @@ def main():
         "--assets", nargs="+", default=None,
         help="Asset keys to include. Must match ASSET_REGISTRY keys.",
     )
+    
+    parser.add_argument(
+        "--windows", nargs="+", default=None,
+        help="Window lengths (train years, test years).",
+    )
     parser.add_argument(
         "--no_regime", action="store_true",
         help="Skip regime decomposition (~20%% faster).",
@@ -1207,7 +1213,7 @@ def main():
         )
 
     assets = args.assets if args.assets else DEFAULT_ASSETS
-
+    window_configs = args.windows if args.windows else WINDOW_CONFIGS
     unknown = [a for a in assets if a not in ASSET_REGISTRY]
     if unknown:
         logging.error(
@@ -1227,6 +1233,7 @@ def main():
         assets        = assets,
         n_mc          = n_mc,
         run_regime    = run_regime,
+        window_configs= window_configs,
         run_bootstrap = run_bootstrap,   # ← NEW
         n_bootstrap   = n_bootstrap,     # ← NEW
     )
