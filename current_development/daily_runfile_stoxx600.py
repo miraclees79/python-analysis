@@ -69,9 +69,9 @@ from stooq_hybrid_updater import run_update
 # ██████████████████████████████████████████████████████████
 # ============================================================
 
-ASSET_NAME    = "MSCI_World"          # <- key in ASSET_REGISTRY below
-OUTPUT_PREFIX = "msci_world"          # <- unique lowercase file prefix
-TRAIN_YEARS   = 9                   # <- from sweep candidate results
+ASSET_NAME    = "STOXX600"          # <- key in ASSET_REGISTRY below
+OUTPUT_PREFIX = "stoxx600"          # <- unique lowercase file prefix
+TRAIN_YEARS   = 7                   # <- from sweep candidate results
 TEST_YEARS    =1                   # <- from sweep candidate results
 FORCE_FILTER_MODE = None   # <- None for auto, or e.g. ["ma"]
 
@@ -145,14 +145,15 @@ TV_GRID        = [0.08, 0.10, 0.12, 0.15, 0.20]
 SL_GRID        = [0.05, 0.08, 0.10, 0.15]
 MOM_LB_GRID    = [252]
 
+MMF_FLOOR      = "1994-10-03"
+DATA_START     = "1990-01-01"
+BOUNDARY_EXITS = {"CARRY", "SAMPLE_END"}
+
 USE_ATR_STOP    = True
 ATR_WINDOW      = 20
 N_ATR_GRID      = [0.08, 0.10, 0.12, 0.15, 0.20]
 
 
-MMF_FLOOR      = "1994-10-03"
-DATA_START     = "1990-01-01"
-BOUNDARY_EXITS = {"CARRY", "SAMPLE_END"}
 
 OUTPUT_DIR = "outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)

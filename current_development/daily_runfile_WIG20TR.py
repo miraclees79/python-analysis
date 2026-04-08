@@ -145,7 +145,7 @@ TV_GRID        = [0.08, 0.10, 0.12, 0.15, 0.20]
 SL_GRID        = [0.05, 0.08, 0.10, 0.15]
 MOM_LB_GRID    = [252]
 
-USE_ATR_STOP    = True
+USE_ATR_STOP    = False
 ATR_WINDOW      = 20
 N_ATR_GRID      = [0.08, 0.10, 0.12, 0.15, 0.20]
 
