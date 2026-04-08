@@ -1,3 +1,4 @@
+
 # .github/workflows/daily_generic_asset.yml
 #
 # Template workflow for daily monitoring of any single equity index via
@@ -45,7 +46,7 @@ on:
 
 # Asset-specific env vars — set OUTPUT_PREFIX to match daily_runfile_generic.py
 env:
-  OUTPUT_PREFIX: "mwig40tr"    # <-- change this per asset
+  OUTPUT_PREFIX: "stoxx600"    # <-- change this per asset
 
 jobs:
   run-generic-asset:
