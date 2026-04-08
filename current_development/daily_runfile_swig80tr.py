@@ -71,9 +71,9 @@ from stooq_hybrid_updater import run_update
 
 ASSET_NAME    = "SWIG80TR"          # <- key in ASSET_REGISTRY below
 OUTPUT_PREFIX = "swig80tr"          # <- unique lowercase file prefix
-TRAIN_YEARS   = 8                   # <- from sweep candidate results
+TRAIN_YEARS   = 9                   # <- from sweep candidate results
 TEST_YEARS    = 2                   # <- from sweep candidate results
-FORCE_FILTER_MODE = ["ma", "mom"]   # <- None for auto, or e.g. ["ma"]
+FORCE_FILTER_MODE = None   # <- None for auto, or e.g. ["ma"]
 
 
 # ============================================================
@@ -148,6 +148,11 @@ MOM_LB_GRID    = [252]
 MMF_FLOOR      = "1994-10-03"
 DATA_START     = "1990-01-01"
 BOUNDARY_EXITS = {"CARRY", "SAMPLE_END"}
+
+USE_ATR_STOP    = True
+ATR_WINDOW      = 20
+N_ATR_GRID      = [0.08, 0.10, 0.12, 0.15, 0.20]
+
 
 OUTPUT_DIR = "outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -270,6 +275,9 @@ wf_equity, wf_results, wf_trades = walk_forward(
     objective             = OBJECTIVE,
     n_jobs                = N_JOBS,
     fast_mode             = True,
+    use_atr_stop          = USE_ATR_STOP,
+    N_atr_grid            = N_ATR_GRID if USE_ATR_STOP else None,
+    atr_window            = ATR_WINDOW,
 )
 
 if wf_equity.empty or wf_results.empty:
