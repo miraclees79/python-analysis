@@ -1227,7 +1227,7 @@ def main():
         "run_bootstrap=%s  n_bootstrap=%d  assets=%s",
         args.mode, n_mc, run_regime, run_bootstrap, n_bootstrap, assets,
     )
-    run_update()
+    run_update(get_funds = False)
     # ── Run ──────────────────────────────────────────────────────────────
     summary_df, windows_df = run_sweep(
         assets        = assets,
