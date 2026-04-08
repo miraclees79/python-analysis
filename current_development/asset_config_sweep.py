@@ -1213,7 +1213,7 @@ def main():
         )
 
     assets = args.assets if args.assets else DEFAULT_ASSETS
-    window_configs = args.windows if args.windows else WINDOW_CONFIGS
+    window_configs = ast.literal_eval(args.windows) if args.windows else WINDOW_CONFIGS
     unknown = [a for a in assets if a not in ASSET_REGISTRY]
     if unknown:
         logging.error(
@@ -1227,7 +1227,7 @@ def main():
         "run_bootstrap=%s  n_bootstrap=%d  assets=%s",
         args.mode, n_mc, run_regime, run_bootstrap, n_bootstrap, assets,
     )
-
+    run_update()
     # ── Run ──────────────────────────────────────────────────────────────
     summary_df, windows_df = run_sweep(
         assets        = assets,
