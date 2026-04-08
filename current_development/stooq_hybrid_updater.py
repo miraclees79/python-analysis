@@ -94,18 +94,26 @@ ETF_TICKERS = [
 # --- FUNKCJE GOOGLE DRIVE ---
 
 def _get_drive_service():
-    from google.oauth2 import service_account
-    from googleapiclient.discovery import build
-    
-    # Próba odczytu credentials z temp 
-    credentials_path = os.path.join(tempfile.gettempdir(), "credentials.json")
-    
+    try:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        
+        credentials_path = os.path.join(tempfile.gettempdir(), "credentials.json")
+        if not os.path.exists(credentials_path):
+            # Próba znalezienia w bieżącym katalogu jeśli brak w temp
+            credentials_path = "credentials.json"
+            
+        if not os.path.exists(credentials_path):
+            return None
 
-    creds = service_account.Credentials.from_service_account_file(
-        credentials_path,
-        scopes=["https://www.googleapis.com/auth/drive"],
-    )
-    return build("drive", "v3", credentials=creds, cache_discovery=False)
+        creds = service_account.Credentials.from_service_account_file(
+            credentials_path,
+            scopes=["https://www.googleapis.com/auth/drive"],
+        )
+        return build("drive", "v3", credentials=creds, cache_discovery=False)
+    except Exception as e:
+        logging.warning(f"Nie można nawiązać połączenia z GDrive (Tryb Offline?): {e}")
+        return None
 
 def _get_dynamic_tickers(service):
     """Pobiera listę funduszy z knf_stooq_confirmed.csv na Google Drive."""
@@ -153,27 +161,53 @@ def _get_dynamic_tickers(service):
         return []
 
 def _get_zip_from_gdrive(service, zip_name):
+    # 1. Sprawdź cache w pamięci RAM
     if zip_name in _ZIP_CACHE:
         return _ZIP_CACHE[zip_name]
     
-    from googleapiclient.http import MediaIoBaseDownload
-    q = f"name='{zip_name}' and '{FOLDER_ID}' in parents and trashed=false"
-    res = service.files().list(q=q, fields="files(id)").execute()
-    files = res.get("files", [])
-    if not files:
-        logging.error(f"Nie znaleziono ZIPa {zip_name} na GDrive!")
+    # 2. Sprawdź, czy plik istnieje lokalnie w folderze "data"
+    local_zip_path = os.path.join(DATA_DIR, zip_name)
+    if os.path.exists(local_zip_path):
+        logging.info(f"Wczytywanie {zip_name} z lokalnego katalogu data...")
+        with open(local_zip_path, "rb") as f:
+            content = f.read()
+            _ZIP_CACHE[zip_name] = content
+            return content
+
+    # 3. Jeśli nie ma lokalnie, spróbuj pobrać z GDrive (tylko jeśli service nie jest None)
+    if service:
+        logging.info(f"Nie znaleziono {zip_name} lokalnie. Próba pobrania z GDrive...")
+        try:
+            from googleapiclient.http import MediaIoBaseDownload
+            q = f"name='{zip_name}' and '{FOLDER_ID}' in parents and trashed=false"
+            res = service.files().list(q=q, fields="files(id)").execute()
+            files = res.get("files", [])
+            
+            if not files:
+                logging.error(f"Nie znaleziono ZIPa {zip_name} na GDrive!")
+                return None
+            
+            file_id = files[0]['id']
+            buf = io.BytesIO()
+            request = service.files().get_media(fileId=file_id)
+            downloader = MediaIoBaseDownload(buf, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            
+            content = buf.getvalue()
+            # Opcjonalnie: zapisz pobrany ZIP lokalnie, aby był dostępny następnym razem offline
+            with open(local_zip_path, "wb") as f:
+                f.write(content)
+                
+            _ZIP_CACHE[zip_name] = content
+            return content
+        except Exception as e:
+            logging.error(f"Błąd podczas pobierania z GDrive: {e}")
+            return None
+    else:
+        logging.error(f"Błąd: {zip_name} nie istnieje lokalnie, a brak dostępu do GDrive.")
         return None
-    
-    file_id = files[0]['id']
-    buf = io.BytesIO()
-    request = service.files().get_media(fileId=file_id)
-    downloader = MediaIoBaseDownload(buf, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-    
-    _ZIP_CACHE[zip_name] = buf.getvalue()
-    return _ZIP_CACHE[zip_name]
 
 # --- POBIERANIE API ---
 
@@ -239,18 +273,25 @@ def load_csv_and_validate(df, label):
 
 def run_update(get_funds = True):
     service = _get_drive_service()
-    if get_funds: 
-        dynamic_tickers = _get_dynamic_tickers(service)
-        full_tickers_table = DEFAULT_TICKERS + dynamic_tickers + ETF_TICKERS
-        
-        def get_folder_id(name):
-            query = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-            res = service.files().list(q=query, fields='files(id)').execute()
-            items = res.get('files', [])
-            return items[0]['id'] if items else None
-        FOLDER_ID = get_folder_id("Dane")
+    # Jeśli brak internetu/service, wymuś get_funds = False lub obsłuż pustą listę
+    if service is None:
+        logging.warning("Uruchamianie w trybie ograniczonym (tylko lokalne ZIPy i lista bazowa)")
+        dynamic_tickers = []
+        full_tickers_table = DEFAULT_TICKERS
     else:
-        full_tickers_table = DEFAULT_TICKERS 
+    # Oryginalna logika pobierania folderów i dynamicznych tickerów
+        if get_funds: 
+            dynamic_tickers = _get_dynamic_tickers(service)
+            full_tickers_table = DEFAULT_TICKERS + dynamic_tickers + ETF_TICKERS
+        
+            def get_folder_id(name):
+                query = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+                res = service.files().list(q=query, fields='files(id)').execute()
+                items = res.get('files', [])
+                return items[0]['id'] if items else None
+            FOLDER_ID = get_folder_id("Dane")
+        else:
+            full_tickers_table = DEFAULT_TICKERS 
     
     
     

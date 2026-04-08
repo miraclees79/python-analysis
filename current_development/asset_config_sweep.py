@@ -106,7 +106,7 @@ import os
 import sys
 import tempfile
 from collections import Counter
-
+import ast
 import numpy as np
 import pandas as pd
 
@@ -901,6 +901,8 @@ def run_sweep(
     assets:       list[str],
     n_mc:         int,
     run_regime:   bool,
+    window_configs = WINDOW_CONFIGS,
+    stop_mode_configs = STOP_MODE_CONFIGS,
     run_bootstrap: bool = False,   # ← NEW
     n_bootstrap:   int  = 500,     # ← NEW
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -908,13 +910,13 @@ def run_sweep(
     tmp_dir = tempfile.mkdtemp()
     n_jobs  = _cpu_jobs()
     # Total now: assets × window configs × stop modes
-    total   = len(assets) * len(WINDOW_CONFIGS) * len(STOP_MODE_CONFIGS)
+    total   = len(assets) * len(window_configs) * len(stop_mode_configs)
 
     logging.info("=" * 80)
     logging.info("ASSET CONFIG SWEEP  START: %s", dt.datetime.now())
     logging.info("  Assets       : %s", assets)
-    logging.info("  Window configs: %s", WINDOW_CONFIGS)
-    logging.info("  Stop modes   : %s", [c["stop_mode"] for c in STOP_MODE_CONFIGS])
+    logging.info("  Window configs: %s", window_configs)
+    logging.info("  Stop modes   : %s", [c["stop_mode"] for c in stop_mode_configs])
     logging.info("  n_mc         : %d", n_mc)
     logging.info("  run_regime   : %s", run_regime)
     logging.info("  n_jobs       : %d", n_jobs)
@@ -947,8 +949,8 @@ def run_sweep(
                 "  Skipping all configs for %s — data unavailable.",
                 asset_name,
             )
-            for train_y, test_y in WINDOW_CONFIGS:
-                for stop_cfg in STOP_MODE_CONFIGS:
+            for train_y, test_y in window_configs:
+                for stop_cfg in stop_mode_configs:
                     all_summaries.append({
                         "asset":       asset_name,
                         "train_years": train_y,
@@ -961,8 +963,8 @@ def run_sweep(
                     })
             continue
 
-        for train_years, test_years in WINDOW_CONFIGS:
-            for stop_cfg in STOP_MODE_CONFIGS:   # ← NEW inner loop
+        for train_years, test_years in window_configs:
+            for stop_cfg in stop_mode_configs:   # ← NEW inner loop
                 run_count += 1
                 logging.info(
                     "  [%d/%d]  %s  [%d+%d]  [%s] ...",
@@ -1164,6 +1166,16 @@ def main():
         "--assets", nargs="+", default=None,
         help="Asset keys to include. Must match ASSET_REGISTRY keys.",
     )
+    
+    parser.add_argument(
+        "--windows",  default=None,
+        help="Window lengths (train years, test years).",
+    )
+
+    parser.add_argument(
+        "--stopmode",  default=None,
+        help="Stop mode: atr or fixed - defaults to both.",
+    )
     parser.add_argument(
         "--no_regime", action="store_true",
         help="Skip regime decomposition (~20%% faster).",
@@ -1207,6 +1219,31 @@ def main():
         )
 
     assets = args.assets if args.assets else DEFAULT_ASSETS
+    window_configs = ast.literal_eval(args.windows) if args.windows else WINDOW_CONFIGS
+    if args.stopmode:
+        if args.stopmode == "atr":
+            stop_mode_configs = [{
+            "stop_mode":    "atr",
+            "use_atr_stop": True,
+            "atr_window":   ATR_WINDOW,
+            "N_atr_grid":   N_ATR_GRID,
+            }]
+        elif args.stopmode == "fixed":
+            stop_mode_configs = [{
+            "stop_mode":    "fixed",
+            "use_atr_stop": False,
+            "atr_window":   ATR_WINDOW,
+            "N_atr_grid":   None,
+            }]
+        else:
+            logging.error("Unknown stop mode(s)")
+            sys.exit(1)
+    else:
+        stop_mode_configs = STOP_MODE_CONFIGS
+
+
+
+
 
     unknown = [a for a in assets if a not in ASSET_REGISTRY]
     if unknown:
@@ -1221,12 +1258,14 @@ def main():
         "run_bootstrap=%s  n_bootstrap=%d  assets=%s",
         args.mode, n_mc, run_regime, run_bootstrap, n_bootstrap, assets,
     )
-
+    run_update(get_funds = False)
     # ── Run ──────────────────────────────────────────────────────────────
     summary_df, windows_df = run_sweep(
         assets        = assets,
         n_mc          = n_mc,
         run_regime    = run_regime,
+        window_configs= window_configs,
+        stop_mode_configs = stop_mode_configs,
         run_bootstrap = run_bootstrap,   # ← NEW
         n_bootstrap   = n_bootstrap,     # ← NEW
     )
