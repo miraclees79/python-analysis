@@ -73,7 +73,7 @@ ASSET_NAME    = "MWIG40TR"          # <- key in ASSET_REGISTRY below
 OUTPUT_PREFIX = "mwig40tr"          # <- unique lowercase file prefix
 TRAIN_YEARS   = 8                   # <- from sweep candidate results
 TEST_YEARS    = 2                   # <- from sweep candidate results
-FORCE_FILTER_MODE = ["ma", "mom"]   # <- None for auto, or e.g. ["ma"]
+FORCE_FILTER_MODE = None   # <- None for auto, or e.g. ["ma"]
 
 
 # ============================================================
@@ -152,6 +152,9 @@ BOUNDARY_EXITS = {"CARRY", "SAMPLE_END"}
 OUTPUT_DIR = "outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+USE_ATR_STOP    = False
+ATR_WINDOW      = 20
+N_ATR_GRID      = [0.08, 0.10, 0.12, 0.15, 0.20]
 
 # ============================================================
 # LOGGING
@@ -270,6 +273,9 @@ wf_equity, wf_results, wf_trades = walk_forward(
     objective             = OBJECTIVE,
     n_jobs                = N_JOBS,
     fast_mode             = True,
+    use_atr_stop          = USE_ATR_STOP,
+    N_atr_grid            = N_ATR_GRID if USE_ATR_STOP else None,
+    atr_window            = ATR_WINDOW,
 )
 
 if wf_equity.empty or wf_results.empty:
