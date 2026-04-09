@@ -1,15 +1,22 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Apr  7 20:48:24 2026
-
-@author: adamg
-"""
-
 # knf_stooq_match_v2.py
 #
 # Matches KNF subfund names against stooq fund titles, constrained by TFI
 # (fund management company) to prevent cross-manager mis-matches such as
 # "Goldman Sachs Emerytura 2025" matching "PKO Emerytura 2025".
+#
+# CONFIRMED MATCHES SKIP LOGIC
+# -----------------------------
+# Before running any matching, the script downloads knf_stooq_confirmed.csv
+# from Google Drive (if it exists).  Any subfundId already present in that
+# file is excluded from the matching run entirely — confirmed matches are
+# treated as ground truth and are never re-processed.
+#
+# After matching, the new results are written to knf_stooq_matches.csv as
+# usual.  The confirmed file itself is never modified by this script; it is
+# maintained manually or by a separate review workflow.
+#
+# If knf_stooq_confirmed.csv does not exist on Drive, the script proceeds
+# with the full KNF subfund list as before.
 #
 # STOOQ DATA SOURCE
 # -----------------
@@ -59,11 +66,13 @@ Created on Tue Apr  7 20:48:24 2026
 #
 # Inputs:
 #   knf_summary.csv             — from Google Drive (must include `tfi_name`)
+#   knf_stooq_confirmed.csv     — from Google Drive (optional; already-reviewed
+#                                  matches to skip; must include `subfundId`)
 #   fund_data/*.txt             — stooq fund name files (local, see format above)
 #
 # Outputs (to Google Drive):
-#   knf_stooq_matches.csv       — full match table
-#   knf_stooq_unmatched.csv     — tier == "none"
+#   knf_stooq_matches.csv       — new match results (excludes confirmed)
+#   knf_stooq_unmatched.csv     — tier == "none" from this run
 #   knf_stooq_review.csv        — fuzzy score < 90 OR tfi_fallback=True
 #
 # Required env vars:
@@ -89,6 +98,7 @@ import urllib.error
 import json
 from pathlib import Path
 import tempfile
+
 import pandas as pd
 from rapidfuzz import process, fuzz
 
@@ -118,7 +128,8 @@ KNF_API_BASE     = "https://wybieramfundusze-api.knf.gov.pl"
 KNF_API_RETRIES  = 3
 KNF_API_BACKOFF  = 2.0   # seconds, doubled on each retry
 
-KNF_SUMMARY_FILE = "knf_summary.csv"
+KNF_SUMMARY_FILE    = "knf_summary.csv"
+CONFIRMED_FILE      = "knf_stooq_confirmed.csv"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -134,12 +145,27 @@ def get_drive_service():
     return build("drive", "v3", credentials=creds)
 
 
-def download_csv_from_drive(service, folder_id, filename, sep=";"):
+def download_csv_from_drive(service, folder_id, filename, sep=";",
+                             required=True) -> pd.DataFrame | None:
+    """
+    Download a CSV from Drive.  Returns None (with a warning rather than an
+    error) when required=False and the file is not found — used for the
+    optional confirmed-matches file.
+    """
     q = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
-    files = service.files().list(q=q, fields="files(id,name)").execute().get("files", [])
+    files = (service.files()
+                    .list(q=q, fields="files(id,name)")
+                    .execute()
+                    .get("files", []))
     if not files:
-        log.warning("File not found in Drive: %s", filename)
+        if required:
+            log.error("Required file not found in Drive: %s", filename)
+        else:
+            log.info(
+                "Optional file '%s' not found on Drive — skipping.", filename
+            )
         return None
+
     from googleapiclient.http import MediaIoBaseDownload
     buf = io.BytesIO()
     dl  = MediaIoBaseDownload(buf, service.files().get_media(fileId=files[0]["id"]))
@@ -148,7 +174,7 @@ def download_csv_from_drive(service, folder_id, filename, sep=";"):
         _, done = dl.next_chunk()
     buf.seek(0)
     try:
-        df = pd.read_csv(buf, sep=sep, encoding="utf-8")
+        df = pd.read_csv(buf, sep=sep, encoding="utf-8", engine="python")
     except UnicodeDecodeError:
         buf.seek(0)
         df = pd.read_csv(buf, sep=sep, encoding="cp1250")
@@ -160,7 +186,10 @@ def upload_csv_to_drive(service, folder_id, local_path):
     from googleapiclient.http import MediaFileUpload
     filename = os.path.basename(local_path)
     q = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
-    existing = service.files().list(q=q, fields="files(id)").execute().get("files", [])
+    existing = (service.files()
+                       .list(q=q, fields="files(id)")
+                       .execute()
+                       .get("files", []))
     media = MediaFileUpload(local_path, mimetype="text/csv", resumable=True)
     if existing:
         service.files().update(fileId=existing[0]["id"], media_body=media).execute()
@@ -171,6 +200,54 @@ def upload_csv_to_drive(service, folder_id, local_path):
             media_body=media, fields="id",
         ).execute()
         log.info("Drive CREATED : %s", filename)
+
+
+# ---------------------------------------------------------------------------
+# Confirmed-matches loader
+# ---------------------------------------------------------------------------
+
+def load_confirmed_ids(service) -> set[int]:
+    """
+    Download knf_stooq_confirmed.csv and return the set of subfundIds it
+    contains.  Returns an empty set if the file does not exist on Drive or
+    does not have a subfundId column — in both cases the full KNF list is
+    processed.
+    """
+    df = download_csv_from_drive(
+        service, GDRIVE_FOLDER, CONFIRMED_FILE,
+        sep=None,        # auto-detect separator (comma or semicolon)
+        required=False,
+    )
+
+    if df is None:
+        log.info("No confirmed-matches file found — all subfunds will be processed.")
+        return set()
+
+    # Auto-detect separator produced None for sep; pandas used engine="python"
+    # so the result may have been parsed with the wrong sep if sep=None is not
+    # supported by the version in use.  Re-try with explicit separators.
+    if df is None or df.empty:
+        return set()
+
+    if "subfundId" not in df.columns:
+        # Try common alternative column names
+        alt = [c for c in df.columns if c.strip().lower() == "subfundid"]
+        if alt:
+            df = df.rename(columns={alt[0]: "subfundId"})
+        else:
+            log.warning(
+                "'%s' has no subfundId column (found: %s). "
+                "Cannot determine confirmed IDs — processing all subfunds.",
+                CONFIRMED_FILE, list(df.columns),
+            )
+            return set()
+
+    confirmed_ids = set(df["subfundId"].dropna().astype(int).tolist())
+    log.info(
+        "Confirmed matches loaded: %d subfundIds will be skipped.",
+        len(confirmed_ids),
+    )
+    return confirmed_ids
 
 
 # ---------------------------------------------------------------------------
@@ -186,9 +263,9 @@ def load_stooq_txt_files(fund_data_dir: Path) -> pd.DataFrame:
         <TICKER>        <NAME>
         1122.N          PZU ZRÓWNOWAŻONY
 
-    The ticker ends with ".N" (case-insensitive) and is separated from
-    the fund name by one or more whitespace characters.  Lines that do
-    not match this pattern (e.g. header lines or blank lines) are skipped.
+    The ticker ends with ".N" (case-insensitive) and is separated from the
+    fund name by one or more whitespace characters.  Lines that do not match
+    this pattern (e.g. header lines or blank lines) are skipped.
 
     The filename stem (without extension) becomes the stooq_category for
     every row sourced from that file.
@@ -214,22 +291,19 @@ def load_stooq_txt_files(fund_data_dir: Path) -> pd.DataFrame:
 
     # Pattern: optional whitespace, digits, ".N" (case-insensitive),
     # one or more whitespace chars, then the fund name (rest of line).
-    _LINE_RE = re.compile(
-        r"^\s*(\d+)\.n\s+(.+)$",
-        re.IGNORECASE,
-    )
+    _LINE_RE = re.compile(r"^\s*(\d+)\.n\s+(.+)$", re.IGNORECASE)
 
     pieces = []
     for txt_path in txt_files:
-        category = txt_path.stem          # filename without extension
-        rows = []
+        category  = txt_path.stem
+        rows      = []
+        n_skipped = 0
         try:
             text = txt_path.read_text(encoding="utf-8", errors="replace")
         except Exception as exc:
             log.warning("Could not read %s: %s", txt_path.name, exc)
             continue
 
-        n_skipped = 0
         for line in text.splitlines():
             m = _LINE_RE.match(line)
             if not m:
@@ -237,10 +311,9 @@ def load_stooq_txt_files(fund_data_dir: Path) -> pd.DataFrame:
                 continue
             numeric_id = int(m.group(1))
             name       = m.group(2).strip()
-            ticker     = f"{numeric_id}.N"
             rows.append({
                 "stooq_id":       numeric_id,
-                "stooq_ticker":   ticker,
+                "stooq_ticker":   f"{numeric_id}.N",
                 "stooq_title":    name,
                 "stooq_category": category,
             })
@@ -260,8 +333,6 @@ def load_stooq_txt_files(fund_data_dir: Path) -> pd.DataFrame:
 
     df = pd.concat(pieces, ignore_index=True)
 
-    # Deduplicate — same ticker may appear in multiple category files.
-    # Keep first occurrence (preserves the category of the first file encountered).
     n_before = len(df)
     df = df.drop_duplicates(subset=["stooq_id"], keep="first")
     n_dupes  = n_before - len(df)
@@ -361,6 +432,7 @@ def residual_name(name: str, brand_token: str = "") -> str:
 # In-scope TFIs
 # ---------------------------------------------------------------------------
 
+# Narrow
 TFI_IN_SCOPE: set[str] = {
     "tfi allianz polska s.a.",
     "generali investments tfi s.a.",
@@ -374,6 +446,41 @@ TFI_IN_SCOPE: set[str] = {
     "vig/c-quadrat tfi s.a.",
 }
 
+# wide
+
+TFI_IN_SCOPE: set[str] = {
+    "tfi allianz polska s.a.",
+    "generali investments tfi s.a.",
+    "goldman sachs tfi s.a.",
+    "investors tfi s.a.",
+    "pko tfi s.a.",
+    "tfi pzu sa",
+    "quercus tfi s.a.",
+    "skarbiec tfi s.a.",
+    "uniqa tfi s.a.",
+    "vig/c-quadrat tfi s.a.",
+    "agiofunds tfi s.a.",
+    "opoka tfi s.a.",
+    "alior tfi s.a.",
+    "rockbridge tfi s.a.",
+    "amundi polska tfi s.a.",
+    "bnp paribas tfi s.a.",
+    "caspar tfi s.a.",
+    "santander tfi s.a.",
+    "eques investment tfi s.a.",
+    "esaliens tfi s.a.",
+    "mtfi s.a.",
+    "investors tfi s.a.",
+    "best tfi s.a.",
+    "mci capital tfi s.a.",
+    "millennium tfi s.a.",
+    "pekao tfi s.a.",
+    "ipopema tfi s.a.",
+    "velofunds tfi s.a.",
+
+}
+
+
 CATEGORY_NO_STOOQ_PREFIXES: tuple[str, ...] = (
     "PPK",
 )
@@ -382,7 +489,11 @@ CATEGORY_NO_STOOQ_PREFIXES: tuple[str, ...] = (
 # Load and prepare KNF summary
 # ---------------------------------------------------------------------------
 
-def load_knf_summary(service) -> pd.DataFrame:
+def load_knf_summary(service, confirmed_ids: set[int]) -> pd.DataFrame:
+    """
+    Load knf_summary.csv from Drive, apply TFI scope filter and category
+    exclusions, then remove any subfundId already present in confirmed_ids.
+    """
     df = download_csv_from_drive(service, GDRIVE_FOLDER, KNF_SUMMARY_FILE)
     if df is None or df.empty:
         raise RuntimeError("knf_summary.csv not found or empty on Drive.")
@@ -393,22 +504,21 @@ def load_knf_summary(service) -> pd.DataFrame:
             "Re-run knf_explore.py to regenerate it with TFI data."
         )
 
+    # ── TFI scope filter ──────────────────────────────────────────────────
     tfi_key_raw = df["tfi_name"].apply(
         lambda n: to_ascii(n.strip().lower()) if isinstance(n, str) else ""
     )
-
     scope_mask = tfi_key_raw.isin(TFI_IN_SCOPE)
-    n_out = (~scope_mask).sum()
     log.info(
         "Scope filter: keeping %d subfunds from %d in-scope TFIs, "
         "dropping %d from other TFIs",
         scope_mask.sum(),
         df.loc[scope_mask, "tfi_name"].nunique(),
-        n_out,
+        (~scope_mask).sum(),
     )
     df = df[scope_mask].copy()
 
-    found_keys = set(tfi_key_raw[scope_mask].unique())
+    found_keys   = set(tfi_key_raw[scope_mask].unique())
     missing_keys = TFI_IN_SCOPE - found_keys
     if missing_keys:
         log.warning(
@@ -417,9 +527,11 @@ def load_knf_summary(service) -> pd.DataFrame:
             ", ".join(sorted(missing_keys)),
         )
 
+    # ── Category exclusions ───────────────────────────────────────────────
     if "category" in df.columns:
         cat_mask = df["category"].apply(
-            lambda c: isinstance(c, str) and c.startswith(CATEGORY_NO_STOOQ_PREFIXES)
+            lambda c: isinstance(c, str)
+            and c.startswith(CATEGORY_NO_STOOQ_PREFIXES)
         )
         n_cat = cat_mask.sum()
         if n_cat:
@@ -430,13 +542,37 @@ def load_knf_summary(service) -> pd.DataFrame:
             )
             df = df[~cat_mask].copy()
 
+    # ── Skip already-confirmed subfunds ───────────────────────────────────
+    if confirmed_ids:
+        before = len(df)
+        # Ensure the subfundId column is integer-comparable
+        if "subfundId" in df.columns:
+            df["subfundId"] = pd.to_numeric(df["subfundId"], errors="coerce")
+            already_confirmed = df["subfundId"].isin(confirmed_ids)
+            df = df[~already_confirmed].copy()
+            n_skipped = before - len(df)
+            log.info(
+                "Skipping %d subfunds already present in %s  "
+                "(%d remaining to match).",
+                n_skipped, CONFIRMED_FILE, len(df),
+            )
+        else:
+            log.warning(
+                "knf_summary.csv has no subfundId column — "
+                "cannot apply confirmed-ID skip logic."
+            )
+
+    # ── Normalisation columns ─────────────────────────────────────────────
     df["knf_tfi_key"] = df["tfi_name"].apply(tfi_brand_token)
-    df["knf_norm"] = df.apply(
+    df["knf_norm"]    = df.apply(
         lambda r: residual_name(str(r["name"]), r["knf_tfi_key"]), axis=1
     )
 
-    log.info("KNF summary loaded: %d records (after TFI exclusions)", len(df))
-    log.info("  Distinct TFI brand tokens: %d", df["knf_tfi_key"].nunique())
+    log.info(
+        "KNF summary ready: %d records to match  "
+        "(%d distinct TFI brand tokens)",
+        len(df), df["knf_tfi_key"].nunique(),
+    )
     return df
 
 
@@ -446,16 +582,12 @@ def load_knf_summary(service) -> pd.DataFrame:
 
 def prepare_stooq_names(raw_stooq: pd.DataFrame, knf_tfi_keys: set[str]) -> pd.DataFrame:
     """
-    Annotate the raw stooq DataFrame (produced by load_stooq_txt_files) with:
+    Annotate the raw stooq DataFrame with:
       - stooq_tfi_key : TFI brand token detected in the fund name
       - stooq_norm    : residual normalised product name
-
-    knf_tfi_keys — set of brand tokens from the KNF side (drives TFI detection).
     """
     stooq = raw_stooq.copy()
 
-    # Detect TFI brand token in the fund name (longest token first to avoid
-    # partial matches when one brand contains another as a substring).
     sorted_tokens = sorted(knf_tfi_keys - {""}, key=len, reverse=True)
 
     def detect_tfi(name: str) -> str:
@@ -466,17 +598,14 @@ def prepare_stooq_names(raw_stooq: pd.DataFrame, knf_tfi_keys: set[str]) -> pd.D
         return ""
 
     stooq["stooq_tfi_key"] = stooq["stooq_title"].apply(detect_tfi)
-
-    stooq["stooq_norm"] = stooq.apply(
+    stooq["stooq_norm"]    = stooq.apply(
         lambda r: residual_name(r["stooq_title"], r["stooq_tfi_key"]), axis=1
     )
 
     tfi_cov = (stooq["stooq_tfi_key"] != "").sum()
     log.info(
         "Stooq records annotated: %d total | %d with recognised TFI token (%.0f%%)",
-        len(stooq),
-        tfi_cov,
-        100 * tfi_cov / max(len(stooq), 1),
+        len(stooq), tfi_cov, 100 * tfi_cov / max(len(stooq), 1),
     )
 
     found_in_stooq = set(stooq["stooq_tfi_key"].unique()) - {""}
@@ -484,8 +613,7 @@ def prepare_stooq_names(raw_stooq: pd.DataFrame, knf_tfi_keys: set[str]) -> pd.D
     if missing:
         log.info(
             "  TFI tokens in KNF but absent from stooq (%d): %s",
-            len(missing),
-            ", ".join(missing[:20]),
+            len(missing), ", ".join(missing[:20]),
         )
 
     return stooq.reset_index(drop=True)
@@ -497,8 +625,7 @@ def prepare_stooq_names(raw_stooq: pd.DataFrame, knf_tfi_keys: set[str]) -> pd.D
 
 def fetch_subfund_history(subfund_id: int) -> list[str]:
     """
-    Returns a deduplicated list of *former* names for the given subfund,
-    i.e. name values from history entries whose validTo is not "9999-12-31".
+    Returns a deduplicated list of *former* names for the given subfund.
     Returns [] on any API error.
     """
     url = (
@@ -549,14 +676,11 @@ def fetch_subfund_history(subfund_id: int) -> list[str]:
 
 def match_funds(knf_df: pd.DataFrame, stooq_df: pd.DataFrame) -> pd.DataFrame:
     """
-    For each KNF subfund:
-      - Restrict stooq pool to rows with matching stooq_tfi_key.
-        Falls back to full pool if empty; flagged match_tfi_fallback=True.
-      - Pass 1: exact match on normalised residual name.
-      - Pass 2: fuzzy token-sort (score >= FUZZY_THRESHOLD).
-      - Pass 3: history — fetch former names from KNF API, retry exact then
-                fuzzy for each.  Tier "historical_exact" or "historical_fuzzy".
-      - Else: tier = "none".
+    For each KNF subfund (already filtered to exclude confirmed IDs):
+      Pass 1 — exact match on normalised residual name (TFI-constrained pool).
+      Pass 2 — fuzzy token-sort match (score >= FUZZY_THRESHOLD).
+      Pass 3 — history: fetch former names from KNF API, retry exact then fuzzy.
+      Else   — tier = "none".
     """
     tfi_groups: dict[str, pd.DataFrame] = {}
     for key, grp in stooq_df.groupby("stooq_tfi_key"):
@@ -592,7 +716,7 @@ def match_funds(knf_df: pd.DataFrame, stooq_df: pd.DataFrame) -> pd.DataFrame:
             "stooq_id":                   None,
             "stooq_ticker":               None,
             "stooq_title":                None,
-            "stooq_category":             None,   # ← stooq filename category
+            "stooq_category":             None,
             "stooq_tfi_key_matched":      None,
             "stooq_norm_matched":         None,
         }
@@ -657,7 +781,6 @@ def match_funds(knf_df: pd.DataFrame, stooq_df: pd.DataFrame) -> pd.DataFrame:
                 if not former_norm:
                     continue
 
-                # Pass 3a: exact on former name
                 exact_h = pool[pool["stooq_norm"] == former_norm]
                 if not exact_h.empty:
                     best = exact_h.iloc[0]
@@ -670,11 +793,10 @@ def match_funds(knf_df: pd.DataFrame, stooq_df: pd.DataFrame) -> pd.DataFrame:
                         "stooq_title":             best["stooq_title"],
                         "stooq_category":          best["stooq_category"],
                         "stooq_tfi_key_matched":   best["stooq_tfi_key"],
-                        "stooq_norm_matched":      best["stooq_norm"],
+                        "stooq_norm_matched":       best["stooq_norm"],
                     })
                     break
 
-                # Pass 3b: fuzzy on former name
                 best_h = process.extractOne(
                     former_norm, pool_norms,
                     scorer=fuzz.token_sort_ratio,
@@ -705,8 +827,12 @@ def match_funds(knf_df: pd.DataFrame, stooq_df: pd.DataFrame) -> pd.DataFrame:
 # Analysis
 # ---------------------------------------------------------------------------
 
-def analyse_matches(match_df: pd.DataFrame) -> None:
+def analyse_matches(match_df: pd.DataFrame, confirmed_ids: set[int]) -> None:
     total      = len(match_df)
+    if total == 0:
+        log.info("No new subfunds to match — all were already confirmed.")
+        return
+
     exact      = (match_df["match_tier"] == "exact").sum()
     fuzzy      = (match_df["match_tier"] == "fuzzy").sum()
     hist_exact = (match_df["match_tier"] == "historical_exact").sum()
@@ -718,15 +844,21 @@ def analyse_matches(match_df: pd.DataFrame) -> None:
         (match_df["match_score"] < 90)
     ).sum()
 
-    log.info("\n--- Match summary ---")
-    log.info("  Total KNF subfunds       : %d", total)
-    log.info("  Exact matches            : %d  (%.0f%%)", exact,      100 * exact      / total)
-    log.info("  Fuzzy matches            : %d  (%.0f%%)", fuzzy,      100 * fuzzy      / total)
-    log.info("  Historical exact         : %d  (%.0f%%)", hist_exact, 100 * hist_exact / total)
-    log.info("  Historical fuzzy         : %d  (%.0f%%)", hist_fuzzy, 100 * hist_fuzzy / total)
-    log.info("    of which score < 90    : %d  (needs review)", review)
-    log.info("  No match                 : %d  (%.0f%%)", none_,      100 * none_      / total)
-    log.info("  TFI pool fallback        : %d", fallback)
+    log.info("\n--- Match summary (new subfunds only) ---")
+    log.info("  Previously confirmed (skipped) : %d", len(confirmed_ids))
+    log.info("  Processed this run             : %d", total)
+    log.info("  Exact matches                  : %d  (%.0f%%)",
+             exact,      100 * exact      / total)
+    log.info("  Fuzzy matches                  : %d  (%.0f%%)",
+             fuzzy,      100 * fuzzy      / total)
+    log.info("  Historical exact               : %d  (%.0f%%)",
+             hist_exact, 100 * hist_exact / total)
+    log.info("  Historical fuzzy               : %d  (%.0f%%)",
+             hist_fuzzy, 100 * hist_fuzzy / total)
+    log.info("    of which score < 90          : %d  (needs review)", review)
+    log.info("  No match                       : %d  (%.0f%%)",
+             none_,      100 * none_      / total)
+    log.info("  TFI pool fallback              : %d", fallback)
 
     log.info("\n--- Match rate by KNF category ---")
     if "knf_category" in match_df.columns:
@@ -743,7 +875,8 @@ def analyse_matches(match_df: pd.DataFrame) -> None:
         for _, r in cat.sort_values("pct", ascending=False).iterrows():
             log.info(
                 "  %-45s  %d/%d (%.0f%%)  exact=%d",
-                r["knf_category"], r["matched"], r["total"], r["pct"], r["exact"],
+                r["knf_category"], r["matched"], r["total"],
+                r["pct"], r["exact"],
             )
 
     log.info("\n--- Match rate by stooq category ---")
@@ -787,44 +920,65 @@ if __name__ == "__main__":
     log.info("GDRIVE_FOLDER   : %s", GDRIVE_FOLDER)
     log.info("FUND_DATA_DIR   : %s", FUND_DATA_DIR)
     log.info("FUZZY_THRESHOLD : %d", FUZZY_THRESHOLD)
+    log.info("CONFIRMED FILE  : %s  (subfunds already matched will be skipped)",
+             CONFIRMED_FILE)
 
-    # --- Load stooq data from local .txt files ---
+    # ── 1. Authenticate with Drive ────────────────────────────────────────
+    service = get_drive_service()
+
+    # ── 2. Load confirmed IDs (may be empty set if file absent) ──────────
+    confirmed_ids = load_confirmed_ids(service)
+
+    # ── 3. Load stooq fund names from local .txt files ───────────────────
     raw_stooq = load_stooq_txt_files(FUND_DATA_DIR)
 
-    # --- Load KNF summary from Drive ---
-    service = get_drive_service()
-    knf_df  = load_knf_summary(service)
+    # ── 4. Load KNF summary, excluding already-confirmed subfunds ─────────
+    knf_df = load_knf_summary(service, confirmed_ids)
 
-    # --- Annotate stooq data with TFI tokens and normalised names ---
-    knf_tfi_keys = set(knf_df["knf_tfi_key"].dropna().unique())
-    stooq_df     = prepare_stooq_names(raw_stooq, knf_tfi_keys)
+    if knf_df.empty:
+        log.info(
+            "All subfunds in scope are already confirmed — nothing to match. "
+            "Add new subfunds to knf_summary.csv or remove entries from "
+            "%s to re-process them.",
+            CONFIRMED_FILE,
+        )
+    else:
+        # ── 5. Annotate stooq data with TFI tokens / normalised names ─────
+        knf_tfi_keys = set(knf_df["knf_tfi_key"].dropna().unique())
+        stooq_df     = prepare_stooq_names(raw_stooq, knf_tfi_keys)
 
-    # --- Run matching ---
-    log.info(
-        "\nRunning matching (%d KNF subfunds × %d stooq funds)...",
-        len(knf_df), len(stooq_df),
-    )
-    match_df = match_funds(knf_df, stooq_df)
+        # ── 6. Run matching ───────────────────────────────────────────────
+        log.info(
+            "\nRunning matching (%d KNF subfunds × %d stooq funds)...",
+            len(knf_df), len(stooq_df),
+        )
+        match_df = match_funds(knf_df, stooq_df)
 
-    analyse_matches(match_df)
+        analyse_matches(match_df, confirmed_ids)
 
-    # --- Save and upload outputs ---
-    def save(df: pd.DataFrame, filename: str) -> None:
-        path = os.path.join(OUTPUT_DIR, filename)
-        df.to_csv(path, index=False, sep=";", encoding="utf-8")
-        log.info("Wrote %s  (%d rows)", filename, len(df))
-        upload_csv_to_drive(service, GDRIVE_FOLDER, path)
+        # ── 7. Save and upload outputs ────────────────────────────────────
+        def save(df: pd.DataFrame, filename: str) -> None:
+            if df.empty:
+                log.info("Skipping %s — empty DataFrame.", filename)
+                return
+            path = os.path.join(OUTPUT_DIR, filename)
+            df.to_csv(path, index=False, sep=";", encoding="utf-8")
+            log.info("Wrote %s  (%d rows)", filename, len(df))
+            upload_csv_to_drive(service, GDRIVE_FOLDER, path)
 
-    save(match_df, "knf_stooq_matches.csv")
-    save(match_df[match_df["match_tier"] == "none"], "knf_stooq_unmatched.csv")
+        save(match_df, "knf_stooq_matches.csv")
+        save(
+            match_df[match_df["match_tier"] == "none"],
+            "knf_stooq_unmatched.csv",
+        )
 
-    review_mask = (
-        (match_df["match_tier"].isin(["fuzzy", "historical_fuzzy"])) &
-        (match_df["match_score"] < 90)
-    ) | (match_df["match_tfi_fallback"] == True)
-    save(
-        match_df[review_mask].sort_values("match_score"),
-        "knf_stooq_review.csv",
-    )
+        review_mask = (
+            (match_df["match_tier"].isin(["fuzzy", "historical_fuzzy"])) &
+            (match_df["match_score"] < 90)
+        ) | (match_df["match_tfi_fallback"] == True)
+        save(
+            match_df[review_mask].sort_values("match_score"),
+            "knf_stooq_review.csv",
+        )
 
     log.info("KNF-stooq name matching — complete")

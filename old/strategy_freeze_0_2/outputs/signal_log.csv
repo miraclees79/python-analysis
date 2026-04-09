@@ -1,2 +1,0 @@
-date,signal,action,price,entry_date,entry_price,days_in_trade,unrealised_pct,binding_stop,stop_gap_pct,trail_stop,abs_stop,ma_fast,ma_slow,ma_filter_on,ma_gap_pct,mom_value_pct,mom_filter_on,active_filter,active_filter_on,cagr,maxdd,calmar,sharpe
-2026-03-22,IN,ENTER,7181.7,2025-10-15,6413.14,156,11.98,7078.42,-1.44,7078.42,6092.48,7400.62,6640.09,True,11.45,27.94,True,mom,True,5.04,-24.04,0.2099,0.4435

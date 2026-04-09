@@ -37,7 +37,7 @@ CONFIRMED_FILE_NAME = "knf_stooq_confirmed.csv"
 # Cache dla ZIPów z Google Drive
 _ZIP_CACHE = {}
 
-# --- STAŁA LISTA BAZOWA (Indeksy i Waluty) ---
+# --- STAŁA LISTA BAZOWA (Indeksy i Waluty + MMF)  ---
 DEFAULT_TICKERS = [
     {"label": "WIG", "stooq": "wig", "yf": "WIG.WA", "type": "index_pl", "knf": None},
     {"label": "WIG20TR", "stooq": "wig20tr", "yf": "WIG20TR.WA", "type": "index_pl", "knf": None},
@@ -53,7 +53,7 @@ DEFAULT_TICKERS = [
     {"label": "JPYPLN", "stooq": "jpypln", "yf": "JPYPLN=X", "type": "fx_rate", "knf": None},
     {"label": "DE10Y", "stooq": "10YDEY.B", "yf": None, "type": "interest_rate", "knf": None},
     {"label": "PL10Y", "stooq": "10YPLY.B", "yf": None, "type": "interest_rate", "knf": None},
-    {"label": "fund_2720", "stooq": "2720.n", "yf": None, "type": "index_pl", "knf": None},
+    {"label": "fund_2720", "stooq": "2720.n", "yf": None, "type": "index_pl", "knf": 195983},
     {"label": "WBBW", "stooq": "^GPWBBWZ", "yf": None, "type": "index_pl", "knf": None},
 ]
 # fund_2720 used as MMF - classed as index_pl to ensure it always loads
