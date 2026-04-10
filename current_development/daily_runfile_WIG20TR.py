@@ -73,7 +73,7 @@ ASSET_NAME    = "WIG20TR"          # <- key in ASSET_REGISTRY below
 OUTPUT_PREFIX = "wig20tr"          # <- unique lowercase file prefix
 TRAIN_YEARS   = 8                   # <- from sweep candidate results
 TEST_YEARS    = 2                   # <- from sweep candidate results
-FORCE_FILTER_MODE = ["ma", "mom"]   # <- None for auto, or e.g. ["ma"]
+FORCE_FILTER_MODE = None  # <- None for auto, or e.g. ["ma"]
 
 
 # ============================================================

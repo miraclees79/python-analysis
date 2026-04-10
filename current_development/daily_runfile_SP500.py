@@ -73,7 +73,7 @@ ASSET_NAME    = "SP500"          # <- key in ASSET_REGISTRY below
 OUTPUT_PREFIX = "sp500"          # <- unique lowercase file prefix
 TRAIN_YEARS   = 6                   # <- from sweep candidate results
 TEST_YEARS    = 2                   # <- from sweep candidate results
-FORCE_FILTER_MODE = ["ma", "mom"]   # <- None for auto, or e.g. ["ma"]
+FORCE_FILTER_MODE = None   # <- None for auto, or e.g. ["ma"]
 # Set from sweep candidate results.
 # SP500 6+2 double robust on 24/03/2026
 

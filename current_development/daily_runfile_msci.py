@@ -76,6 +76,7 @@ TEST_YEARS    =1                   # <- from sweep candidate results
 FORCE_FILTER_MODE = None   # <- None for auto, or e.g. ["ma"]
 
 
+
 # ============================================================
 # ASSET REGISTRY  (shared across all generic daily runners)
 # ============================================================
