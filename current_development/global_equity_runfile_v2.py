@@ -171,8 +171,8 @@ POSITION_MODE = "full"   # "full" | "vol_entry" | "vol_dynamic"
 # ---------------------------------------------------------------------------
 # WALK-FORWARD WINDOWS
 # ---------------------------------------------------------------------------
-TRAIN_YEARS = 6    # training window length (years) — same for all assets
-TEST_YEARS  = 1    # test window length (years)      — same for all assets
+TRAIN_YEARS = 7    # training window length (years) — same for all assets
+TEST_YEARS  = 2    # test window length (years)      — same for all assets
 VOL_WINDOW  = 20   # rolling volatility window (days)
  
 # ---------------------------------------------------------------------------

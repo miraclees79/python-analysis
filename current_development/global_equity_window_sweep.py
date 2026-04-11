@@ -156,7 +156,7 @@ MMF_FLOOR      = "1995-01-02"
 
 TRAIN_YEARS_LIST = [6, 7, 8, 9 ]
 TEST_YEARS_LIST  = [1, 2]
-MODES_LIST       = ["global_equity", "msci_world"]
+MODES_LIST       = ["msci_world"] #["global_equity", "msci_world"]
 
 X_GRID_EQ = [0.08, 0.10, 0.12, 0.15, 0.20]
 Y_GRID_EQ = [0.02, 0.03, 0.05, 0.07, 0.10]
