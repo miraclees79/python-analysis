@@ -78,8 +78,8 @@ USAGE EXAMPLES
       folder_id          = "your_folder_id",
       raw_filename       = "tbsp_backcast.csv",
       combined_filename  = "tbsp_extended_combined.csv",
-      extension_ticker   = "^tbsp",
-      extension_source   = "stooq",
+      extension_ticker   = "TBSP-INDEX.WA",
+      extension_source   = "yfinance,
   )
 
   # Load pre-built combined series (daily runner — no rebuild)
