@@ -46,7 +46,6 @@ from multiasset_library import build_signal_series
 from global_equity_library import (
     download_yfinance,
     build_return_series,
-    build_blend,
     build_price_df_from_returns,
     build_mmf_extended,
     allocation_walk_forward_n,
@@ -55,14 +54,14 @@ from global_equity_library import (
     DATA_START,
 )
 
-from price_series_builder import build_and_upload, load_combined_from_drive
+from price_series_builder import build_and_upload
 from global_equity_daily_output import build_daily_outputs
 from msci_world_synthetic import (
     build_full_msci_world_extended,
-    load_synthetic_from_drive,
+ 
 )
 from stooq_hybrid_updater import run_update
-from global_equity_daily_output import build_daily_outputs
+
 
 
 # ============================================================
@@ -406,30 +405,8 @@ fx_usd = USDPLN[CLOSE_COL] if USDPLN is not None else None
 fx_eur = EURPLN[CLOSE_COL] if EURPLN is not None else None
 fx_jpy = JPYPLN[CLOSE_COL] if JPYPLN is not None else None
 
-# --- WIG floor (Mode A only) ---
-# Clip WIG to the daily-continuous-trading era. Earlier data has multi-day
-# gaps that distort the breakout trough and MA signal calculations.
-if PORTFOLIO_MODE == "global_equity" and WIG is not None:
-    _wig_before = len(WIG)
-    WIG = WIG.loc[WIG.index >= pd.Timestamp(WIG_DATA_FLOOR)]
-    logging.info(
-        "WIG clipped to %s: %d → %d rows",
-        WIG_DATA_FLOOR, _wig_before, len(WIG),
-    )
 
-# --- Extended MMF (both modes) ---
-# Chain-link WIBOR 1M backwards from first real MMF observation to MMF_FLOOR.
-# This gives realistic ~18-25% p.a. cash returns for 1994-1999 IS windows
-# in Mode A (global_equity), where WIG IS data goes back to 1994.
-if WIBOR1M is not None:
-    MMF_EXT = build_mmf_extended(MMF, WIBOR1M, floor_date=MMF_FLOOR)
-    logging.info(
-        "MMF extended: %s to %s (%d rows total; original MMF from %s)",
-        MMF_EXT.index.min().date(), MMF_EXT.index.max().date(),
-        len(MMF_EXT), MMF.index.min().date(),
-    )
-else:
-    MMF_EXT = MMF   # no extension available; falls back to original series
+
 
 # --- Shared returns ---
 ret_tbsp = build_return_series(TBSP,    hedged=True)   # PLN bond index — no FX
@@ -484,14 +461,13 @@ if PORTFOLIO_MODE == "global_equity":
 
 elif PORTFOLIO_MODE == "msci_world":
     # PL_MID blend: returns in PLN (both components are PLN-native)
-    #PL_MID = build_blend(MWIG40TR, SWIG80TR, MWIG_WEIGHT, SWIG_WEIGHT, "PL_MID")
-    ret_WIG20TR = build_return_series(WIG20TR, hedged=True)
-    #ret_PL_MID  = build_return_series(PL_MID,  hedged=True)
+    ret_WIG     = build_return_series(WIG,     hedged=True)   # PLN — no FX
+    
+    
     ret_MSCIW   = build_return_series(MSCIW,   fx_series=fx_usd, hedged=FX_HEDGED)
 
     for label, ret in [
-        ("WIG20TR",    ret_WIG20TR),
-     #   ("PL_MID",     ret_PL_MID),
+        ("WIG",    ret_WIG),
         ("MSCI_World", ret_MSCIW),
     ]:
         r = ret.dropna()
@@ -503,12 +479,12 @@ elif PORTFOLIO_MODE == "msci_world":
 
     if not FX_HEDGED:
         logging.info("FX_HEDGED=False: rebuilding price DFs from PLN return series.")
-        price_WIG20TR = build_price_df_from_returns(ret_WIG20TR, "WIG20TR_PLN")
-      #  price_PL_MID  = build_price_df_from_returns(ret_PL_MID,  "PL_MID_PLN")
+        price_WIG = build_price_df_from_returns(ret_WIG, "WIG_PLN")
+        
         price_MSCIW   = build_price_df_from_returns(ret_MSCIW,   "MSCIW_PLN")
     else:
-        price_WIG20TR = WIG20TR
-       # price_PL_MID  = PL_MID
+        price_WIG = WIG
+        
         price_MSCIW   = MSCIW
 
 
@@ -520,37 +496,55 @@ logging.info("=" * 80)
 logging.info("PHASE 3: PER-ASSET EQUITY SIGNAL WALK-FORWARD")
 logging.info("=" * 80)
 
-def _run_equity_wf(price_df, label):
+def _run_equity_wf(price_df: pd.DataFrame, label: str):
+    """Run walk_forward for one equity asset using shared equity grids."""
     logging.info("  [%s] walk-forward starting ...", label)
     wf_eq, wf_res, wf_tr = walk_forward(
-        df=price_df, cash_df=MMF,
-        train_years=TRAIN_YEARS, test_years=TEST_YEARS,
-        vol_window=VOL_WINDOW, selected_mode=POSITION_MODE,
-        filter_modes_override=FORCE_FILTER_MODE_EQ,
-        X_grid=X_GRID_EQ, Y_grid=Y_GRID_EQ, fast_grid=FAST_EQ,
-        slow_grid=SLOW_EQ, tv_grid=TV_EQ, sl_grid=SL_EQ,
-        mom_lookback_grid=MOM_LB_EQ, objective="calmar", n_jobs=N_JOBS,
+        df                    = price_df,
+        cash_df               = MMF,
+        train_years           = TRAIN_YEARS,
+        test_years            = TEST_YEARS,
+        vol_window            = VOL_WINDOW,
+        selected_mode         = POSITION_MODE,
+        filter_modes_override = FORCE_FILTER_MODE_EQ,
+        X_grid                = X_GRID_EQ,
+        Y_grid                = Y_GRID_EQ,
+        fast_grid             = FAST_EQ,
+        slow_grid             = SLOW_EQ,
+        tv_grid               = TV_EQ,
+        sl_grid               = SL_EQ,
+        mom_lookback_grid     = MOM_LB_EQ,
+        objective             = "calmar",
+        n_jobs                = N_JOBS,
         fast_mode             = FAST_MODE,
         use_atr_stop          = USE_ATR_STOP,
         N_atr_grid            = N_ATR_GRID if USE_ATR_STOP else None,
         atr_window            = ATR_WINDOW,
     )
     m = compute_metrics(wf_eq)
-    logging.info("  [%s] CAGR=%.2f%%  Sharpe=%.2f  MaxDD=%.2f%%  CalMAR=%.2f",
-                 label, m.get("CAGR",0)*100, m.get("Sharpe",0),
-                 m.get("MaxDD",0)*100, m.get("CalMAR",0))
+    logging.info(
+        "  [%s] OOS: CAGR=%.2f%%  Sharpe=%.2f  MaxDD=%.2f%%  CalMAR=%.2f",
+        label,
+        m.get("CAGR", 0) * 100, m.get("Sharpe", 0),
+        m.get("MaxDD", 0) * 100, m.get("CalMAR", 0),
+    )
     sig = build_signal_series(wf_eq, wf_tr)
-    logging.info("  [%s] signal: %.1f%% of OOS days in position", label, sig.mean()*100)
+    logging.info(
+        "  [%s] signal: %.1f%% of OOS days in position",
+        label, sig.mean() * 100,
+    )
     return wf_eq, wf_res, wf_tr, sig
 
+
 if PORTFOLIO_MODE == "global_equity":
-    wf_eq_WIG,   wf_res_WIG,   wf_tr_WIG,   sig_WIG   = _run_equity_wf(price_WIG,   "WIG")
-    wf_eq_SPX,   wf_res_SPX,   wf_tr_SPX,   sig_SPX   = _run_equity_wf(price_SPX,   "SP500")
-    wf_eq_STOXX, wf_res_STOXX, wf_tr_STOXX, sig_STOXX = _run_equity_wf(price_STOXX, "STOXX600")
-    wf_eq_NKX,   wf_res_NKX,   wf_tr_NKX,   sig_NKX   = _run_equity_wf(price_NKX,   "Nikkei225")
+    wf_eq_WIG,    wf_res_WIG,    wf_tr_WIG,    sig_WIG    = _run_equity_wf(price_WIG,   "WIG")
+    wf_eq_SPX,    wf_res_SPX,    wf_tr_SPX,    sig_SPX    = _run_equity_wf(price_SPX,   "SP500")
+    wf_eq_STOXX,  wf_res_STOXX,  wf_tr_STOXX,  sig_STOXX  = _run_equity_wf(price_STOXX, "STOXX600")
+    wf_eq_NKX,    wf_res_NKX,    wf_tr_NKX,    sig_NKX    = _run_equity_wf(price_NKX,   "Nikkei225")
+
 elif PORTFOLIO_MODE == "msci_world":
-    wf_eq_WIG20,  wf_res_WIG20,  wf_tr_WIG20,  sig_WIG20  = _run_equity_wf(price_WIG20TR, "WIG20TR")
-    #wf_eq_PLMID,  wf_res_PLMID,  wf_tr_PLMID,  sig_PLMID  = _run_equity_wf(price_PL_MID,  "PL_MID")
+    wf_eq_WIG,  wf_res_WIG,  wf_tr_WIG,  sig_WIG  = _run_equity_wf(price_WIG, "WIG")
+    
     wf_eq_MSCIW,  wf_res_MSCIW,  wf_tr_MSCIW,  sig_MSCIW  = _run_equity_wf(price_MSCIW,   "MSCI_World")
 
 
@@ -564,23 +558,40 @@ logging.info("PHASE 4: BOND SIGNAL WALK-FORWARD  (TBSP, train=%dy test=%dy)",
 logging.info("=" * 80)
 
 wf_eq_TBSP, wf_res_TBSP, wf_tr_TBSP = walk_forward(
-    df=TBSP, cash_df=MMF,
-    train_years=TRAIN_YEARS, test_years=TEST_YEARS,
-    vol_window=VOL_WINDOW, selected_mode=POSITION_MODE,
-    filter_modes_override=FORCE_FILTER_MODE_BD,
-    X_grid=X_GRID_BD, Y_grid=Y_GRID_BD, fast_grid=FAST_BD,
-    slow_grid=SLOW_BD, tv_grid=TV_BD, sl_grid=SL_BD,
-    mom_lookback_grid=[252], objective="calmar", n_jobs=N_JOBS,    fast_mode=FAST_MODE,
+    df                    = TBSP,
+    cash_df               = MMF,
+    train_years           = TRAIN_YEARS,
+    test_years            = TEST_YEARS,
+    vol_window            = VOL_WINDOW,
+    selected_mode         = POSITION_MODE,
+    filter_modes_override = FORCE_FILTER_MODE_BD,
+    X_grid                = X_GRID_BD,
+    Y_grid                = Y_GRID_BD,
+    fast_grid             = FAST_BD,
+    slow_grid             = SLOW_BD,
+    tv_grid               = TV_BD,
+    sl_grid               = SL_BD,
+    mom_lookback_grid     = [252],
+    objective             = "calmar",
+    n_jobs                = N_JOBS,
+    fast_mode=FAST_MODE,
     use_atr_stop          = USE_ATR_STOP_BD,
     N_atr_grid            = N_ATR_GRID_BD if USE_ATR_STOP_BD else None,
     atr_window            = ATR_WINDOW,
 )
+
 m_tbsp = compute_metrics(wf_eq_TBSP)
-logging.info("TBSP OOS: CAGR=%.2f%%  Sharpe=%.2f  MaxDD=%.2f%%  CalMAR=%.2f",
-             m_tbsp.get("CAGR",0)*100, m_tbsp.get("Sharpe",0),
-             m_tbsp.get("MaxDD",0)*100, m_tbsp.get("CalMAR",0))
+logging.info(
+    "TBSP OOS: CAGR=%.2f%%  Sharpe=%.2f  MaxDD=%.2f%%  CalMAR=%.2f",
+    m_tbsp.get("CAGR", 0) * 100, m_tbsp.get("Sharpe", 0),
+    m_tbsp.get("MaxDD", 0) * 100, m_tbsp.get("CalMAR", 0),
+)
+
 sig_TBSP = build_signal_series(wf_eq_TBSP, wf_tr_TBSP)
-logging.info("TBSP signal: %.1f%% of OOS days in position", sig_TBSP.mean()*100)
+logging.info(
+    "TBSP signal: %.1f%% of OOS days in position",
+    sig_TBSP.mean() * 100,
+)
 
 
 # ============================================================
@@ -591,47 +602,84 @@ logging.info("=" * 80)
 logging.info("PHASE 5: ALLOCATION WALK-FORWARD  (N-asset, annual_cap=%d)", ANNUAL_CAP)
 logging.info("=" * 80)
 
-if PORTFOLIO_MODE == "global_equity":
-    asset_keys        = ["WIG", "SP500", "STOXX600", "Nikkei225", "TBSP"]
-    returns_dict      = {"WIG": ret_WIG.dropna(), "SP500": ret_SPX.dropna(),
-                         "STOXX600": ret_STOXX.dropna(), "Nikkei225": ret_NKX.dropna(),
-                         "TBSP": ret_tbsp.dropna()}
-    signals_full_dict = {"WIG": sig_WIG, "SP500": sig_SPX,
-                         "STOXX600": sig_STOXX, "Nikkei225": sig_NKX, "TBSP": sig_TBSP}
-elif PORTFOLIO_MODE == "msci_world":
-    asset_keys        = ["WIG20TR", "PL_MID", "MSCI_World", "TBSP"]
-    returns_dict      = {"WIG20TR": ret_WIG20TR.dropna(), 
-                         "MSCI_World": ret_MSCIW.dropna(), "TBSP": ret_tbsp.dropna()}
-    signals_full_dict = {"WIG20TR": sig_WIG20, 
-                         "MSCI_World": sig_MSCIW, "TBSP": sig_TBSP}
+# --- Assemble asset dicts based on mode ---
+# The allocation walk-forward uses TBSP's window schedule as the reference
+# (TBSP is the most common binding constraint on OOS start across both modes).
 
-signals_oos_dict = dict(signals_full_dict)
-wf_results_ref   = wf_res_TBSP
+if PORTFOLIO_MODE == "global_equity":
+    asset_keys = ["WIG", "SP500", "STOXX600", "Nikkei225", "TBSP"]
+
+    returns_dict = {
+        "WIG":       ret_WIG.dropna(),
+        "SP500":     ret_SPX.dropna(),
+        "STOXX600":  ret_STOXX.dropna(),
+        "Nikkei225": ret_NKX.dropna(),
+        "TBSP":      ret_tbsp.dropna(),
+    }
+    signals_full_dict = {
+        "WIG":       sig_WIG,
+        "SP500":     sig_SPX,
+        "STOXX600":  sig_STOXX,
+        "Nikkei225": sig_NKX,
+        "TBSP":      sig_TBSP,
+    }
+    # OOS signals: trimmed to the common OOS period (computed inside allocation_wf)
+    signals_oos_dict = dict(signals_full_dict)   # same object; trimming done inside
+
+    # Reference walk-forward results for window schedule = TBSP
+    wf_results_ref = wf_res_TBSP
+
+elif PORTFOLIO_MODE == "msci_world":
+    asset_keys = ["WIG", "MSCI_World", "TBSP"]
+
+    returns_dict = {
+        "WIG":    ret_WIG.dropna(),
+        
+        "MSCI_World": ret_MSCIW.dropna(),
+        "TBSP":       ret_tbsp.dropna(),
+    }
+    signals_full_dict = {
+        "WIG":    sig_WIG,
+        
+        "MSCI_World": sig_MSCIW,
+        "TBSP":       sig_TBSP,
+    }
+    signals_oos_dict = dict(signals_full_dict)
+
+    # Reference walk-forward results for window schedule:
+    # Use the TBSP walk-forward, which produces the latest OOS start
+    # (the common OOS constraint is MSCI_World start ~2019, but
+    #  allocation_walk_forward_n clips to the intersection internally).
+    wf_results_ref = wf_res_TBSP
 
 portfolio_equity, weights_series, reallocation_log, alloc_results_df = (
     allocation_walk_forward_n(
-        returns_dict      = returns_dict,
-        signals_full_dict = signals_full_dict,
-        signals_oos_dict  = signals_oos_dict,
-        mmf_returns       = ret_mmf.dropna(),
-        wf_results_ref    = wf_results_ref,
-        asset_keys        = asset_keys,
-        step              = ALLOC_STEP,
-        objective         = ALLOC_OBJECTIVE,
-        cooldown_days     = COOLDOWN_DAYS,
-        annual_cap        = ANNUAL_CAP,
-        train_years       = TRAIN_YEARS,
+        returns_dict       = returns_dict,
+        signals_full_dict  = signals_full_dict,
+        signals_oos_dict   = signals_oos_dict,
+        mmf_returns        = ret_mmf.dropna(),
+        wf_results_ref     = wf_results_ref,
+        asset_keys         = asset_keys,
+        step               = ALLOC_STEP,
+        objective          = ALLOC_OBJECTIVE,
+        cooldown_days      = COOLDOWN_DAYS,
+        annual_cap         = ANNUAL_CAP,
+        train_years        = TRAIN_YEARS,
     )
 )
 
 if portfolio_equity is None or portfolio_equity.empty:
-    logging.error("Portfolio equity curve is empty — exiting.")
+    logging.error("Portfolio equity curve is empty after allocation walk-forward. Exiting.")
     sys.exit(1)
 
 portfolio_metrics = {k: float(v) for k, v in compute_metrics(portfolio_equity).items()}
-logging.info("PORTFOLIO OOS: CAGR=%.2f%%  Sharpe=%.2f  MaxDD=%.2f%%  CalMAR=%.2f",
-             portfolio_metrics.get("CAGR",0)*100, portfolio_metrics.get("Sharpe",0),
-             portfolio_metrics.get("MaxDD",0)*100, portfolio_metrics.get("CalMAR",0))
+logging.info(
+    "PORTFOLIO OOS: CAGR=%.2f%%  Sharpe=%.2f  MaxDD=%.2f%%  CalMAR=%.2f",
+    portfolio_metrics.get("CAGR", 0) * 100,
+    portfolio_metrics.get("Sharpe", 0),
+    portfolio_metrics.get("MaxDD", 0) * 100,
+    portfolio_metrics.get("CalMAR", 0),
+)
 
 
 # ============================================================
@@ -645,33 +693,34 @@ logging.info("=" * 80)
 oos_start = portfolio_equity.index.min()
 oos_end   = portfolio_equity.index.max()
 
+# Build B&H metrics for each asset over the common OOS period
 bh_metrics_dict = {}
 for key, ret in returns_dict.items():
     ret_oos = ret.loc[(ret.index >= oos_start) & (ret.index <= oos_end)]
     if ret_oos.empty:
         bh_metrics_dict[key] = {}
         continue
-    bh_eq = (1 + ret_oos).cumprod()
-    bh_eq = bh_eq / bh_eq.iloc[0]
-    bh_metrics_dict[key] = {k: float(v) for k, v in compute_metrics(bh_eq).items()}
+    bh_equity = (1 + ret_oos).cumprod()
+    bh_equity = bh_equity / bh_equity.iloc[0]
+    bh_metrics_dict[key] = {k: float(v) for k, v in compute_metrics(bh_equity).items()}
 
+# Trim OOS signals to common portfolio period
 signals_oos_trimmed = {
     k: s.loc[(s.index >= oos_start) & (s.index <= oos_end)]
     for k, s in signals_oos_dict.items()
 }
 
 print_global_equity_report(
-    portfolio_metrics = portfolio_metrics,
-    bh_metrics_dict   = bh_metrics_dict,
-    alloc_results_df  = alloc_results_df,
-    reallocation_log  = reallocation_log,
-    signals_oos_dict  = signals_oos_trimmed,
-    oos_start         = oos_start,
-    oos_end           = oos_end,
-    portfolio_mode    = PORTFOLIO_MODE,
-    fx_hedged         = FX_HEDGED,
+    portfolio_metrics  = portfolio_metrics,
+    bh_metrics_dict    = bh_metrics_dict,
+    alloc_results_df   = alloc_results_df,
+    reallocation_log   = reallocation_log,
+    signals_oos_dict   = signals_oos_trimmed,
+    oos_start          = oos_start,
+    oos_end            = oos_end,
+    portfolio_mode     = PORTFOLIO_MODE,
+    fx_hedged          = FX_HEDGED,
 )
-
 
 
 # ============================================================
