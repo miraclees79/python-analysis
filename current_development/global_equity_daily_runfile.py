@@ -210,11 +210,6 @@ FAST_MODE = True
 _cpu_count = os.cpu_count() or 1
 N_JOBS = max(1, _cpu_count - 1) if _cpu_count > 3 and sys.platform == "win32" else _cpu_count
 
-# ---------------------------------------------------------------------------
-# MID/SMALL BLEND WEIGHTS  (Mode B only)
-# ---------------------------------------------------------------------------
-MWIG_WEIGHT = 0.50   # weight of MWIG40TR in the PL_MID blend
-SWIG_WEIGHT = 0.50   # weight of SWIG80TR in the PL_MID blend
 
 # ---------------------------------------------------------------------------
 # DATA FLOOR DATES
@@ -489,14 +484,14 @@ if PORTFOLIO_MODE == "global_equity":
 
 elif PORTFOLIO_MODE == "msci_world":
     # PL_MID blend: returns in PLN (both components are PLN-native)
-    PL_MID = build_blend(MWIG40TR, SWIG80TR, MWIG_WEIGHT, SWIG_WEIGHT, "PL_MID")
+    #PL_MID = build_blend(MWIG40TR, SWIG80TR, MWIG_WEIGHT, SWIG_WEIGHT, "PL_MID")
     ret_WIG20TR = build_return_series(WIG20TR, hedged=True)
-    ret_PL_MID  = build_return_series(PL_MID,  hedged=True)
+    #ret_PL_MID  = build_return_series(PL_MID,  hedged=True)
     ret_MSCIW   = build_return_series(MSCIW,   fx_series=fx_usd, hedged=FX_HEDGED)
 
     for label, ret in [
         ("WIG20TR",    ret_WIG20TR),
-        ("PL_MID",     ret_PL_MID),
+     #   ("PL_MID",     ret_PL_MID),
         ("MSCI_World", ret_MSCIW),
     ]:
         r = ret.dropna()
@@ -509,11 +504,11 @@ elif PORTFOLIO_MODE == "msci_world":
     if not FX_HEDGED:
         logging.info("FX_HEDGED=False: rebuilding price DFs from PLN return series.")
         price_WIG20TR = build_price_df_from_returns(ret_WIG20TR, "WIG20TR_PLN")
-        price_PL_MID  = build_price_df_from_returns(ret_PL_MID,  "PL_MID_PLN")
+      #  price_PL_MID  = build_price_df_from_returns(ret_PL_MID,  "PL_MID_PLN")
         price_MSCIW   = build_price_df_from_returns(ret_MSCIW,   "MSCIW_PLN")
     else:
         price_WIG20TR = WIG20TR
-        price_PL_MID  = PL_MID
+       # price_PL_MID  = PL_MID
         price_MSCIW   = MSCIW
 
 
@@ -555,7 +550,7 @@ if PORTFOLIO_MODE == "global_equity":
     wf_eq_NKX,   wf_res_NKX,   wf_tr_NKX,   sig_NKX   = _run_equity_wf(price_NKX,   "Nikkei225")
 elif PORTFOLIO_MODE == "msci_world":
     wf_eq_WIG20,  wf_res_WIG20,  wf_tr_WIG20,  sig_WIG20  = _run_equity_wf(price_WIG20TR, "WIG20TR")
-    wf_eq_PLMID,  wf_res_PLMID,  wf_tr_PLMID,  sig_PLMID  = _run_equity_wf(price_PL_MID,  "PL_MID")
+    #wf_eq_PLMID,  wf_res_PLMID,  wf_tr_PLMID,  sig_PLMID  = _run_equity_wf(price_PL_MID,  "PL_MID")
     wf_eq_MSCIW,  wf_res_MSCIW,  wf_tr_MSCIW,  sig_MSCIW  = _run_equity_wf(price_MSCIW,   "MSCI_World")
 
 
@@ -605,9 +600,9 @@ if PORTFOLIO_MODE == "global_equity":
                          "STOXX600": sig_STOXX, "Nikkei225": sig_NKX, "TBSP": sig_TBSP}
 elif PORTFOLIO_MODE == "msci_world":
     asset_keys        = ["WIG20TR", "PL_MID", "MSCI_World", "TBSP"]
-    returns_dict      = {"WIG20TR": ret_WIG20TR.dropna(), "PL_MID": ret_PL_MID.dropna(),
+    returns_dict      = {"WIG20TR": ret_WIG20TR.dropna(), 
                          "MSCI_World": ret_MSCIW.dropna(), "TBSP": ret_tbsp.dropna()}
-    signals_full_dict = {"WIG20TR": sig_WIG20, "PL_MID": sig_PLMID,
+    signals_full_dict = {"WIG20TR": sig_WIG20, 
                          "MSCI_World": sig_MSCIW, "TBSP": sig_TBSP}
 
 signals_oos_dict = dict(signals_full_dict)
