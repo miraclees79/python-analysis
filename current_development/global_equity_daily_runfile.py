@@ -129,6 +129,24 @@ TRAIN_YEARS = 7    # training window length (years) — same for all assets
 TEST_YEARS  = 2    # test window length (years)      — same for all assets
 VOL_WINDOW  = 20   # rolling volatility window (days)
 
+# Double robust config on 12/04/2026
+"""
+2026-04-11 22:35:34,257 - INFO - --------------------------------------------------------------------------------
+2026-04-11 22:35:34,258 - INFO - PORTFOLIO:  CAGR=9.75%  Vol=9.95%  Sharpe=0.98  MaxDD=-21.79%  CalMAR=0.45
+2026-04-11 22:35:34,258 - INFO - --------------------------------------------------------------------------------
+2026-04-11 22:35:34,259 - INFO - BENCHMARKS (buy-and-hold per asset):
+2026-04-11 22:35:34,259 - INFO -   WIG          CAGR=6.41%  Vol=19.94%  Sharpe=0.32  MaxDD=-68.51%  CalMAR=0.09
+2026-04-11 22:35:34,259 - INFO -   MSCI_World   CAGR=5.30%  Vol=16.60%  Sharpe=0.32  MaxDD=-56.93%  CalMAR=0.09
+2026-04-11 22:35:34,260 - INFO -   TBSP         CAGR=4.38%  Vol=2.27%  Sharpe=1.93  MaxDD=-10.98%  CalMAR=0.40
+2026-04-11 22:35:34,260 - INFO - --------------------------------------------------------------------------------
+2026-04-11 22:35:34,261 - INFO - SIGNAL FREQUENCY (OOS):
+2026-04-11 22:35:34,261 - INFO -   WIG          in position 57.7% of days
+2026-04-11 22:35:34,261 - INFO -   MSCI_World   in position 39.0% of days
+2026-04-11 22:35:34,262 - INFO -   TBSP         in position 90.8% of days
+2026-04-11 22:35:34,262 - INFO - --------------------------------------------------------------------------------
+"""
+
+
 # ---------------------------------------------------------------------------
 # REALLOCATION GATE
 # ---------------------------------------------------------------------------
