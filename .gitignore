@@ -45,3 +45,6 @@ current_development/outputs/multiasset_signal_log.csv
 /knf_explore/fund_data
 /current_development/sweep_outputs
 /current_development/global_equity_outputs
+*.pyc
+repo_do_analizy.txt
+repo_collect.py
