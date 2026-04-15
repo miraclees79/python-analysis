@@ -41,7 +41,8 @@ class GDriveClient:
         files = results.get("files", [])
         return files[0]["id"] if files else None
 
-    def download_csv(self, folder_id: str, filename: str, sep=";", encoding="utf-8") -> pd.DataFrame:
+    def download_csv(self, folder_id: str, filename: str, sep=",", encoding="utf-8") -> pd.DataFrame:
+        # Zmieniliśmy domyślny sep z ";" na ","
         file_id = self.find_file_id(folder_id, filename)
         if not file_id:
             logging.warning(f"Nie znaleziono pliku na Drive: {filename}")
