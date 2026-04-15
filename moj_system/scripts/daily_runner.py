@@ -4,6 +4,7 @@ import sys
 import logging
 import datetime as dt
 import pandas as pd
+import tempfile
 
 # --- ŚCIEŻKI IMPORTU ---
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -16,7 +17,7 @@ from current_development.strategy_test_library import (
     load_stooq_local, get_n_jobs, walk_forward, compute_metrics, 
     analyze_trades, compute_buy_and_hold, print_backtest_report
 )
-from current_development.daily_output import build_daily_outputs
+from moj_system.reporting.daily_output import build_daily_outputs
 from current_development.stooq_hybrid_updater import run_update
 
 # --- UNIWERSALNE SIATKI PARAMETRÓW (Grids) ---
@@ -128,12 +129,18 @@ def main():
                  oos_start.date(), oos_end.date(),
                  bh_metrics["CAGR"]*100, bh_metrics["Sharpe"], bh_metrics["MaxDD"]*100)
 
-    # 5. Generowanie plików wyjściowych
+    # Pobieramy ścieżkę do credentials (tak samo jak w GDriveClient)
+    creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
+    
     build_daily_outputs(
         wf_equity=wf_equity, wf_trades=wf_trades, wf_metrics=wf_metrics,
         wf_results=wf_results, bh_equity=bh_equity, bh_metrics=bh_metrics, df=df,
         output_dir=f"outputs/{output_prefix}", asset_name=asset_name,
-        logfile_name=f"{output_prefix}_signal_log.csv"
+        logfile_name=f"{output_prefix}_signal_log.csv",
+        
+        # --- DODANE PARAMETRY DLA GDRIVE ---
+        gdrive_folder_id=os.environ.get("GDRIVE_FOLDER_ID"),
+        gdrive_credentials=creds_path if os.path.exists(creds_path) else None
     )
 
 if __name__ == "__main__":
