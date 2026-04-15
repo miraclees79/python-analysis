@@ -175,7 +175,7 @@ root_logger.setLevel(logging.INFO)
 _fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 _fh  = logging.FileHandler(LOG_FILE, mode="w")
 _fh.setFormatter(_fmt)
-_ch  = logging.StreamHandler()
+_ch  = logging.StreamHandler(sys.stdout)
 _ch.setFormatter(_fmt)
 root_logger.addHandler(_fh)
 root_logger.addHandler(_ch)
@@ -255,6 +255,12 @@ else:
 # ============================================================
 # PHASE 2 — WALK-FORWARD OPTIMISATION
 # ============================================================
+
+
+logging.info(f"Kształt DF (przed WF): {df.shape}")
+logging.info(f"Ostatnia data w DF: {df.index.max()}")
+logging.info(f"Kształt CASH_DF (przed WF): {CASH.shape}")
+logging.info(f"Ostatnia data w CASH_DF: {CASH.index.max()}")
 
 logging.info("=" * 80)
 logging.info("PHASE 2: WALK-FORWARD  (%s, train=%dy test=%dy)",

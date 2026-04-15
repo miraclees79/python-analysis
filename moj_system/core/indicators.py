@@ -95,3 +95,6 @@ def compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int =
     dx  = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di)).fillna(0)
     adx = dx.ewm(span=period, adjust=False).mean()
     return adx, plus_di, minus_di
+
+
+

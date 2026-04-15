@@ -146,13 +146,13 @@ def walk_forward(
                     "Y": key[2], "fast": key[3], "slow": key[4],
                     "target_vol": key[5], "stop_loss": key[6], "mom_lookback": key[7]
                 }
-        
+        """
         logging.info("TOP 5 KANDYDATÓW W OKNIE TRENINGOWYM:")
         for combined_score, raw_score, key in top_candidates:
             (fm, stop_val, y, f, s, tv, sl, ml) = key
             stop_label = "N_atr" if use_atr_stop else "X"
             logging.info(f"  Combined: {combined_score:.6f}, Raw: {raw_score:.6f} | Params: mode={fm}, {stop_label}={stop_val}, Y={y}, fast={f}, slow={s}, sl={sl}, mom_lb={ml}")
-        
+        """
         if best_params is None: break
         
         warmup = train.iloc[-(best_params["slow"] + vol_window + 10):]
