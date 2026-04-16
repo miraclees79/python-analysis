@@ -21,10 +21,10 @@ from current_development.multiasset_library import (
     build_signal_series, allocation_walk_forward, print_multiasset_report,
     build_standard_two_asset_data
 )
-from current_development.stooq_hybrid_updater import run_update
-
-# UWAGA: Do pobrania TBSP używamy na razie starego price_series_builder
-from current_development.price_series_builder import build_and_upload
+# --- NOWE, CZYSTE IMPORTY DANYCH ---
+from moj_system.data.updater import DataUpdater
+from moj_system.data.data_manager import load_local_csv
+from moj_system.data.builder import build_and_upload
 
 # --- IMPORTY Z NOWEJ STRUKTURY RAPORTOWANIA ---
 from moj_system.reporting.daily_output import build_daily_outputs
@@ -56,18 +56,48 @@ BOND_GRIDS = {
 }
 
 # --- REJESTR ASSETÓW ---
-# Zawiera wszystkie zdefiniowane wcześniej walory oraz ich dedykowane siatki/tryby.
+# --- REJESTR ASSETÓW Z PEŁNĄ KONFIGURACJĄ (Stooq + yFinance + GDrive) ---
 ASSET_REGISTRY = {
-    "WIG20TR":   {"type": "single", "source": "stooq", "ticker": "wig20tr",  "train": 8, "test": 2, "default_stop": "fixed", "grids": {"MOM_LB_GRID": [252]}},
-    "MWIG40TR":  {"type": "single", "source": "stooq", "ticker": "mwig40tr", "train": 8, "test": 2, "default_stop": "fixed", "grids": {"MOM_LB_GRID": [252]}},
-    "SWIG80TR":  {"type": "single", "source": "stooq", "ticker": "swig80tr", "train": 9, "test": 2, "default_stop": "atr"},
-    "SP500":     {"type": "single", "source": "stooq", "ticker": "^spx",     "train": 6, "test": 2, "default_stop": "fixed"},
-    "NASDAQ100": {"type": "single", "source": "stooq", "ticker": "ndq100",   "train": 6, "test": 2, "default_stop": "fixed"},
-    "Nikkei225": {"type": "single", "source": "stooq", "ticker": "nk225",    "train": 6, "test": 2, "default_stop": "fixed"}, # PRZYWRÓCONE
-    "MSCI_World":{"type": "single", "source": "drive", "ticker": "URTH",     "train": 9, "test": 1, "default_stop": "atr"},
-    "STOXX600":  {"type": "single", "source": "drive", "ticker": "^STOXX",   "train": 7, "test": 1, "default_stop": "atr"},
+    # Indeksy polskie (głównie Stooq)
+    "WIG20TR":  {
+        "type": "single", "source": "stooq", "ticker": "wig20tr", "yf_ticker": "WIG20TR.WA", 
+        "train": 8, "test": 2, "default_stop": "fixed", "grids": {"MOM_LB_GRID": [252]}
+    },
+    "MWIG40TR": {
+        "type": "single", "source": "stooq", "ticker": "mwig40tr", "yf_ticker": "MWIG40TR.WA", 
+        "train": 8, "test": 2, "default_stop": "fixed", "grids": {"MOM_LB_GRID": [252]}
+    },
+    "SWIG80TR": {
+        "type": "single", "source": "stooq", "ticker": "swig80tr", "yf_ticker": "SWIG80TR.WA", 
+        "train": 9, "test": 2, "default_stop": "atr"
+    },
+    # Indeksy globalne (Stooq + yFinance)
+    "SP500":    {
+        "type": "single", "source": "stooq", "ticker": "^spx", "yf_ticker": "^GSPC", 
+        "train": 6, "test": 2, "default_stop": "fixed"
+    },
+    "NASDAQ100":{
+        "type": "single", "source": "stooq", "ticker": "ndq100", "yf_ticker": "^NDX", 
+        "train": 6, "test": 2, "default_stop": "fixed"
+    },
+    "Nikkei225":{
+        "type": "single", "source": "stooq", "ticker": "nk225", "yf_ticker": "^N225", 
+        "train": 6, "test": 2, "default_stop": "fixed"
+    },
+    # Aktywa oparte o bazę na Google Drive + przedłużenie yFinance
+    "MSCI_World":{
+        "type": "single", "source": "drive", "ticker": "URTH", "yf_ticker": "URTH", 
+        "train": 9, "test": 1, "default_stop": "atr"
+    },
+    "STOXX600": {
+        "type": "single", "source": "drive", "ticker": "^STOXX", "yf_ticker": "^STOXX", 
+        "train": 7, "test": 1, "default_stop": "atr"
+    },
     # --- Tryb Portfelowy ---
-    "MULTIASSET":{"type": "portfolio", "train_eq": 7, "test_eq": 2, "train_bd": 7, "test_bd": 2, "default_stop_eq": "atr"} 
+    "MULTIASSET": {
+        "type": "portfolio", "train_eq": 7, "test_eq": 2, "train_bd": 7, "test_bd": 2, 
+        "default_stop_eq": "atr"
+    } 
 }
 
 
@@ -81,7 +111,7 @@ def setup_logging(output_prefix):
         handlers=[logging.FileHandler(log_file, mode="w", encoding='utf-8'), logging.StreamHandler(sys.stdout)])
 
 
-def run_multiasset(data_dir, stop_mode_arg):
+def run_multiasset(stop_mode_arg):
     """Główna logika portfela Multi-Asset (WIG + TBSP + MMF)"""
     cfg = ASSET_REGISTRY["MULTIASSET"]
     
@@ -91,23 +121,29 @@ def run_multiasset(data_dir, stop_mode_arg):
     
     logging.info(f"Stop Mode dla portfela (WIG): {'ATR-scaled' if use_atr_stop_eq else 'Fixed percentage'}")
 
-    # 1. Ładowanie danych
-    logging.info("Ładowanie danych dla portfela Multi-Asset...")
-    WIG = load_stooq_local("wig", "WIG", data_dir, "1990-01-01")
+    # 1. Update Danych przez DataUpdater (bez KNF)
+    creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
+    updater = DataUpdater(credentials_path=creds_path)
+    updater.run_full_update(ASSET_REGISTRY, get_funds=False)
+
+    # 2. Ładowanie i budowanie złożonych Assetów
+    logging.info("Ładowanie danych...")
+    WIG = load_local_csv("wig", "WIG", "1990-01-01")
     WIG = WIG.loc[WIG.index >= pd.Timestamp("1995-01-02")]
-    MMF = load_stooq_local("fund_2720", "MMF", data_dir, "1990-01-01")
-    W1M = load_stooq_local("wibor1m", "WIBOR1M", data_dir, "1990-01-01", mandatory=False)
-    PL10Y = load_stooq_local("pl10y", "PL10Y", data_dir, "1990-01-01")
-    DE10Y = load_stooq_local("de10y", "DE10Y", data_dir, "1990-01-01")
+    MMF = load_local_csv("MMF", "MMF", "1990-01-01")
+    W1M = load_local_csv("WIBOR1M", "WIBOR1M", "1990-01-01", mandatory=False)
+    PL10Y = load_local_csv("PL10Y", "PL10Y", "1990-01-01")
+    DE10Y = load_local_csv("DE10Y", "DE10Y", "1990-01-01")
     
-    # Ładowanie rozszerzonego TBSP (logika 1:1 ze starego pliku)
+    # Budowa rozszerzonego TBSP przy pomocy nowego Buildera!
     folder_id = os.environ.get("GDRIVE_FOLDER_ID", "").strip()
     TBSP = build_and_upload(
-        folder_id         = folder_id,
-        raw_filename      = "tbsp_extended_full.csv",
-        combined_filename = "tbsp_extended_combined.csv",
-        extension_ticker  = "tbsp",
-        extension_source  = "stooq",
+        folder_id=folder_id,
+        raw_filename="tbsp_extended_full.csv",
+        combined_filename="tbsp_extended_combined.csv",
+        extension_ticker="^tbsp",
+        extension_source="stooq",
+        credentials_path=creds_path
     )
     if TBSP is None:
         TBSP = load_stooq_local("tbsp", "TBSP", data_dir, "1990-01-01")
@@ -234,13 +270,18 @@ def main():
     output_prefix = asset_name.lower()
     setup_logging(output_prefix)
 
-    # 1. Update Data (Lokalnie przez Stooq)
-    run_update(get_funds=False)
-    data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'current_development', 'data'))
+    # 1. Update Data (Hybrydowy system z moj_system/data)
+    # 1. Aktualizacja hybrydowa
+    creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
+    updater = DataUpdater(credentials_path=creds_path)
+    updater.run_full_update(ASSET_REGISTRY, get_funds=False)
+
+    # Nowy folder danych
+    data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data', 'raw_csv'))
 
     # BRAMKA: PORTFEL (Multi-Asset) vs POJEDYNCZY ASSET
     if cfg.get("type") == "portfolio":
-        run_multiasset(data_dir, args.stop_mode)
+        run_multiasset(args.stop_mode)
         logging.info("Zakończono wykonywanie portfela MULTIASSET.")
         sys.exit(0)
 
@@ -264,15 +305,18 @@ def main():
     else:
         cash_df = MMF
         
-    if cfg["source"] == "stooq":
-        df = load_stooq_local(cfg["ticker"], asset_name, data_dir, "1990-01-01")
+    if cfg["source"] == "drive":
+        # Wymagane są pliki na GDrive, np stoxx600.csv
+        df = build_and_upload(
+            folder_id=os.environ.get("GDRIVE_FOLDER_ID"),
+            raw_filename=f"{asset_name.lower()}.csv",
+            combined_filename=f"{asset_name.lower()}_combined.csv",
+            extension_ticker=cfg["ticker"],
+            extension_source="yfinance",
+            credentials_path=creds_path
+        )
     else:
-        # Obsługa tymczasowa Drive dla MSCI/STOXX - ładuje pliki zbudowane wczesniej z GDrive (lub zatrzymuje)
-        logging.error("Dla MSCI i STOXX prosimy na razie uruchomić ich stare pliki dedykowane, "
-                      "zanim przeniesiemy logikę pobierania po GDrive do nowego data_util.")
-        sys.exit(1)
-        
-    if df is None or cash_df is None: sys.exit("Błąd wczytywania danych ze Stooq.")
+        df = load_local_csv(asset_name.lower(), asset_name, "1990-01-01")
 
     grids = BASE_GRIDS.copy()
     if "grids" in cfg: grids.update(cfg["grids"])
