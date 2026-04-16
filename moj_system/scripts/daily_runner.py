@@ -14,24 +14,15 @@ import datetime as dt
 import pandas as pd
 import tempfile
 
-# --- IMPORT PATH REPAIR ---
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(script_dir, '..', '..'))
-legacy_dir = os.path.join(project_root, 'current_development')
-
-sys.path.append(project_root)
-sys.path.append(legacy_dir)
-
-# --- LEGACY LIBRARY IMPORTS ---
-from current_development.strategy_test_library import (
+from moj_system.core.strategy_engine import (
     get_n_jobs, walk_forward, compute_metrics, analyze_trades, 
     compute_buy_and_hold, print_backtest_report
 )
-from current_development.multiasset_library import (
+from moj_system.core.pension_engine import (
     build_signal_series, allocation_walk_forward, print_multiasset_report,
     build_standard_two_asset_data
 )
-from current_development.global_equity_library import (
+from moj_system.core.global_engine import (
     build_return_series, build_price_df_from_returns, 
     allocation_walk_forward_n, print_global_equity_report
 )
@@ -47,6 +38,10 @@ from moj_system.reporting.global_equity_daily_output import build_daily_outputs 
 # --- GRID CONFIGURATIONS and ASSET REGISTRY ---
 from moj_system.config import BASE_GRIDS, BOND_GRIDS, ASSET_REGISTRY
 
+# Path setup
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(script_dir, '..', '..'))
+sys.path.append(project_root)
 
 
 def setup_logging(output_prefix):

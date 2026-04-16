@@ -84,7 +84,7 @@ except ImportError:
     _YFINANCE_AVAILABLE = False
 
 
-from strategy_test_library import (
+from moj_system.core.strategy_engine import (
     compute_metrics,
     
 )

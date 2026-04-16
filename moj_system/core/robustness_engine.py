@@ -29,7 +29,7 @@ import pandas as pd
 import numpy as np
 from joblib import Parallel, delayed
 
-from strategy_test_library import (
+from moj_system.core.strategy_engine import (
                                 run_strategy_with_trades,
                                 compute_metrics,
                                 compute_fund_breadth_signal,

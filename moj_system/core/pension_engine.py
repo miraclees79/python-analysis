@@ -48,7 +48,7 @@ import logging
 import pandas as pd
 import numpy as np
 
-from strategy_test_library import (
+from moj_system.core.strategy_engine  import (
     walk_forward,
     run_strategy_with_trades,
     compute_metrics,
