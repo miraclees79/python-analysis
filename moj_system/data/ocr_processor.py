@@ -74,6 +74,16 @@ def run_ocr_pipeline():
     zip_password = os.getenv('ZIP_PASSWORD')
     pdf_target_name = os.getenv('INT_FILE_NAME')
     folder_name = os.getenv('FOLDER_NAME')
+
+    # --- POPRAWKA: Czyszczenie adresu URL ---
+    if zip_url:
+        zip_url = zip_url.strip().strip("'\"") # Usuwa białe znaki, a potem apostrofy i cudzysłowy
+    # ----------------------------------------
+
+    if not all([zip_url, zip_password, pdf_target_name]):
+        raise ValueError("Krytyczne zmienne środowiskowe nie są ustawione.")
+        
+    
     # GOOGLE_CREDENTIALS już nie jest potrzebne, GDriveClient sam znajdzie plik
 
     if not all([zip_url, zip_password, pdf_target_name]):
