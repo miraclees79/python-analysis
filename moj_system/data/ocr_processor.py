@@ -65,55 +65,95 @@ def fix_ocr_number(value: str) -> tuple[str, bool]:
     return fixed, (fixed != original)
 
 
+
 def run_ocr_pipeline():
-    """Główna funkcja uruchamiająca cały proces OCR."""
+    """Główna funkcja uruchamiająca cały proces OCR, z obsługą ZIP lub bezpośredniego PDF."""
     setup_logging()
     
     # 1. Wczytanie zmiennych środowiskowych
     zip_url = os.getenv('ZIP_URL')
     zip_password = os.getenv('ZIP_PASSWORD')
-    pdf_target_name = os.getenv('INT_FILE_NAME')
+    pdf_target_name = os.getenv('INT_FILE_NAME') # Nazwa pliku PDF wewnątrz ZIP-a
     folder_name = os.getenv('FOLDER_NAME')
-
-    # --- POPRAWKA: Czyszczenie adresu URL ---
-    if zip_url:
-        zip_url = zip_url.strip().strip("'\"") # Usuwa białe znaki, a potem apostrofy i cudzysłowy
-    # ----------------------------------------
-
-    if not all([zip_url, zip_password, pdf_target_name]):
-        raise ValueError("Krytyczne zmienne środowiskowe nie są ustawione.")
-        
     
-    # GOOGLE_CREDENTIALS już nie jest potrzebne, GDriveClient sam znajdzie plik
+    # --- 3. AUTO-DETEKCJA POPPLERA ---
+    # Na Linuxie (GHA) Poppler jest w systemowym PATH, więc wystarczy None.
+    # Na Windowsie pobieramy ścieżkę ze zmiennej środowiskowej POPPLER_PATH.
+    poppler_path = None 
+    if sys.platform == "win32":
+        poppler_path = os.getenv("POPPLER_PATH")
+        if not poppler_path:
+            logging.warning(
+                "System Windows wykryty, ale brak zmiennej środowiskowej POPPLER_PATH! "
+                "Jeśli OCR się nie powiedzie, ustaw tę zmienną na folder 'bin' wewnątrz pobranego Popplera."
+                )
+    
+    if zip_url:
+        zip_url = zip_url.strip().strip("'\"")
 
-    if not all([zip_url, zip_password, pdf_target_name]):
-        raise ValueError("Krytyczne zmienne środowiskowe (ZIP_URL, ZIP_PASSWORD, INT_FILE_NAME) nie są ustawione.")
+    if not all([zip_url, zip_password]):
+        raise ValueError("Krytyczne zmienne środowiskowe (ZIP_URL, ZIP_PASSWORD) nie są ustawione.")
 
     work_dir = "/tmp" if sys.platform != "win32" else os.getenv("TEMP")
-    pdf_path = os.path.join(work_dir, pdf_target_name)
+    # Definiujemy ścieżkę do pliku PDF, który będzie na dysku tymczasowym
+    pdf_path = os.path.join(work_dir, "processed_document.pdf")
 
-    # 2. Pobieranie i rozpakowywanie pliku
     try:
-        logging.info("Pobieranie pliku ZIP...")
+        logging.info("Pobieranie pliku z URL...")
         resp = requests.get(zip_url, timeout=60)
         resp.raise_for_status()
+        file_content = resp.content
         
-        with pyzipper.AESZipFile(io.BytesIO(resp.content)) as zf:
-            zf.setpassword(zip_password.encode('utf-8'))
-            zf.extract(pdf_target_name, path=work_dir)
-        logging.info(f"Pomyślnie rozpakowano {pdf_target_name}")
-    except Exception as e:
-        raise RuntimeError(f"Błąd podczas pobierania lub rozpakowywania PDF: {e}")
+        # --- NOWA LOGIKA: ZIP CZY PDF? ---
+        is_zip = False
+        try:
+            # Próba 1: Traktujemy plik jak zaszyfrowany ZIP
+            with pyzipper.AESZipFile(io.BytesIO(file_content)) as zf:
+                zf.setpassword(zip_password.encode('utf-8'))
+                
+                # Upewniamy się, że plik PDF, którego szukamy, jest w środku
+                if pdf_target_name not in zf.namelist():
+                    raise FileNotFoundError(f"Plik '{pdf_target_name}' nie został znaleziony wewnątrz archiwum ZIP.")
+                
+                # Rozpakowujemy plik PDF na dysk
+                zf.extract(pdf_target_name, path=work_dir)
+                # Zmieniamy nazwę na naszą standardową, jeśli trzeba
+                os.rename(os.path.join(work_dir, pdf_target_name), pdf_path)
+                
+            logging.info(f"Pomyślnie rozpakowano {pdf_target_name} z archiwum ZIP.")
+            is_zip = True
+        except (pyzipper.zipfile.BadZipFile, RuntimeError):
+            # RuntimeError jest rzucany przez pyzipper przy złym haśle
+            logging.info("Plik nie jest poprawnym archiwum ZIP lub hasło jest błędne. Próbuję jako bezpośredni PDF...")
+            is_zip = False
+        
+        if not is_zip:
+            # Próba 2: Zapisujemy pobraną treść bezpośrednio jako plik PDF
+            with open(pdf_path, 'wb') as f:
+                f.write(file_content)
+            logging.info(f"Zapisano pobrany plik bezpośrednio jako {pdf_path}.")
 
-    # 3. Przetwarzanie OCR z uwzględnieniem zarządzania pamięcią
+    except Exception as e:
+        raise RuntimeError(f"Błąd podczas pobierania lub przygotowywania pliku PDF: {e}")
+
+    # --- Dalsza część bez zmian, ale z przekazaniem hasła do pdf2image ---
     all_rows = []
     try:
-        info = pdfinfo_from_path(pdf_path)
+        # Przekazujemy hasło do obu funkcji z pdf2image
+        info = pdfinfo_from_path(pdf_path, userpw=zip_password, poppler_path=poppler_path)
         total_pages = info["Pages"]
         logging.info(f"Przetwarzanie {total_pages} stron...")
 
         for i in range(1, total_pages + 1):
-            images = convert_from_path(pdf_path, first_page=i, last_page=i, dpi=300, thread_count=2)
+            images = convert_from_path(
+                pdf_path, 
+                first_page=i, 
+                last_page=i, 
+                dpi=300, 
+                thread_count=2,
+                userpw=zip_password # <-- KLUCZOWY PARAMETR
+            )
+            # ... reszta pętli OCR bez zmian ...
             if not images: continue
             
             img = np.array(images[0])
@@ -132,13 +172,18 @@ def run_ocr_pipeline():
             
             logging.info(f"Strona {i}: Wyodrębniono {page_count} wierszy.")
             
-            # --- ZARZĄDZANIE PAMIĘCIĄ ---
             del images, img, gray, binary, text
-            gc.collect() # Wymuszenie zwolnienia pamięci
-            # ---------------------------
+            gc.collect()
 
     except Exception as e:
+        # Próba posprzątania po sobie
+        if os.path.exists(pdf_path):
+            os.remove(pdf_path)
         raise RuntimeError(f"Błąd podczas przetwarzania OCR: {e}")
+    finally:
+        # Zawsze usuwamy plik tymczasowy po zakończeniu pracy
+        if os.path.exists(pdf_path):
+            os.remove(pdf_path)
 
     # 4. Czyszczenie danych i transformacja
     df = pd.DataFrame(all_rows, columns=['Date', 'Col2', 'Col3', 'Col4', 'Col5', 'Col6'])
