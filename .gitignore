@@ -48,3 +48,6 @@ current_development/outputs/multiasset_signal_log.csv
 *.pyc
 repo_do_analizy.txt
 repo_collect.py
+/moj_system/data/raw_csv
+/moj_system/data/zips
+/outputs

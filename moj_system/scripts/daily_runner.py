@@ -130,8 +130,8 @@ def run_multiasset(stop_mode_arg):
     logging.info("Ładowanie danych...")
     WIG = load_local_csv("wig", "WIG", "1990-01-01")
     WIG = WIG.loc[WIG.index >= pd.Timestamp("1995-01-02")]
-    MMF = load_local_csv("MMF", "MMF", "1990-01-01")
-    W1M = load_local_csv("WIBOR1M", "WIBOR1M", "1990-01-01", mandatory=False)
+    MMF = load_local_csv("fund_2720", "MMF", "1990-01-01")
+    W1M = load_local_csv("wibor1m", "WIBOR1M", "1990-01-01", mandatory=False)
     PL10Y = load_local_csv("PL10Y", "PL10Y", "1990-01-01")
     DE10Y = load_local_csv("DE10Y", "DE10Y", "1990-01-01")
     
@@ -146,7 +146,7 @@ def run_multiasset(stop_mode_arg):
         credentials_path=creds_path
     )
     if TBSP is None:
-        TBSP = load_stooq_local("tbsp", "TBSP", data_dir, "1990-01-01")
+        TBSP = load_local_csv("tbsp", "TBSP","1990-01-01")
         if TBSP is None:
             logging.error("FAIL: TBSP build/update failed.")
             sys.exit(1)
@@ -271,7 +271,7 @@ def main():
     setup_logging(output_prefix)
 
     # 1. Update Data (Hybrydowy system z moj_system/data)
-    # 1. Aktualizacja hybrydowa
+    
     creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
     updater = DataUpdater(credentials_path=creds_path)
     updater.run_full_update(ASSET_REGISTRY, get_funds=False)
@@ -296,27 +296,36 @@ def main():
     logging.info(f"Stop Mode: {'ATR-scaled (Chandelier)' if use_atr_stop else 'Fixed percentage'}")
     logging.info("=" * 80)
     
-    MMF = load_stooq_local("fund_2720", "MMF", data_dir, "1990-01-01")
-    WIBOR1M = load_stooq_local("wibor1m", "WIBOR1M", data_dir, "1990-01-01", mandatory=False)
-
+    # 2. Ładowanie
+    # Używamy ujednoliconych nazw, dokładnie takich jakie zapisał DataUpdater
+    MMF = load_local_csv("fund_2720", "MMF", "1990-01-01")
+    WIBOR1M = load_local_csv("wibor1m", "WIBOR1M", "1990-01-01", mandatory=False)
+    
     if WIBOR1M is not None:
         from current_development.global_equity_library import build_mmf_extended
         cash_df = build_mmf_extended(MMF, WIBOR1M, floor_date="1995-01-02")
     else:
         cash_df = MMF
         
+    # Wczytanie konkretnego assetu
     if cfg["source"] == "drive":
-        # Wymagane są pliki na GDrive, np stoxx600.csv
+        from moj_system.data.builder import build_and_upload
+        
+        is_msci = (asset_name == "MSCI_World") # <-- Sprawdzamy, czy to nasz specjalny przypadek
+
         df = build_and_upload(
             folder_id=os.environ.get("GDRIVE_FOLDER_ID"),
-            raw_filename=f"{asset_name.lower()}.csv",
+            raw_filename=f"{asset_name.lower()}_wsj_raw.csv" if is_msci else f"{asset_name.lower()}.csv",
             combined_filename=f"{asset_name.lower()}_combined.csv",
             extension_ticker=cfg["ticker"],
             extension_source="yfinance",
-            credentials_path=creds_path
+            credentials_path=creds_path,
+            is_msci_world=is_msci # <-- Włączamy specjalną logikę
         )
     else:
         df = load_local_csv(asset_name.lower(), asset_name, "1990-01-01")
+
+    if df is None or cash_df is None: sys.exit("Błąd wczytywania danych.")
 
     grids = BASE_GRIDS.copy()
     if "grids" in cfg: grids.update(cfg["grids"])

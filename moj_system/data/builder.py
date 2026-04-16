@@ -2,10 +2,11 @@
 """
 moj_system/data/builder.py
 ==========================
-Buduje skomplikowane, połączone serie cenowe (np. MSCI World, STOXX 600)
-poprzez łączenie surowych plików CSV z Google Drive z przedłużeniami z yFinance/Stooq.
-Zastępuje stary `current_development/price_series_builder.py`.
+Builds complex, linked price series (e.g. MSCI World, STOXX 600)
+by merging raw CSV files from GDrive with yFinance/Stooq extensions.
+Replaces legacy price_series_builder.py.
 """
+
 
 import os
 import io
@@ -17,6 +18,7 @@ from pathlib import Path
 from moj_system.data.gdrive import GDriveClient
 from moj_system.data.data_manager import load_local_csv
 
+# ... (stałe DATA_ROOT, RAW_DIR, DATA_START, CLOSE_COL bez zmian) ...
 DATA_ROOT = Path(__file__).resolve().parent
 RAW_DIR = DATA_ROOT / "raw_csv"
 DATA_START = "1990-01-01"
@@ -24,7 +26,7 @@ CLOSE_COL = "Zamkniecie"
 
 
 def _parse_wsj_csv(raw_bytes: bytes) -> pd.DataFrame | None:
-    """Parsuje specyficzny format eksportu z WSJ (Wall Street Journal)."""
+    """Parses WSJ export format."""
     for encoding in ("utf-8-sig", "utf-8", "latin-1"):
         try:
             raw = pd.read_csv(io.BytesIO(raw_bytes), encoding=encoding, thousands=",", skipinitialspace=True)
@@ -51,7 +53,7 @@ def _parse_wsj_csv(raw_bytes: bytes) -> pd.DataFrame | None:
 
 
 def _extend_series(base_df: pd.DataFrame, ext_df: pd.DataFrame) -> pd.DataFrame:
-    """Przedłuża historyczną bazę o nowe stopy zwrotu z ext_df."""
+    """Extends historical base with new returns from ext_df."""
     if base_df is None or base_df.empty: return ext_df
     if ext_df is None or ext_df.empty: return base_df
 
@@ -72,6 +74,44 @@ def _extend_series(base_df: pd.DataFrame, ext_df: pd.DataFrame) -> pd.DataFrame:
     out.index.name = "Data"
     return out.loc[out.index >= pd.Timestamp(DATA_START)]
 
+# --- NOWA FUNKCJA: Łączenie Syntetyka z WSJ/URTH ---
+def _build_full_msci_world(client: GDriveClient, folder_id: str, wsj_combined_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Łączy syntetyczną bazę MSCI z serii WSJ+URTH.
+    Odtwarza logikę z oryginalnego `msci_world_synthetic.py`.
+    """
+    logging.info("Rozpoczynam budowę pełnej historii MSCI World (Syntetyk + WSJ/URTH)...")
+    
+    # 1. Pobierz syntetyczną bazę (1990-2010)
+    synthetic_df = client.download_csv(folder_id, "msci_world_synthetic.csv")
+    if synthetic_df is None:
+        logging.warning("Brak syntetycznej bazy MSCI World. Zwracam tylko serię WSJ/URTH.")
+        return wsj_combined_df
+    
+    synthetic_df['Data'] = pd.to_datetime(synthetic_df['Data'])
+    synthetic_df = synthetic_df.set_index('Data')
+    
+    wsj_start = wsj_combined_df.index.min()
+    synth_pre = synthetic_df.loc[synthetic_df.index < wsj_start].copy()
+    
+    if synth_pre.empty:
+        logging.info("Baza syntetyczna nie poprzedza danych WSJ. Zwracam serię WSJ/URTH.")
+        return wsj_combined_df
+        
+    # 2. Skalowanie i łączenie (chain-link)
+    anchor_synth_price = float(synth_pre[CLOSE_COL].iloc[-1])
+    anchor_wsj_price = float(wsj_combined_df[CLOSE_COL].iloc[0])
+    scale = anchor_wsj_price / anchor_synth_price
+    
+    for col in [CLOSE_COL, "Najwyzszy", "Najnizszy"]:
+        if col in synth_pre.columns:
+            synth_pre[col] = synth_pre[col] * scale
+
+    combined = pd.concat([synth_pre, wsj_combined_df]).sort_index()
+    combined = combined[~combined.index.duplicated(keep="last")]
+    
+    logging.info(f"Połączono {len(synth_pre)} wierszy syntetycznych z {len(wsj_combined_df)} wierszami WSJ/URTH.")
+    return combined
 
 def build_and_upload(
     folder_id: str,
@@ -79,10 +119,12 @@ def build_and_upload(
     combined_filename: str,
     extension_ticker: str,
     extension_source: str = "yfinance",
-    credentials_path: str = None
+    credentials_path: str = None,
+    # --- NOWY PARAMETR ---
+    is_msci_world: bool = False
 ) -> pd.DataFrame | None:
     """Główna funkcja budująca i wysyłająca połączoną serię na GDrive."""
-    logging.info(f"Budowanie połączonej serii: {combined_filename} (Ext: {extension_ticker})")
+    logging.info(f"Budowanie serii: {combined_filename} (Ext: {extension_ticker})")
     client = GDriveClient(credentials_path)
 
     # 1. Spróbuj pobrać już gotowy plik Combined
@@ -90,10 +132,8 @@ def build_and_upload(
     if existing is not None:
         base_df = existing.set_index("Data")
         base_df.index = pd.to_datetime(base_df.index)
-        logging.info(f"Pobrano bazę z {combined_filename} (ostatnia data: {base_df.index.max().date()})")
     else:
-        # 2. Jeśli brak Combined, pobierz Raw i sparsuj
-        logging.info(f"Brak połączonego pliku. Pobieram surowy {raw_filename}...")
+        # 2. Jeśli brak, pobierz Raw i sparsuj
         file_id = client.find_file_id(folder_id, raw_filename)
         if not file_id:
             logging.error(f"Nie znaleziono pliku surowego {raw_filename}!")
@@ -109,10 +149,10 @@ def build_and_upload(
         raw_bytes = fh.getvalue()
         base_df = _parse_wsj_csv(raw_bytes) if "wsj" in raw_filename.lower() else pd.read_csv(io.BytesIO(raw_bytes), parse_dates=["Data"], index_col="Data")
 
-    # 3. Pobierz rozszerzenie (yFinance lub Stooq)
+    # 3. Download extension (yFinance or Stooq)
     ext_df = None
     if extension_source == "yfinance":
-        logging.info(f"Pobieranie rozszerzenia z yFinance: {extension_ticker}")
+        logging.info(f"Downloading yFinance extension: {extension_ticker}")
         try:
             raw_yf = yf.download(extension_ticker, start=base_df.index.max(), progress=False, auto_adjust=True)
             if not raw_yf.empty:
@@ -120,21 +160,26 @@ def build_and_upload(
                 ext_df = raw_yf.rename(columns={"Close": CLOSE_COL, "High": "Najwyzszy", "Low": "Najnizszy"})
                 ext_df.index = pd.to_datetime(ext_df.index).tz_localize(None)
         except Exception as e:
-            logging.warning(f"Błąd yFinance: {e}")
+            logging.warning(f"yFinance Error: {e}")
     elif extension_source == "stooq":
-        # Wczytujemy z lokalnie pobranych plików przez nasz data_manager
-        logging.info(f"Pobieranie rozszerzenia lokalnego (Stooq): {extension_ticker}")
-        # Usuwamy przedrostek '^' do wyszukiwania plików (np. '^tbsp' -> 'tbsp')
+        # Load from locally downloaded files via data_manager
+        logging.info(f"Loading local extension (Stooq): {extension_ticker}")
         clean_ticker = extension_ticker.replace('^', '').lower()
         ext_df = load_local_csv(clean_ticker, clean_ticker, mandatory=False)
 
-    # 4. Łączenie i Zapis
+    # 4. Merge and Save
     combined = _extend_series(base_df, ext_df)
+    
+    # --- BLOK SPECJALNY DLA MSCI WORLD ---
+    if is_msci_world:
+        combined = _build_full_msci_world(client, folder_id, combined)
+
+    if combined is None:
+        return None
     
     out_path = RAW_DIR / combined_filename
     combined.to_csv(out_path)
     
-    # Upload z powrotem na Drive
     try:
         client.upload_csv(folder_id, str(out_path), combined_filename)
     except Exception as e:
