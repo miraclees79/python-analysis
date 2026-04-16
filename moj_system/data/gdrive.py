@@ -1,10 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue Apr 14 22:11:49 2026
-
-@author: adamg
-"""
-
 import os
 import io
 import logging
@@ -16,6 +10,9 @@ from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload, MediaIoBa
 
 class GDriveClient:
     def __init__(self, credentials_path=None):
+        # Automatyczne pobieranie głównego folderu projektu ze zmiennej środowiskowej
+        self.root_folder_id = os.environ.get("GDRIVE_FOLDER_ID")
+        
         if credentials_path is None:
             self.credentials_path = os.path.join(tempfile.gettempdir(), "credentials.json")
         else:
@@ -25,27 +22,32 @@ class GDriveClient:
 
     def _get_service(self):
         if not os.path.exists(self.credentials_path):
-            logging.warning(f"Brak pliku credentials w: {self.credentials_path}. Tryb offline.")
+            logging.warning(f"Brak pliku credentials w: {self.credentials_path}")
             return None
             
-        creds = service_account.Credentials.from_service_account_file(
-            self.credentials_path,
-            scopes=["https://www.googleapis.com/auth/drive"]
-        )
-        return build("drive", "v3", credentials=creds, cache_discovery=False)
+        try:
+            creds = service_account.Credentials.from_service_account_file(
+                self.credentials_path,
+                scopes=["https://www.googleapis.com/auth/drive"]
+            )
+            return build("drive", "v3", credentials=creds, cache_discovery=False)
+        except Exception as e:
+            logging.error(f"Bląd inicjalizacji serwisu Drive: {e}")
+            return None
 
-    def find_file_id(self, folder_id: str, filename: str) -> str:
+    def find_file_id(self, parent_id: str, filename: str) -> str:
         if not self.service: return None
-        query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
+        # Jeśli nie mamy parent_id, szukamy w całym głównym katalogu (root)
+        parent_query = f"'{parent_id}' in parents" if parent_id else "'root' in parents"
+        query = f"name='{filename}' and {parent_query} and trashed=false"
+        
         results = self.service.files().list(q=query, fields="files(id,name)").execute()
         files = results.get("files", [])
         return files[0]["id"] if files else None
 
     def download_csv(self, folder_id: str, filename: str, sep=",", encoding="utf-8") -> pd.DataFrame:
-        # Zmieniliśmy domyślny sep z ";" na ","
         file_id = self.find_file_id(folder_id, filename)
         if not file_id:
-            logging.warning(f"Nie znaleziono pliku na Drive: {filename}")
             return None
 
         buf = io.BytesIO()
@@ -58,9 +60,9 @@ class GDriveClient:
         buf.seek(0)
         try:
             return pd.read_csv(buf, sep=sep, encoding=encoding, engine="python")
-        except UnicodeDecodeError:
-            buf.seek(0)
-            return pd.read_csv(buf, sep=sep, encoding="cp1250", engine="python")
+        except Exception as e:
+            logging.error(f"Bląd dekodowania CSV: {e}")
+            return None
 
     def upload_csv(self, folder_id: str, local_path: str, filename: str = None):
         if not self.service: return None
