@@ -69,25 +69,28 @@ def fix_ocr_number(value: str) -> tuple[str, bool]:
 def run_ocr_pipeline():
     """Główna funkcja uruchamiająca cały proces OCR, z obsługą ZIP lub bezpośredniego PDF."""
     setup_logging()
-    
+    logging.info(f"Odczytana ścieżka POPPLER_PATH: {os.getenv('POPPLER_PATH')}")
     # 1. Wczytanie zmiennych środowiskowych
     zip_url = os.getenv('ZIP_URL')
     zip_password = os.getenv('ZIP_PASSWORD')
     pdf_target_name = os.getenv('INT_FILE_NAME') # Nazwa pliku PDF wewnątrz ZIP-a
     folder_name = os.getenv('FOLDER_NAME')
     
-    # --- 3. AUTO-DETEKCJA POPPLERA ---
-    # Na Linuxie (GHA) Poppler jest w systemowym PATH, więc wystarczy None.
-    # Na Windowsie pobieramy ścieżkę ze zmiennej środowiskowej POPPLER_PATH.
+    # --- AUTO-DETEKCJA POPPLERA ---
     poppler_path = None 
     if sys.platform == "win32":
         poppler_path = os.getenv("POPPLER_PATH")
         if not poppler_path:
-            logging.warning(
-                "System Windows wykryty, ale brak zmiennej środowiskowej POPPLER_PATH! "
-                "Jeśli OCR się nie powiedzie, ustaw tę zmienną na folder 'bin' wewnątrz pobranego Popplera."
-                )
-    
+            logging.warning("System Windows wykryty, ale brak zmiennej środowiskowej POPPLER_PATH!")
+        else:
+                logging.info(f"Używam ścieżki Popplera: {poppler_path}")
+            # 2. Ścieżka do Tesseracta (DODAJ TO TERAZ)
+        tesseract_exe = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+        if os.path.exists(tesseract_exe):
+            pytesseract.pytesseract.tesseract_cmd = tesseract_exe
+            logging.info("Tesseract skonfigurowany poprawnie.")
+        else:
+                logging.warning(f"Nie znaleziono Tesseracta w: {tesseract_exe}")
     if zip_url:
         zip_url = zip_url.strip().strip("'\"")
 
@@ -151,7 +154,8 @@ def run_ocr_pipeline():
                 last_page=i, 
                 dpi=300, 
                 thread_count=2,
-                userpw=zip_password # <-- KLUCZOWY PARAMETR
+                userpw=zip_password, 
+                poppler_path=poppler_path # <-- KLUCZOWY PARAMETR
             )
             # ... reszta pętli OCR bez zmian ...
             if not images: continue
@@ -196,36 +200,48 @@ def run_ocr_pipeline():
 
     logging.info(f"Łączna liczba zastosowanych korekt: {correction_count}")
     
-    # --- NOWA LOGIKA UPLOADU Z UŻYCIEM GDRIVECLIENT ---
+# --- LOGIKA UPLOADU (POPRAWIONA) ---
     if not _GDRIVE_AVAILABLE or not folder_name:
-        logging.warning("Brak klienta GDrive lub nazwy folderu. Pomijam upload.")
+        logging.warning(f"Brak klienta GDrive ({_GDRIVE_AVAILABLE}) lub nazwy folderu ({folder_name}). Pomijam upload.")
     else:
         try:
-            client = GDriveClient()
+            # GDriveClient domyślnie szuka credentials.json w Temp - to już mamy przetestowane!
+            client = GDriveClient() 
             if not client.service:
-                raise ConnectionError("Nie można połączyć się z Google Drive.")
+                raise ConnectionError("Nie można utworzyć serwisu Google Drive. Sprawdź credentials.json.")
             
-            # Znajdź folder (na razie po nazwie, w przyszłości można po ID)
-            folder_id = client.find_file_id(client.root_folder_id, folder_name) # Zakładam, że folder jest w głównym katalogu
+            # 1. Znajdź ID folderu po nazwie
+            logging.info(f"Szukam folderu '{folder_name}' na Drive...")
+            folder_id = client.find_file_id(client.root_folder_id, folder_name)
+            
             if not folder_id:
-                raise FileNotFoundError(f"Folder '{folder_name}' nie został znaleziony na Google Drive.")
+                # Jeśli nie ma, spróbujmy poszukać w głównym katalogu (root)
+                # (Zmieniam na bardziej elastyczne szukanie)
+                query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+                res = client.service.files().list(q=query, fields='files(id)').execute()
+                files = res.get('files', [])
+                if files:
+                    folder_id = files[0]['id']
+
+            if not folder_id:
+                raise FileNotFoundError(f"Folder '{folder_name}' nie został znaleziony na Twoim Drive.")
 
             file_name = "filtered_table.csv"
             
-            # Zapisz DataFrame do tymczasowego pliku lokalnego
-            with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix=".csv", encoding='utf-8') as tmp_file:
-                df.to_csv(tmp_file, index=False, header=False, sep=";")
-                tmp_file_path = tmp_file.name
+            # 2. Zapisz DataFrame do pliku tymczasowego
+            temp_path = os.path.join(work_dir, "upload_temp.csv")
+            df.to_csv(temp_path, index=False, header=False, sep=";", encoding='utf-8')
 
-            # Użyj metody upload_csv z naszego klienta
-            client.upload_csv(folder_id, tmp_file_path, file_name)
+            # 3. Upload za pomocą zaufanej metody upload_csv
+            logging.info(f"Wysyłam plik {file_name} do folderu {folder_name} (ID: {folder_id})...")
+            client.upload_csv(folder_id, temp_path, file_name)
             
-            # Posprzątaj po sobie
-            os.remove(tmp_file_path)
+            # 4. Sprzątanie
+            os.remove(temp_path)
+            logging.info("Plik pomyślnie wysłany na Google Drive.")
 
         except Exception as e:
             logging.error(f"Błąd interakcji z Google Drive: {e}")
-
     logging.info("Potok OCR zakończony pomyślnie.")
 
 # Umożliwia uruchomienie pliku jako skryptu z terminala
