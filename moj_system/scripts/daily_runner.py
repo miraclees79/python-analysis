@@ -124,7 +124,7 @@ def run_multiasset(stop_mode_arg):
     # 1. Update Danych przez DataUpdater (bez KNF)
     creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
     updater = DataUpdater(credentials_path=creds_path)
-    updater.run_full_update(ASSET_REGISTRY, get_funds=False)
+    updater.run_full_update(get_funds=False)
 
     # 2. Ładowanie i budowanie złożonych Assetów
     logging.info("Ładowanie danych...")
@@ -274,17 +274,15 @@ def main():
     
     creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
     updater = DataUpdater(credentials_path=creds_path)
-    updater.run_full_update(ASSET_REGISTRY, get_funds=False)
-
-    # Nowy folder danych
-    data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data', 'raw_csv'))
-
+    
+    
     # BRAMKA: PORTFEL (Multi-Asset) vs POJEDYNCZY ASSET
     if cfg.get("type") == "portfolio":
         run_multiasset(args.stop_mode)
         logging.info("Zakończono wykonywanie portfela MULTIASSET.")
         sys.exit(0)
 
+    updater.run_full_update(get_funds=False)
     # --- LOGIKA DLA POJEDYNCZYCH ASSETÓW (Single-Asset) ---
     train_years, test_years = cfg["train"], cfg["test"]
     filter_mode = [args.force_filter] if args.force_filter else None
