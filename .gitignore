@@ -51,3 +51,4 @@ repo_collect.py
 /moj_system/data/raw_csv
 /moj_system/data/zips
 /outputs
+/moj_system/data/fund_names_stooq
