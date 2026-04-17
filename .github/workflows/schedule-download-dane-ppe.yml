@@ -29,7 +29,7 @@ jobs:
           sudo apt-get install -y tesseract-ocr-pol
           sudo apt-get install -y poppler-utils
           #pip install --no-cache-dir pyzipper pytesseract pdf2image google-api-python-client opencv-python-headless pandas
-          pip install -r moj_system/requirements.txt
+          pip install -r requirements.txt
       #- name: Create Google Credentials File
       #  run: |
       #    echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
