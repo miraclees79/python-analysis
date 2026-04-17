@@ -30,7 +30,7 @@ jobs:
           sudo apt-get install -y poppler-utils
           pip install -r requirements.txt
       - name: Create Google Credentials File
-       run: |
+        run: |
           echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
           
      
