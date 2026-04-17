@@ -1,0 +1,23 @@
+# --- CORE DATA & ANALYSIS ---
+pandas>=2.1.0
+numpy>=1.24.0
+joblib>=1.3.0
+rapidfuzz>=3.0.0
+
+# --- DATA ACQUISITION & EXTERNAL APIS ---
+requests>=2.31.0
+yfinance>=0.2.35
+
+# --- GOOGLE DRIVE INTEGRATION ---
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.1.0
+google-auth-oauthlib>=1.1.0
+
+# --- VISUALIZATION ---
+matplotlib>=3.7.0
+
+# --- OCR PIPELINE (PPE DATA) ---
+pytesseract>=0.3.10
+pdf2image>=1.17.0
+opencv-python>=4.8.0
+pyzipper>=0.3.6
