@@ -28,16 +28,15 @@ jobs:
           sudo apt-get install -y libtesseract-dev
           sudo apt-get install -y tesseract-ocr-pol
           sudo apt-get install -y poppler-utils
-          #pip install --no-cache-dir pyzipper pytesseract pdf2image google-api-python-client opencv-python-headless pandas
           pip install -r requirements.txt
-      #- name: Create Google Credentials File
-      #  run: |
-      #    echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
+      - name: Create Google Credentials File
+       run: |
+          echo '${{ secrets.GOOGLE_CREDENTIALS }}' > /tmp/credentials.json
           
      
-     # - name: Validate JSON Format
-     #  run: |
-      #       python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
+      - name: Validate JSON Format
+        run: |
+             python -c "import json; json.load(open('/tmp/credentials.json'))" && echo "JSON is valid."
      
       - name: Execute Python Script
         
