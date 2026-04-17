@@ -233,7 +233,7 @@ def run_ocr_pipeline():
             df.to_csv(temp_path, index=False, header=False, sep=";", encoding='utf-8')
 
             # 3. Upload za pomocą zaufanej metody upload_csv
-            logging.info(f"Wysyłam plik {file_name} do folderu {folder_name} (ID: {folder_id})...")
+            logging.info(f"Wysyłam plik {file_name} do folderu {folder_name} ...")
             client.upload_csv(folder_id, temp_path, file_name)
             
             # 4. Sprzątanie
