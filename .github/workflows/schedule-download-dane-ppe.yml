@@ -48,7 +48,7 @@ jobs:
           INT_FILE_NAME : ${{ secrets.INT_FILE_NAME }}
           GOOGLE_CREDENTIALS : ${{ secrets.GOOGLE_CREDENTIALS }}
         run: |
-          python  moj_system/data/ocr_processor.py
+           python -m moj_system.data.ocr_processor
 
       - name: Upload log file as artifact
         uses: actions/upload-artifact@v4
