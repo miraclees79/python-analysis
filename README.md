@@ -1,8 +1,8 @@
-Oto kompletny i czytelny plik README.md dla Twojego nowego systemu. Skopiuj go i zapisz w głównym folderze Twojego projektu.
 
-Quantitative Strategy Framework
-
-System do automatycznej analizy, optymalizacji i weryfikacji strategii inwestycyjnych (Single Asset, Pension Multi-Asset, Global Equity). System został zrefaktoryzowany do architektury modułowej, zapewniającej wysoką spójność danych, powtarzalność wyników (OOS alignment) oraz łatwą skalowalność.
+System do automatycznej analizy, optymalizacji i weryfikacji strategii inwestycyjnych 
+(Single Asset, Pension Multi-Asset, Global Equity). 
+System został zrefaktoryzowany do architektury modułowej, zapewniającej wysoką spójność danych, 
+powtarzalność wyników (OOS alignment) oraz łatwą skalowalność.
 
 Struktura Projektu
 
@@ -34,10 +34,10 @@ System sterowany jest z poziomu katalogu moj_system/scripts/.
 
 Użyj uniwersalnego runnera:
 
-# Dla pojedynczego assetu
+- Dla pojedynczego assetu
 python moj_system/scripts/daily_runner.py --asset WIG20TR --stop_mode atr
 
-# Dla portfela emerytalnego
+- Dla portfela emerytalnego
 python moj_system/scripts/daily_runner.py --asset PENSION
 
 2. Optymalizacja parametrów (Sweep)
