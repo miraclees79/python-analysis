@@ -84,4 +84,4 @@ GOOGLE_CREDENTIALS (JSON string)
 
 ZIP_URL, ZIP_PASSWORD, INT_FILE_NAME, FOLDER_NAME (dla OCR)
 
-System przygotowany jako zmodulowana platforma kwantowa dla celów automatyzacji inwestycji.
+
