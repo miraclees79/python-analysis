@@ -161,55 +161,71 @@ class KNFTools:
 
     def fetch_knf_subfunds(self, confirmed_ids: set, use_tfi_scope: bool = True) -> pd.DataFrame:
         """
-        Fetches active subfunds from KNF, hydrates them, and excludes confirmed.
-        If use_tfi_scope is True, it filters only the TFI brands listed in TFI_IN_SCOPE.
-        If False, it returns ALL active subfunds from the KNF API.
+        Deep Hydration: Fetches subfunds and crawls through KIDs to get 
+        Fees, Risk Levels and Benchmarks.
         """
-        logging.info("Fetching lookups from KNF...")
+        logging.info("Building TFI and Fund lookup maps...")
         companies = self._fetch_all_pages("/v1/companies")
         company_map = {c['companyId']: c['name'] for c in companies if 'companyId' in c}
         funds = self._fetch_all_pages("/v1/funds")
         fund_to_company = {f['fundId']: f['companyId'] for f in funds if 'fundId' in f}
 
         logging.info("Fetching subfund list...")
-        subfunds_raw = self._fetch_all_pages("/v1/subfunds", {"includeInactive": "false", "includeLiquidating": "false"})
+        all_subfunds = self._fetch_all_pages("/v1/subfunds", {"includeInactive": "false"})
         
-        unconfirmed_raw = [s for s in subfunds_raw if s['subfundId'] not in confirmed_ids]
-        logging.info(f"Hydrating {len(unconfirmed_raw)} unconfirmed subfunds...")
-        
+        # Filter scope first to save API calls
+        scoped_raw = []
+        for s in all_subfunds:
+            comp_id = fund_to_company.get(s.get('fundId'))
+            tfi_name = company_map.get(comp_id, "")
+            tfi_key = self.to_ascii(tfi_name.lower().strip())
+            if not use_tfi_scope or tfi_key in TFI_IN_SCOPE:
+                s['tfi_name'] = tfi_name
+                scoped_raw.append(s)
+
+        logging.info(f"Hydrating {len(scoped_raw)} subfunds with KID metadata...")
         hydrated_rows = []
-        for i, s in enumerate(unconfirmed_raw):
+        
+        for i, s in enumerate(scoped_raw):
             sfid = s['subfundId']
-            if i > 0 and i % 100 == 0: logging.info(f"  ... hydrated {i}/{len(unconfirmed_raw)}")
+            if i > 0 and i % 20 == 0: logging.info(f"  ... hydrated {i}/{len(scoped_raw)}")
+            
             try:
+                # 1. Basic subfund detail
                 detail = requests.get(f"{KNF_API_BASE}/v1/subfunds/{sfid}", timeout=10).json()
-                fund_id = detail.get('fundId')
-                tfi_name = company_map.get(fund_to_company.get(fund_id), "")
-                detail['tfi_name'] = tfi_name
-                hydrated_rows.append(detail)
+                s.update(detail)
+                
+                # 2. Get latest Primary KID UUID
+                kid_list = requests.get(f"{KNF_API_BASE}/v1/key-information/units", 
+                                        params={"subfundId": sfid, "isPrimary": "true", "size": 1}, timeout=10).json()
+                content = kid_list.get('content', [])
+                
+                if content:
+                    uuid = content[0]['documentUuid']
+                    # 3. Get Deep KID Metadata (Fees, Risk, Benchmark)
+                    kid_detail = requests.get(f"{KNF_API_BASE}/v1/key-information/units/{uuid}", timeout=10).json()
+                    s.update({
+                        "riskLevel": kid_detail.get("riskLevel"),
+                        "managementAndOtherFeesRate": kid_detail.get("managementAndOtherFeesRate"),
+                        "maxEntryFeeRate": kid_detail.get("maxEntryFeeRate"),
+                        "hasBenchmark": kid_detail.get("hasBenchmark"),
+                        "benchmark": kid_detail.get("benchmark")
+                    })
+                
+                hydrated_rows.append(s)
                 time.sleep(0.05)
             except Exception as e:
-                logging.warning(f"Could not hydrate {sfid}: {e}")
+                logging.warning(f"Could not fully hydrate {sfid}: {e}")
+                hydrated_rows.append(s)
 
         df = pd.DataFrame(hydrated_rows)
         if df.empty: return df
         
-        df['knf_tfi_key'] = df['tfi_name'].apply(self.tfi_brand_token)
-        df['tfi_key_raw'] = df['tfi_name'].apply(lambda x: self.to_ascii(str(x).lower().strip()))
-        
-        # --- ZMIANA TUTAJ: Warunkowe filtrowanie TFI ---
-        if use_tfi_scope:
-            df = df[df['tfi_key_raw'].isin(TFI_IN_SCOPE)].copy()
-            logging.info(f"Filtered to {len(df)} subfunds within TFI scope.")
-        else:
-            logging.info(f"TFI scope filter disabled. Processing ALL {len(df)} subfunds.")
-        # ----------------------------------------------
-
-        # Exclude PPK (zawsze wykluczamy te programy emerytalne, bo ich i tak nie ma na Stooq)
         df = df[~df['category'].astype(str).str.startswith("PPK")]
-        
+        df['knf_tfi_key'] = df['tfi_name'].apply(self.tfi_brand_token)
         df['knf_norm'] = df.apply(lambda r: self.residual_name(str(r['name']), r['knf_tfi_key']), axis=1)
-        logging.info(f"KNF list ready: {len(df)} subfunds to match.")
+        
+        logging.info(f"Deep hydration complete. {len(df)} subfunds ready.")
         return df
 
 
@@ -236,6 +252,7 @@ class KNFTools:
     def _verify_price_match(self, subfund_id: int, stooq_id: int) -> bool:
         from moj_system.data.updater import DataUpdater # Import here to avoid circular dependency
         
+    
         try:
             # 1. KNF: Get latest valuation (could be 1 month old)
             url = f"{KNF_API_BASE}/v1/valuations"

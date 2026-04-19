@@ -4,6 +4,7 @@ import io
 import logging
 import tempfile
 import pandas as pd
+import socket
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload, MediaIoBaseUpload
@@ -30,6 +31,7 @@ class GDriveClient:
                 self.credentials_path,
                 scopes=["https://www.googleapis.com/auth/drive"]
             )
+            socket.setdefaulttimeout(60) 
             return build("drive", "v3", credentials=creds, cache_discovery=False)
         except Exception as e:
             logging.error(f"Bląd inicjalizacji serwisu Drive: {e}")
@@ -37,13 +39,18 @@ class GDriveClient:
 
     def find_file_id(self, parent_id: str, filename: str) -> str:
         if not self.service: return None
-        # Jeśli nie mamy parent_id, szukamy w całym głównym katalogu (root)
-        parent_query = f"'{parent_id}' in parents" if parent_id else "'root' in parents"
-        query = f"name='{filename}' and {parent_query} and trashed=false"
-        
-        results = self.service.files().list(q=query, fields="files(id,name)").execute()
-        files = results.get("files", [])
-        return files[0]["id"] if files else None
+        try:
+            parent_query = f"'{parent_id}' in parents" if parent_id else "'root' in parents"
+            query = f"name='{filename}' and {parent_query} and trashed=false"
+            
+            # DODAJ num_retries=5
+            results = self.service.files().list(q=query, fields="files(id,name)").execute(num_retries=5)
+            files = results.get("files", [])
+            return files[0]["id"] if files else None
+        except (ConnectionResetError, socket.timeout):
+            logging.warning("Połączenie z GDrive zerwane. Odświeżam serwis...")
+            self.service = self._get_service()
+            return self.find_file_id(parent_id, filename) # Ponowna próba
 
     def download_csv(self, folder_id: str, filename: str, sep=",", encoding="utf-8") -> pd.DataFrame:
         file_id = self.find_file_id(folder_id, filename)
@@ -69,15 +76,20 @@ class GDriveClient:
         if not filename:
             filename = os.path.basename(local_path)
             
-        existing_id = self.find_file_id(folder_id, filename)
-        media = MediaFileUpload(local_path, mimetype="text/csv", resumable=True)
-        
-        if existing_id:
-            self.service.files().update(fileId=existing_id, media_body=media).execute()
-            logging.info(f"Zaktualizowano plik na Drive: {filename}")
-            return existing_id
-        else:
-            metadata = {"name": filename, "parents": [folder_id]}
-            result = self.service.files().create(body=metadata, media_body=media, fields="id").execute()
-            logging.info(f"Utworzono nowy plik na Drive: {filename}")
-            return result["id"]
+        try:
+            existing_id = self.find_file_id(folder_id, filename)
+            media = MediaFileUpload(local_path, mimetype="text/csv", resumable=True)
+            
+            if existing_id:
+                # DODAJ num_retries=5
+                self.service.files().update(fileId=existing_id, media_body=media).execute(num_retries=5)
+                logging.info(f"Zaktualizowano plik na Drive: {filename}")
+                return existing_id
+            else:
+                metadata = {"name": filename, "parents": [folder_id]}
+                result = self.service.files().create(body=metadata, media_body=media, fields="id").execute(num_retries=5)
+                logging.info(f"Utworzono nowy plik na Drive: {filename}")
+                return result["id"]
+        except Exception as e:
+            logging.error(f"Błąd podczas uploadu {filename}: {e}")
+            return None

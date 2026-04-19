@@ -75,8 +75,14 @@ class FundReviewer:
                 'subfundId', 'tfi_name', 'classification', 'category', 'riskLevel', 
                 'managementAndOtherFeesRate', 'maxEntryFeeRate', 'hasBenchmark', 'benchmark'
             ]
+            
+            # --- POPRAWKA: Bezpieczne wybieranie tylko ISTNIEJĄCYCH kolumn ---
+            # Dzięki temu nie wywali błędu, jeśli KNF nie podał którejś z metryk w API
+            available_meta_cols = [col for col in meta_cols if col in df_sum.columns]
+            
             # Merge while keeping confirmed names as primary
-            df_funds = df_conf.merge(df_sum[meta_cols], on='subfundId', how='left', suffixes=('', '_knf'))
+            df_funds = df_conf.merge(df_sum[available_meta_cols], on='subfundId', how='left', suffixes=('', '_knf'))
+            # ----------------------------------------------------------------
             logging.info("Metadata from knf_summary.csv merged successfully.")
         else:
             logging.warning("knf_summary.csv not found. Metadata will be missing!")

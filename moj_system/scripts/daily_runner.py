@@ -30,8 +30,8 @@ from moj_system.reporting.daily_output import build_daily_outputs
 from moj_system.reporting.multiasset_daily_output import build_daily_outputs as build_multiasset_outputs
 from moj_system.reporting.global_equity_daily_output import build_daily_outputs as build_global_outputs
 
-# --- Core Engine Imports (Using the legacy, verified engines) ---
-sys.path.append(os.path.join(project_root, 'current_development'))
+
+
 from moj_system.core.strategy_engine import (get_n_jobs, walk_forward, compute_metrics, 
                                              analyze_trades, compute_buy_and_hold, print_backtest_report)
 from moj_system.core.pension_engine import (build_signal_series, 
