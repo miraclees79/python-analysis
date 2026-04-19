@@ -131,7 +131,7 @@ class SweepManager:
             wf_e, _, wf_t = walk_forward(proc_px, MMF, train_y, test_y, use_atr_stop=use_atr, n_jobs=get_n_jobs())
             sigs_full[lbl] = build_signal_series(wf_e, wf_t)
 
-        wf_bd, wf_res_bd, _ = walk_forward(TBSP, MMF, train_y, test_y, filter_modes_override=["ma"], X_grid=BOND_GRIDS["X_GRID"], n_jobs=get_n_jobs())
+        wf_bd, wf_res_bd, wf_tr_bd = walk_forward(TBSP, MMF, train_y, test_y, filter_modes_override=["ma"], X_grid=BOND_GRIDS["X_GRID"], n_jobs=get_n_jobs())
         rets_dict["TBSP"], sigs_full["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna(), build_signal_series(wf_bd, _)
         
         port_eq, _, _, _ = allocation_walk_forward_n(rets_dict, sigs_full, sigs_full, MMF["Zamkniecie"].pct_change().dropna(), wf_res_bd, list(rets_dict.keys()), train_years=train_y)
@@ -154,7 +154,9 @@ def main():
     results = []
 
     # 1. Update Data
-    updater = DataUpdater(); updater.run_full_update(get_funds=False)
+    creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
+    updater = DataUpdater(credentials_path=creds_path)
+    updater.run_full_update(get_funds=False)
 
     # 2. Universal OOS Start Calculation
     logging.info("Preparing extended data series for OOS calculation...")

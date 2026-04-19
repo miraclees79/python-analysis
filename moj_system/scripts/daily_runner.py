@@ -32,9 +32,13 @@ from moj_system.reporting.global_equity_daily_output import build_daily_outputs 
 
 # --- Core Engine Imports (Using the legacy, verified engines) ---
 sys.path.append(os.path.join(project_root, 'current_development'))
-from moj_system.core.strategy_engine import get_n_jobs, walk_forward, compute_metrics, analyze_trades, compute_buy_and_hold, print_backtest_report
-from moj_system.core.pension_engine import build_signal_series, allocation_walk_forward, print_multiasset_report, build_standard_two_asset_data
-from moj_system.core.global_engine import build_return_series, build_price_df_from_returns, allocation_walk_forward_n, print_global_equity_report, build_mmf_extended
+from moj_system.core.strategy_engine import (get_n_jobs, walk_forward, compute_metrics, 
+                                             analyze_trades, compute_buy_and_hold, print_backtest_report)
+from moj_system.core.pension_engine import (build_signal_series, 
+                                            allocation_walk_forward, print_multiasset_report, build_standard_two_asset_data)
+from moj_system.core.global_engine import (build_return_series, build_price_df_from_returns, 
+                                           allocation_walk_forward_n, print_global_equity_report)
+from moj_system.core.utils import  build_mmf_extended
 
 def setup_logging(output_prefix):
     log_file = f"outputs/{output_prefix}.log"
@@ -123,15 +127,19 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
     oos_s, oos_e = max(wf_res_eq["TestStart"].min(), wf_res_bd["TestStart"].min()), min(wf_res_eq["TestEnd"].max(), wf_res_bd["TestEnd"].max())
     sig_eq_oos, sig_bd_oos = sig_eq.loc[oos_s:oos_e], sig_bd.loc[oos_s:oos_e]
     
-    port_eq, w_s, realloc, alloc_df = allocation_walk_forward(derived["ret_eq"], derived["ret_bd"], derived["ret_mmf"], sig_eq, sig_bd, sig_eq_oos, sig_bd_oos, wf_res_eq, wf_res_bd)
+    port_eq, w_s, realloc, alloc_df = allocation_walk_forward(derived["ret_eq"], derived["ret_bd"], derived["ret_mmf"], sig_eq, 
+                                                              sig_bd, sig_eq_oos, sig_bd_oos, wf_res_eq, wf_res_bd)
 
     m_p = compute_metrics(port_eq)
     bh_eq, bh_m_eq = compute_buy_and_hold(WIG, "Zamkniecie", oos_s, oos_e)
     bh_bd, bh_m_bd = compute_buy_and_hold(TBSP, "Zamkniecie", oos_s, oos_e)
     
     print_multiasset_report(m_p, bh_m_eq, bh_m_bd, alloc_df, realloc, sig_eq_oos, sig_bd_oos, oos_s, oos_e, sig_bd)
-    build_multiasset_outputs(wf_eq, wf_tr_eq, wf_res_eq, wf_bd, wf_tr_bd, wf_res_bd, port_eq, m_p, w_s, realloc, bh_eq, bh_m_eq, bh_bd, bh_m_bd, 
+    build_multiasset_outputs(wf_eq, wf_tr_eq, wf_res_eq, wf_bd, wf_tr_bd, wf_res_bd, port_eq, m_p, w_s, realloc, bh_eq, 
+                             bh_m_eq, bh_bd, bh_m_bd, 
                              WIG, TBSP, sig_eq_oos, sig_bd_oos, "outputs/pension", None, folder_id, creds_path)
+                             
+                             
 
 def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
     cfg = ASSET_REGISTRY[asset_key]

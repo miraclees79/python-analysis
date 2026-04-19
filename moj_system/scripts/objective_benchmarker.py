@@ -68,15 +68,15 @@ def main():
         logging.info(f">>> Testing Objective: {obj.upper()}")
         
         # Simple Pension simulation for benchmarking
-        wf_eq, wf_res_eq, _ = walk_forward(WIG, MMF, 8, 2, objective=obj, n_jobs=get_n_jobs())
-        wf_bd, wf_res_bd, _ = walk_forward(TBSP, MMF, 8, 2, filter_modes_override=["ma"], objective=obj, n_jobs=get_n_jobs())
-        
-        sig_eq, sig_bd = build_signal_series(wf_eq, _), build_signal_series(wf_bd, _)
-        port_eq, _, realloc, _ = allocation_walk_forward(
-            WIG["Zamkniecie"].pct_change().dropna(), 
-            TBSP["Zamkniecie"].pct_change().dropna(), 
-            MMF["Zamkniecie"].pct_change().dropna(), 
-            sig_eq, sig_bd, sig_eq, sig_bd, wf_res_eq, wf_res_bd, objective=obj
+        wf_eq, wf_res_eq, wf_tr_eq = walk_forward(WIG, MMF, 8, 2, objective=obj, n_jobs=get_n_jobs())
+        wf_bd, wf_res_bd, wf_tr_bd = walk_forward(TBSP, MMF, 8, 2, filter_modes_override=["ma"], objective=obj, n_jobs=get_n_jobs())
+
+        sig_eq, sig_bd = build_signal_series(wf_eq, wf_tr_eq), build_signal_series(wf_bd, wf_tr_bd)
+        port_eq, _port_weights, realloc, _alloc_df = allocation_walk_forward(
+        WIG["Zamkniecie"].pct_change().dropna(), 
+        TBSP["Zamkniecie"].pct_change().dropna(), 
+        MMF["Zamkniecie"].pct_change().dropna(), 
+        sig_eq, sig_bd, sig_eq, sig_bd, wf_res_eq, wf_res_bd, objective=obj
         )
 
         # Calculate metrics for the common window

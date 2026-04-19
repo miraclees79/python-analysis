@@ -42,7 +42,7 @@ from moj_system.core.global_engine import (
     allocation_walk_forward_n, print_global_equity_report
 )
 from moj_system.core.robustness_engine import analyze_robustness, analyze_bootstrap
-
+from moj_system.data.updater import DataUpdater
 from moj_system.config import (
     ASSET_REGISTRY, BASE_GRIDS, BOND_GRIDS, 
     EQUITY_THRESHOLDS_MC, EQUITY_THRESHOLDS_BOOTSTRAP,
@@ -122,10 +122,12 @@ def main():
     parser.add_argument("--n_mc", type=int, default=1000)
     parser.add_argument("--n_boot", type=int, default=500)
     args = parser.parse_args()
-
+    
     os.chdir(project_root)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
-    
+    creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
+    updater = DataUpdater(credentials_path=creds_path)
+    updater.run_full_update(get_funds=False)    
     validator = ValidationManager(args.n_mc, args.n_boot)
 
     if args.mode == "SINGLE":

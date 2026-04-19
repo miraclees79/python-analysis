@@ -52,7 +52,10 @@ SWEEP_WINDOW_CONFIGS = [
     (9, 1), (9, 2),
 ]
 
-# MC & Bootstrap Acceptance Thresholds
+# ---------------------------------------------------------------------------
+# Asset-class threshold presets
+# ---------------------------------------------------------------------------
+
 EQUITY_THRESHOLDS_MC = {
     "CAGR":   {"p05_min":  0.00, "label": "p05 CAGR > 0%"},
     "Sharpe": {"p05_min":  0.00, "label": "p05 Sharpe > 0"},
@@ -65,11 +68,17 @@ BOND_THRESHOLDS_MC = {
     "MaxDD":  {"p05_min": -0.10, "label": "p05 MaxDD > -10%"},
 }
 
-# Loose thresholds for Bootstrap (due to block reshuffling bias)
 EQUITY_THRESHOLDS_BOOTSTRAP = {
     "CAGR":   {"p05_min": -0.01, "label": "p05 CAGR > -1%"},
     "Sharpe": {"p05_min": -0.10, "label": "p05 Sharpe > -0.10"},
     "MaxDD":  {"p05_min": -0.40, "label": "p05 MaxDD > -40%"},
+    "p_loss": {"max":      0.20, "label": "P(CAGR < 0) < 20%"},
+}
+
+BOND_THRESHOLDS_BOOTSTRAP = {
+    "CAGR":   {"p05_min": -0.01, "label": "p05 CAGR > -1%"},
+    "Sharpe": {"p05_min": -0.10, "label": "p05 Sharpe > -0.10"},
+    "MaxDD":  {"p05_min": -0.10, "label": "p05 MaxDD > -10%"},
     "p_loss": {"max":      0.20, "label": "P(CAGR < 0) < 20%"},
 }
 

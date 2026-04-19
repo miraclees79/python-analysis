@@ -62,35 +62,6 @@ MIN_VALUES = {
 
 
 
-# ---------------------------------------------------------------------------
-# Asset-class threshold presets
-# ---------------------------------------------------------------------------
-
-EQUITY_THRESHOLDS_MC = {
-    "CAGR":   {"p05_min":  0.00, "label": "p05 CAGR > 0%"},
-    "Sharpe": {"p05_min":  0.00, "label": "p05 Sharpe > 0"},
-    "MaxDD":  {"p05_min": -0.35, "label": "p05 MaxDD > -35%"},
-}
-
-BOND_THRESHOLDS_MC = {
-    "CAGR":   {"p05_min":  0.00, "label": "p05 CAGR > 0%"},
-    "Sharpe": {"p05_min":  0.00, "label": "p05 Sharpe > 0"},
-    "MaxDD":  {"p05_min": -0.10, "label": "p05 MaxDD > -10%"},
-}
-
-EQUITY_THRESHOLDS_BOOTSTRAP = {
-    "CAGR":   {"p05_min": -0.01, "label": "p05 CAGR > -1%"},
-    "Sharpe": {"p05_min": -0.10, "label": "p05 Sharpe > -0.10"},
-    "MaxDD":  {"p05_min": -0.40, "label": "p05 MaxDD > -40%"},
-    "p_loss": {"max":      0.20, "label": "P(CAGR < 0) < 20%"},
-}
-
-BOND_THRESHOLDS_BOOTSTRAP = {
-    "CAGR":   {"p05_min": -0.01, "label": "p05 CAGR > -1%"},
-    "Sharpe": {"p05_min": -0.10, "label": "p05 Sharpe > -0.10"},
-    "MaxDD":  {"p05_min": -0.10, "label": "p05 MaxDD > -10%"},
-    "p_loss": {"max":      0.20, "label": "P(CAGR < 0) < 20%"},
-}
 
 
 
