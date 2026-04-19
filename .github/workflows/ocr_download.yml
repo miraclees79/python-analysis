@@ -1,0 +1,48 @@
+name: Daily OCR Data Download
+
+on:
+  schedule:
+    # 23:00 UTC każdego dnia
+    - cron: '0 23 * * *'
+  workflow_dispatch:  # Pozwala odpalić ręcznie w razie potrzeby
+
+jobs:
+  run-ocr:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-pol poppler-utils libgl1-mesa-glx
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run OCR Pipeline
+        env:
+          ZIP_URL: ${{ secrets.ZIP_URL }}
+          ZIP_PASSWORD: ${{ secrets.ZIP_PASSWORD }}
+          INT_FILE_NAME: ${{ secrets.INT_FILE_NAME }}
+          FOLDER_NAME: ${{ secrets.FOLDER_NAME }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          # Zapisz credentials do pliku tymczasowego
+          echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
+          # Uruchom nasz nowy zrefaktoryzowany skrypt OCR
+          python -m moj_system.data.ocr_processor
+
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: ocr-logs
+          path: ocr_download.log

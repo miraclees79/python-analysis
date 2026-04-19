@@ -1,0 +1,43 @@
+name: Weekly KNF Fund Refresh
+
+on:
+  schedule:
+    # Uruchamia się w każdy poniedziałek o 01:00 UTC
+    - cron: '0 1 * * 1'
+  workflow_dispatch:  # Pozwala odpalić ręcznie
+
+jobs:
+  refresh-knf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-pol poppler-utils
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Refresh KNF Funds & Match
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          # Zapisz credentials
+          echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
+          # Uruchamiamy skrypt za pomocą modułu (flagę --all możesz dodać, jeśli chcesz przeskanować cały rynek)
+          python -m moj_system.scripts.refresh_knf --update
+
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: knf-logs
+          path: outputs/refresh_knf.log

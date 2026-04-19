@@ -1,0 +1,44 @@
+name: Weekly Fund Review
+
+on:
+  schedule:
+    # Uruchamia się w każdy poniedziałek o 04:00 UTC
+    - cron: '0 4 * * 1'
+  workflow_dispatch: 
+
+jobs:
+  run-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-pol poppler-utils libgl1-mesa-glx
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Refresh KNF & Generate Ranking
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
+          # 1. Najpierw aktualizujemy bazę danych (pobieramy notowania)
+          python -m moj_system.data.updater
+          # 2. Następnie odpalamy rewizję funduszy z flagą --update (dociągnie KNF i wygeneruje raporty)
+          python moj_system/scripts/fund_reviewer.py --update
+
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: fund-review-logs
+          path: outputs/fund_ranking_*.csv
