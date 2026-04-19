@@ -1,0 +1,55 @@
+name: Daily Strategy Sweep
+
+on:
+
+  workflow_dispatch:  # Pozwala odpalić ręcznie
+  schedule:
+    # Uruchamia się codziennie o 00:00 UTC
+    - cron: '0 0 * * *'
+
+jobs:
+  run-sweep:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        asset: [WIG20TR, MWIG40TR, SWIG80TR, SP500, STOXX600, PENSION, GLOBAL_A, GLOBAL_B]
+    
+    steps:
+      - uses: actions/checkout@v3
+
+      # 1. Instalacja systemowych zależności potrzebnych dla OCR i renderowania wykresów
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-pol poppler-utils libgl1-mesa-glx
+      
+      # 2. Instalacja zależności Pythona
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # 3. Uruchomienie Runnera
+      - name: Run Strategy
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ZIP_URL: ${{ secrets.ZIP_URL }}
+          ZIP_PASSWORD: ${{ secrets.ZIP_PASSWORD }}
+          INT_FILE_NAME: ${{ secrets.INT_FILE_NAME }}
+          FOLDER_NAME: ${{ secrets.FOLDER_NAME }}
+        run: |
+          # Zapisz credentials do pliku (wymagane przez GDriveClient)
+          echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
+          python moj_system/scripts/daily_runner.py --asset ${{ matrix.asset }}
+
+      # 4. Archiwizacja wyników
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: reports-${{ matrix.asset }}
+          path: outputs/

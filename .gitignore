@@ -52,3 +52,5 @@ repo_collect.py
 /moj_system/data/zips
 /outputs
 /moj_system/data/fund_names_stooq
+ai_studio_code.py
+moj_system_do_przegladu.txt

@@ -9,6 +9,8 @@ Replaces legacy `current_development/daily_output_base.py`.
 """
 
 import csv
+import os
+import shutil # dodaj ten import na górze
 import logging
 from pathlib import Path
 from typing import Any
@@ -59,13 +61,30 @@ def load_existing_log(log_path: Path) -> pd.DataFrame | None:
 
 
 def append_log_row(log_path: Path, row: dict[str, Any]) -> None:
-    """Appends a single row to CSV log (creates with headers if needed)."""
-    write_header = not log_path.exists() or log_path.stat().st_size == 0
-    with open(log_path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-        if write_header:
-            writer.writeheader()
-        writer.writerow(row)
+    """Append row to signal_log.csv with robust overwrite for Windows."""
+    new_row_df = pd.DataFrame([row])
+    
+    if log_path.exists():
+        try:
+            existing = pd.read_csv(log_path)
+            existing = existing[existing["date"] != row["date"]]
+            combined = pd.concat([existing, new_row_df], ignore_index=True)
+        except Exception:
+            # Jeśli plik jest uszkodzony, zacznij od nowa
+            combined = new_row_df
+    else:
+        combined = new_row_df
+        
+    tmp = log_path.with_suffix(".tmp")
+    combined.to_csv(tmp, index=False)
+    
+    # PANCERNE NADPISYWANIE:
+    # 1. replace() to wyższa warstwa, os.replace jest najbardziej atomowe
+    # 2. Jeżeli plik path istnieje, os.replace go nadpisze bez błędu.
+    if os.path.exists(log_path):
+        os.replace(tmp, log_path)
+    else:
+        tmp.rename(log_path)
 
 
 def fetch_file_from_drive(

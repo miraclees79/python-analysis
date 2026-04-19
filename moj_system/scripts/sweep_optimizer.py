@@ -17,12 +17,26 @@ import tempfile
 import matplotlib
 matplotlib.use('Agg')
 
-# Path configuration
+# --- PATH SETUP ---
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(script_dir, '..', '..'))
-sys.path.append(project_root)
-sys.path.append(os.path.join(project_root, 'current_development'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
+# --- CORE ENGINE IMPORTS ---
+from moj_system.core.strategy_engine import (
+    get_n_jobs, walk_forward, compute_metrics, analyze_trades, 
+    compute_buy_and_hold, print_backtest_report, annual_cagr_by_year, count_year_wins
+)
+from moj_system.core.pension_engine import (
+    build_signal_series, allocation_walk_forward, print_multiasset_report,
+    build_standard_two_asset_data
+)
+from moj_system.core.global_engine import (
+    build_return_series, build_price_df_from_returns, 
+    allocation_walk_forward_n, print_global_equity_report
+)
+from moj_system.core.robustness_engine import analyze_robustness, analyze_bootstrap
 from moj_system.config import ASSET_REGISTRY, BASE_GRIDS, BOND_GRIDS, SWEEP_WINDOW_CONFIGS, EQUITY_THRESHOLDS_MC
 from moj_system.data.data_manager import load_local_csv
 from moj_system.data.updater import DataUpdater
@@ -31,10 +45,10 @@ from moj_system.core.robustness import RobustnessEngine
 from moj_system.core.research import get_common_oos_start
 
 # Strategy Core Imports
-from moj_system.core.strategy_engine import walk_forward, compute_metrics, get_n_jobs
-from moj_system.core.pension_engine  import build_signal_series, allocation_walk_forward, build_standard_two_asset_data
-from moj_system.core.global_engine  import build_return_series, build_price_df_from_returns, allocation_walk_forward_n
-from moj_system.core.robustness_engine import analyze_robustness
+
+
+
+
 
 class SweepManager:
     def __init__(self, n_mc):

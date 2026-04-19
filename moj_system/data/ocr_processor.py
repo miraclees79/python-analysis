@@ -64,7 +64,102 @@ def fix_ocr_number(value: str) -> tuple[str, bool]:
             
     return fixed, (fixed != original)
 
+# W pliku moj_system/data/ocr_processor.py
 
+# W pliku moj_system/data/ocr_processor.py
+
+import calendar
+
+def sanitize_date_sequence(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Zaawansowany filtr dat OCR wykorzystujący metodę 'kotwicy czasowej' (anchor date).
+    Wykrywa całe łańcuchy wierszy z błędnym miesiącem (np. 23.03, 24.04, 25.04, 27.03)
+    i koryguje je, wymuszając chronologiczny porządek względem ostatniej 'pewnej' daty.
+    """
+    if df.empty or len(df) < 2:
+        return df
+
+    # Kolumna robocza z obiektami Datetime
+    df['Date_dt'] = pd.to_datetime(df['Date'], format='%d.%m.%Y', errors='coerce')
+    
+    corrections_made = 0
+    
+    # Inicjalizacja kotwicy: ufamy pierwszej poprawnej dacie w dokumencie
+    anchor_idx = 0
+    while anchor_idx < len(df) and pd.isna(df.loc[anchor_idx, 'Date_dt']):
+        anchor_idx += 1
+        
+    if anchor_idx >= len(df):
+        return df.drop(columns=['Date_dt']) # Brak poprawnych dat
+        
+    anchor_date = df.loc[anchor_idx, 'Date_dt']
+
+    for i in range(anchor_idx + 1, len(df)):
+        curr_date = df.loc[i, 'Date_dt']
+
+        if pd.isna(curr_date):
+            continue
+
+        # Zawsze porównujemy do ostatniej 'pewnej' daty (kotwicy), a nie do poprzedniego wiersza,
+        # który mógł być błędnie skorygowany lub mógł być błędny w OCR.
+        diff_from_anchor = (curr_date - anchor_date).days
+
+        # Scenariusz A: Normalna kontynuacja (0 do 20 dni do przodu)
+        # 0 oznacza ten sam dzień (czasem zdarza się w OCR, że coś jest dwa razy).
+        if 0 <= diff_from_anchor <= 20:
+            # Uznajemy tę datę za poprawną i przesuwamy do niej kotwicę
+            anchor_date = curr_date
+
+        # Scenariusz B: Podejrzany, wielki skok w przód (powyżej 20 dni)
+        elif diff_from_anchor > 20:
+            try:
+                # Próbujemy wymusić poprzedni miesiąc
+                new_month = curr_date.month - 1
+                new_year = curr_date.year
+                
+                if new_month == 0:
+                    new_month = 12
+                    new_year -= 1
+                
+                # Zabezpieczenie np. dla '31 kwietnia -> 31 marca'
+                _, last_day_of_new_month = calendar.monthrange(new_year, new_month)
+                new_day = min(curr_date.day, last_day_of_new_month)
+
+                candidate_date = curr_date.replace(year=new_year, month=new_month, day=new_day)
+                
+                # Kluczowe sprawdzenie:
+                # Jeśli po COFNIĘCIU miesiąca data jest logicznym (0-20 dni) następcą naszej
+                # ostatniej pewnej daty, uznajemy to za dowód na literówkę ludzką w źródle.
+                diff_candidate_to_anchor = (candidate_date - anchor_date).days
+                
+                if 0 < diff_candidate_to_anchor <= 20:
+                    logging.info(
+                        f"KOREKTA ŁAŃCUCHA OCR (wiersz {i}): "
+                        f"{curr_date.strftime('%d.%m.%Y')} -> {candidate_date.strftime('%d.%m.%Y')} "
+                        f"(Kotwica: {anchor_date.strftime('%d.%m.%Y')})"
+                    )
+                    # Aplikujemy poprawkę
+                    df.loc[i, 'Date_dt'] = candidate_date
+                    df.loc[i, 'Date'] = candidate_date.strftime('%d.%m.%Y')
+                    corrections_made += 1
+                    
+                    # W tym specjalnym scenariuszu PRZESUWAMY kotwicę na skorygowaną datę,
+                    # ponieważ cały blok (24, 25, 26) idzie jednym ciągiem na złym miesiącu.
+                    anchor_date = candidate_date
+
+            except Exception as e:
+                logging.warning(f"Błąd korekty daty w wierszu {i}: {e}")
+
+        # Scenariusz C: Data jest mniejsza niż nasza kotwica (krok wstecz w czasie)
+        elif diff_from_anchor < 0:
+            # OCR pomylił się lub strona z PDF była wyjęta. Zostawiamy wiersz, ale NIE ruszamy kotwicy, 
+            # czekając aż sekwencja wróci na właściwe tory.
+            pass
+
+    if corrections_made > 0:
+        logging.info(f"Łącznie skorygowano {corrections_made} błędów sekwencji dat.")
+
+    return df.drop(columns=['Date_dt'])
 
 def run_ocr_pipeline():
     """Główna funkcja uruchamiająca cały proces OCR, z obsługą ZIP lub bezpośredniego PDF."""
@@ -192,6 +287,12 @@ def run_ocr_pipeline():
     # 4. Czyszczenie danych i transformacja
     df = pd.DataFrame(all_rows, columns=['Date', 'Col2', 'Col3', 'Col4', 'Col5', 'Col6'])
     
+        
+    # --- NOWA LOGIKA: Korekta sekwencji dat ---
+    df = sanitize_date_sequence(df)
+    # ------------------------------------------
+
+        
     correction_count = 0
     for col in df.columns[1:]:
         processed = df[col].apply(fix_ocr_number)

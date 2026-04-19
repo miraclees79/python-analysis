@@ -18,8 +18,8 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 # Importujemy oryginalny silnik
-from current_development.strategy_test_library import compute_metrics, run_strategy_with_trades
-from current_development.mc_robustness import (
+from moj_system.core.strategy_engine import compute_metrics, run_strategy_with_trades
+from moj_system.core.robustness_engine import (
     run_monte_carlo_robustness, analyze_robustness,
     run_block_bootstrap_robustness, analyze_bootstrap,
     extract_windows_from_wf_results, extract_best_params_from_wf_results

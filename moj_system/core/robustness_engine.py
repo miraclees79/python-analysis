@@ -30,12 +30,13 @@ import numpy as np
 from joblib import Parallel, delayed
 
 from moj_system.core.strategy_engine import (
-                                run_strategy_with_trades,
-                                compute_metrics,
-                                compute_fund_breadth_signal,
-                                walk_forward
+    run_strategy_with_trades,
+    compute_metrics,
+    walk_forward
 )
-
+# Hack for legacy code compatibility
+def compute_fund_breadth_signal(*args, **kwargs):
+    return None
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

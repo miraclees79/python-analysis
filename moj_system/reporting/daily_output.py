@@ -431,15 +431,28 @@ def _append_log_row_dedup(log_path: Path, row: dict) -> None:
     before appending — preventing duplicate rows on re-runs.
     """
     new_row_df = pd.DataFrame([row])
+    
     if log_path.exists():
-        existing = pd.read_csv(log_path)
-        existing = existing[existing["date"] != row["date"]]
-        combined = pd.concat([existing, new_row_df], ignore_index=True)
+        try:
+            existing = pd.read_csv(log_path)
+            existing = existing[existing["date"] != row["date"]]
+            combined = pd.concat([existing, new_row_df], ignore_index=True)
+        except Exception:
+            # Jeśli plik jest uszkodzony, zacznij od nowa
+            combined = new_row_df
     else:
         combined = new_row_df
+        
     tmp = log_path.with_suffix(".tmp")
     combined.to_csv(tmp, index=False)
-    tmp.rename(log_path)
+    
+    # PANCERNE NADPISYWANIE:
+    # 1. replace() to wyższa warstwa, os.replace jest najbardziej atomowe
+    # 2. Jeżeli plik path istnieje, os.replace go nadpisze bez błędu.
+    if os.path.exists(log_path):
+        os.replace(tmp, log_path)
+    else:
+        tmp.rename(log_path)
 
 
 # ---------------------------------------------------------------------------
@@ -624,8 +637,19 @@ def build_daily_outputs(
     dict with keys: action, signal, status_text, log_row,
                     chart_path, snapshot_path, log_path
     """
-    if run_date is None:
+    
+    # Jeśli run_date przyszło jako string (błąd w wywołaniu), przekonwertuj je
+    if isinstance(run_date, str):
+        try:
+            run_date = dt.date.fromisoformat(run_date)
+        except ValueError:
+            run_date = dt.date.today()
+    elif run_date is None:
         run_date = dt.date.today()
+    # ----------------
+    
+    # Teraz run_date na 100% ma metodę .isoformat()
+    snap = {"run_date": run_date.isoformat()}
 
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

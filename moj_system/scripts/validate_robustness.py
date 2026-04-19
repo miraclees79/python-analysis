@@ -22,11 +22,26 @@ import tempfile
 import matplotlib
 matplotlib.use('Agg')
 
-# Path setup
+# --- PATH SETUP ---
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(script_dir, '..', '..'))
-sys.path.append(project_root)
-sys.path.append(os.path.join(project_root, 'current_development'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+# --- CORE ENGINE IMPORTS ---
+from moj_system.core.strategy_engine import (
+    get_n_jobs, walk_forward, compute_metrics, analyze_trades, 
+    compute_buy_and_hold, print_backtest_report, annual_cagr_by_year, count_year_wins
+)
+from moj_system.core.pension_engine import (
+    build_signal_series, allocation_walk_forward, print_multiasset_report,
+    build_standard_two_asset_data
+)
+from moj_system.core.global_engine import (
+    build_return_series, build_price_df_from_returns, 
+    allocation_walk_forward_n, print_global_equity_report
+)
+from moj_system.core.robustness_engine import analyze_robustness, analyze_bootstrap
 
 from moj_system.config import (
     ASSET_REGISTRY, BASE_GRIDS, BOND_GRIDS, 
@@ -38,11 +53,6 @@ from moj_system.data.builder import build_and_upload
 from moj_system.core.robustness import RobustnessEngine
 from moj_system.core.research import get_common_oos_start
 
-# Core Strategy & Robustness Imports
-from current_development.strategy_test_library import walk_forward, compute_metrics, get_n_jobs
-from current_development.multiasset_library import build_signal_series, allocation_walk_forward, build_standard_two_asset_data
-from current_development.global_equity_library import build_return_series, build_price_df_from_returns, allocation_walk_forward_n
-from current_development.mc_robustness import analyze_robustness, analyze_bootstrap
 
 class ValidationManager:
     def __init__(self, n_mc, n_boot):
