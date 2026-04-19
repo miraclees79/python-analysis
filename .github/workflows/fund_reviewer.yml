@@ -15,7 +15,7 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y tesseract-ocr tesseract-ocr-pol poppler-utils libgl1-mesa-glx
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-pol poppler-utils libgl1-mesa-dev
 
       - name: Set up Python
         uses: actions/setup-python@v4
