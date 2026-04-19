@@ -16,7 +16,7 @@ jobs:
         asset: [WIG20TR, MWIG40TR, SWIG80TR, SP500, STOXX600, PENSION, GLOBAL_A, GLOBAL_B]
     
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       # 1. Instalacja systemowych zależności potrzebnych dla OCR i renderowania wykresów
       - name: Install System Dependencies
@@ -49,7 +49,7 @@ jobs:
 
       # 4. Archiwizacja wyników
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: reports-${{ matrix.asset }}
           path: outputs/

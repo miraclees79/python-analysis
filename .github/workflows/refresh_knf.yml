@@ -10,7 +10,7 @@ jobs:
   refresh-knf:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Install System Dependencies
         run: |
@@ -37,7 +37,7 @@ jobs:
 
       - name: Upload Logs
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: knf-logs
           path: outputs/refresh_knf.log
