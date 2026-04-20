@@ -33,7 +33,7 @@ jobs:
           # Zapisz credentials
           echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
           # Uruchamiamy skrypt za pomocą modułu (flagę --all możesz dodać, jeśli chcesz przeskanować cały rynek)
-          python -m moj_system.scripts.refresh_knf --update
+          python -m moj_system.scripts.refresh_knf --all
 
       - name: Upload Logs
         if: always()
