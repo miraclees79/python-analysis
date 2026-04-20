@@ -25,34 +25,19 @@ def load_stooq_local(
     mandatory: bool = True,
 ) -> pd.DataFrame | None:
     """
-    Load a stooq price series from the local /data subfolder.
+    Ładuje lokalny plik CSV z danymi Stooq i przeprowadza wstępną walidację dat.
 
-    The /data directory is populated by stooq_hybrid_updater.run_update()
-    at the start of each runfile.  This function replaces the per-runfile
-    _stooq() / _stooq_local() helper that was duplicated across ~13 files.
+    Parameters:
+    -----------
+    ticker : str     - Nazwa pliku bazowego (np. 'wig20tr').
+    label : str      - Etykieta czytelna dla logów (np. 'WIG20TR').
+    data_dir : str   - Ścieżka do katalogu z danymi surowymi.
+    data_start : str - Data początkowa w formacie ISO (YYYY-MM-DD).
+    mandatory : bool - Jeśli True, brak pliku przerywa działanie programu.
 
-    Parameters
-    ----------
-    ticker     : str  — file basename without extension
-                        (e.g. "wig", "^tbsp", "fund_2720")
-    label      : str  — human-readable name for log messages
-    data_dir   : str  — path to the local data directory
-    data_start : str  — ISO date string; rows before this date are dropped
-    mandatory  : bool — if True, calls sys.exit(1) when the file is missing
-                        or load_csv returns None; if False, returns None quietly
-
-    Returns
-    -------
-    pd.DataFrame | None  — stooq-format DataFrame clipped to data_start,
-                           or None if unavailable (when mandatory=False)
-
-    Examples
+    Returns:
     --------
-    >>> from strategy_test_library import load_stooq_local
-    >>> DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
-    >>> WIG = load_stooq_local("wig", "WIG", DATA_DIR)
-    >>> MMF = load_stooq_local("fund_2720", "MMF", DATA_DIR)
-    >>> WIBOR1M = load_stooq_local("wibor1m", "WIBOR1M", DATA_DIR, mandatory=False)
+    pd.DataFrame | None - DataFrame z indeksem Datetime i kolumnami cenowymi.
     """
     path = os.path.join(data_dir, f"{ticker}.csv")
     df = load_csv(path)                          # load_csv already in strategy_test_library

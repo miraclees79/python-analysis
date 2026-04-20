@@ -228,7 +228,8 @@ def extract_flat_regime_stats(regime_results: dict) -> dict:
             if reg in vol_stats.index:
                 r = vol_stats.loc[reg]
                 out[f"vol_{reg}_strat_cagr"] = float(r.get("strat_cagr", np.nan))
+                out[f"vol_{reg}_bh_cagr"]      = float(r.get("bh_cagr", np.nan))
             else:
                 out[f"vol_{reg}_strat_cagr"] = np.nan
-
+                out[f"vol_{reg}_bh_cagr"] = np.nan
     return out

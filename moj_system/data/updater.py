@@ -119,6 +119,18 @@ class DataUpdater:
         return None
 
     def _extract_from_zip(self, zip_data: bytes, stooq_ticker: str) -> pd.DataFrame | None:
+        """
+        Wyodrębnia dane pojedynczego tickera z dużego archiwum ZIP pobranego ze Stooq.
+
+        Mechanism:
+        ----------
+        Przeszukuje plik ZIP w pamięci, parsuje plik tekstowy tickera, mapuje nazwy 
+        kolumn Stooq (<DATE>, <CLOSE>) na systemowe ('Data', 'Zamkniecie') i konwertuje daty.
+
+        Returns:
+            --------
+            pd.DataFrame | None - Dane historyczne w formacie ramki danych.
+            """
         if not zip_data: return None
         try:
             with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
@@ -175,6 +187,21 @@ class DataUpdater:
     def update_ticker(self, label: str, stooq_ticker: str, yf_ticker: str = None, 
                       knf_id: str = None, zip_type: str = "index_pl", 
                       upload_to_drive: bool = False):
+        """
+        Aktualizuje dane instrumentu korzystając z hybrydowych źródeł (Stooq ZIP + API).
+
+        Mechanism:
+            ----------
+            1. Pobiera bazę historyczną z lokalnego lub zdalnego (GDrive) pliku ZIP.
+            2. Pobiera najnowsze dane z Yahoo Finance lub KNF API (dla funduszy).
+            3. Łączy serie, usuwa duplikaty i waliduje ciągłość danych (brak dziur > 30 dni).
+            4. Zapisuje wynik do raw_csv i opcjonalnie wysyła na GDrive.
+
+        Returns:
+            --------
+            bool - True jeśli aktualizacja zakończyła się sukcesem.
+            """
+
         logging.info(f"--- Updating: {label} ({stooq_ticker}) ---")
         zip_data = self._get_zip_content(zip_type)
         df_hist = self._extract_from_zip(zip_data, stooq_ticker) if zip_data else None
