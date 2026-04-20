@@ -43,6 +43,7 @@ from moj_system.data.updater import DataUpdater
 from moj_system.data.builder import build_and_upload
 from moj_system.core.robustness import RobustnessEngine
 from moj_system.core.research import get_common_oos_start
+from moj_system.core.utils import build_mmf_extended
 
 # Strategy Core Imports
 
@@ -61,6 +62,9 @@ class SweepManager:
         """Standard Walk-Forward + Lite MC for one asset."""
         df = load_local_csv(asset_name.lower(), asset_name)
         cash_df = load_local_csv("fund_2720", "MMF")
+        WIBOR1M = load_local_csv("wibor1m", "WIBOR1M")
+        cash_df_ext = build_mmf_extended(cash_df, WIBOR1M)
+        cash_df = cash_df_ext
         use_atr = (stop_type == "atr")
         
         wf_equity, wf_results, wf_trades = walk_forward(
@@ -93,7 +97,8 @@ class SweepManager:
         MMF = load_local_csv("fund_2720", "MMF")
         TBSP = build_and_upload(self.folder_id, "tbsp_extended_full.csv", "tbsp_extended_combined.csv", "^tbsp", "stooq", self.creds_path)
         PL10Y, DE10Y = load_local_csv("pl10y", "PL10Y"), load_local_csv("de10y", "DE10Y")
-        derived = build_standard_two_asset_data(WIG, TBSP, MMF, None, PL10Y, DE10Y, "1995-01-02")
+        WIBOR1M = load_local_csv("wibor1m", "WIBOR1M")
+        derived = build_standard_two_asset_data(WIG, TBSP, MMF, WIBOR1M, PL10Y, DE10Y, "1995-01-02")
         
         wf_eq, wf_res_eq, wf_tr_eq = walk_forward(WIG, derived["mmf_ext"], train_y, test_y, use_atr_stop=(stop_type_eq=="atr"), n_jobs=get_n_jobs())
         wf_bd, wf_res_bd, wf_tr_bd = walk_forward(TBSP, derived["mmf_ext"], train_y, test_y, filter_modes_override=["ma"], X_grid=BOND_GRIDS["X_GRID"], n_jobs=get_n_jobs(), entry_gate_series=derived["bond_gate"])
@@ -111,7 +116,10 @@ class SweepManager:
         cfg = ASSET_REGISTRY[variant_key]
         mode, fx_hedged = cfg["mode"], cfg["fx_hedged"]
         WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
+        WIBOR1M = load_local_csv("wibor1m", "WIBOR1M")
         MMF = load_local_csv("fund_2720", "MMF")
+        MMF_EXT = build_mmf_extended(MMF, WIBOR1M)
+        MMF = MMF_EXT
         TBSP = build_and_upload(self.folder_id, "tbsp_extended_full.csv", "tbsp_extended_combined.csv", "^tbsp", "stooq", self.creds_path)
         
         fx_map = {c: load_local_csv(f"{c.lower()}pln", f"{c}PLN")["Zamkniecie"] for c in ["USD", "EUR", "JPY"]}

@@ -178,7 +178,7 @@ def reallocation_gate(
 def build_mmf_extended(
     mmf_df:      pd.DataFrame,
     wibor1m_df:  pd.DataFrame,
-    floor_date:  str = "1994-10-03",
+    floor_date:  str = "1995-01-02",
 ) -> pd.DataFrame:
     """
     Extend the MMF (2720.n) price series backwards using WIBOR 1M.
