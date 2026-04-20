@@ -622,7 +622,30 @@ def build_daily_outputs(
         action           = action,
         run_date         = run_date,
     )
-
+    # --- NOWA LOGIKA: WYSYŁANIE NA GOOGLE DRIVE ---
+    if gdrive_folder_id and gdrive_credentials:
+        logging.info("Uploading artefacts to Google Drive...")
+        try:
+            from moj_system.data.gdrive import GDriveClient
+            client = GDriveClient(credentials_path=gdrive_credentials)
+            
+            if client.service:
+                # Wysyłamy wszystkie 4 wygenerowane pliki
+                files_to_upload = [log_path, status_path, chart_path, snapshot_path]
+                for file_path in files_to_upload:
+                    if file_path.exists():
+                        client.upload_csv(gdrive_folder_id, str(file_path), file_path.name)
+                        # Uwaga: metoda nazywa się 'upload_csv', ale w kodzie GDriveClient używa 
+                        # ogólnego mimetypu 'text/csv' lub go ignoruje, więc prześle poprawnie też .txt i .png. 
+                        # Dla pewności, można w przyszłości zaktualizować metodę w GDriveClient.
+                logging.info("Successfully uploaded all daily artefacts to Google Drive.")
+            else:
+                logging.warning("Drive service unavailable. Artefacts saved locally only.")
+        except Exception as e:
+            logging.error(f"Failed to upload artefacts to Drive: {e}")
+    else:
+        logging.info("No GDrive credentials provided. Artefacts saved locally only.")
+    # ---------------------------------------------
     return {
         "action":        action,
         "signal_equity": snap["signal_equity"],

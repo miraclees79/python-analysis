@@ -71,25 +71,31 @@ class GDriveClient:
             logging.error(f"Bląd dekodowania CSV: {e}")
             return None
 
-    def upload_csv(self, folder_id: str, local_path: str, filename: str = None):
+    def upload_file(self, folder_id: str, local_path: str, filename: str = None):
+        """Universal uploader for CSV, TXT, PNG and JSON files."""
         if not self.service: return None
         if not filename:
             filename = os.path.basename(local_path)
             
-        try:
-            existing_id = self.find_file_id(folder_id, filename)
-            media = MediaFileUpload(local_path, mimetype="text/csv", resumable=True)
+        # Automatyczne wykrywanie typu pliku
+        mimetype = "text/csv"
+        if filename.endswith(".png"): mimetype = "image/png"
+        elif filename.endswith(".json"): mimetype = "application/json"
+        elif filename.endswith(".txt"): mimetype = "text/plain"
             
-            if existing_id:
-                # DODAJ num_retries=5
-                self.service.files().update(fileId=existing_id, media_body=media).execute(num_retries=5)
-                logging.info(f"Zaktualizowano plik na Drive: {filename}")
-                return existing_id
-            else:
-                metadata = {"name": filename, "parents": [folder_id]}
-                result = self.service.files().create(body=metadata, media_body=media, fields="id").execute(num_retries=5)
-                logging.info(f"Utworzono nowy plik na Drive: {filename}")
-                return result["id"]
-        except Exception as e:
-            logging.error(f"Błąd podczas uploadu {filename}: {e}")
-            return None
+        existing_id = self.find_file_id(folder_id, filename)
+        media = MediaFileUpload(local_path, mimetype=mimetype, resumable=True)
+        
+        if existing_id:
+            self.service.files().update(fileId=existing_id, media_body=media).execute()
+            logging.info(f"Zaktualizowano plik na Drive: {filename}")
+            return existing_id
+        else:
+            metadata = {"name": filename, "parents": [folder_id]}
+            result = self.service.files().create(body=metadata, media_body=media, fields="id").execute()
+            logging.info(f"Utworzono nowy plik na Drive: {filename}")
+            return result["id"]
+
+    # Dla kompatybilności wstecznej z resztą skryptów (np. data_updater):
+    def upload_csv(self, folder_id: str, local_path: str, filename: str = None):
+        return self.upload_file(folder_id, local_path, filename)
