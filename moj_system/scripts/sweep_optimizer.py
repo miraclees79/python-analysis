@@ -34,7 +34,7 @@ from moj_system.core.global_engine import (
     build_return_series, build_price_df_from_returns, allocation_walk_forward_n
 )
 from moj_system.core.robustness_engine import analyze_robustness
-
+from moj_system.core.utils import build_mmf_extended
 from moj_system.config import ASSET_REGISTRY, BASE_GRIDS, BOND_GRIDS, SWEEP_WINDOW_CONFIGS, EQUITY_THRESHOLDS_MC
 from moj_system.data.data_manager import load_local_csv
 from moj_system.data.updater import DataUpdater
@@ -58,7 +58,7 @@ class SweepManager:
         cash_df = load_local_csv("fund_2720", "MMF")
         WIBOR1M = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
         if WIBOR1M is not None:
-            from moj_system.core.utils import build_mmf_extended
+            
             cash_df = build_mmf_extended(cash_df, WIBOR1M, floor_date="1995-01-02")
         
         use_atr = (stop_type == "atr")
@@ -157,7 +157,7 @@ class SweepManager:
         WIBOR1M = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
         MMF = load_local_csv("fund_2720", "MMF")
         if WIBOR1M is not None:
-            from moj_system.core.utils import build_mmf_extended
+            
             MMF_EXT = build_mmf_extended(MMF, WIBOR1M, floor_date="1995-01-02")
             MMF = MMF_EXT
             
