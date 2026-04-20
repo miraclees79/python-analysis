@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Refresh KNF Funds & Match
+      - name: Sweep Runner
         env:
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
@@ -32,5 +32,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: knf-logs
-          path: outputs/refresh_knf.log
+          name: sweep-logs
+          path: outputs/sweep_*.log
+          path: outputs/sweep_*.csv
