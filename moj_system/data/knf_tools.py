@@ -412,7 +412,12 @@ class KNFTools:
         if knf_df.empty:
             logging.info("No new subfunds to match.")
             return
-            
+        
+        # Zapisujemy summary wszystkich pobranych funduszy (jeśli use_tfi_scope=False to wyślemy GIGANTYCZNY słownik)
+        summary_path = out_dir / "knf_summary.csv"
+        knf_df.to_csv(summary_path, index=False, sep=";")
+        self.gdrive.upload_csv(self.root_folder, str(summary_path))    
+        
         stooq_df = self.load_stooq_txt_files()
         if stooq_df.empty: return
 
@@ -442,7 +447,3 @@ class KNFTools:
         self.gdrive.upload_csv(self.root_folder, str(review_path))
         logging.info("Matches uploaded to Google Drive.")
         
-        # Zapisujemy summary wszystkich pobranych funduszy (jeśli use_tfi_scope=False to wyślemy GIGANTYCZNY słownik)
-        summary_path = out_dir / "knf_summary.csv"
-        knf_df.to_csv(summary_path, index=False, sep=";")
-        self.gdrive.upload_csv(self.root_folder, str(summary_path))
