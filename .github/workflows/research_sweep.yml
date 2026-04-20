@@ -4,6 +4,9 @@ on:
   
   workflow_dispatch:  # Pozwala odpalić ręcznie
 
+permissions:
+  contents: read
+
 jobs:
   Research_sweep:
     runs-on: ubuntu-latest
