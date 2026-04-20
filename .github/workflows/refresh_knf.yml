@@ -6,6 +6,9 @@ on:
     - cron: '0 1 * * 1'
   workflow_dispatch:  # Pozwala odpalić ręcznie
 
+permissions:
+  contents: read
+
 jobs:
   refresh-knf:
     runs-on: ubuntu-latest
