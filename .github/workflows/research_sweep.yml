@@ -28,7 +28,7 @@ jobs:
         run: |
           # Zapisz credentials
           echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
-          # Uruchamiamy skrypt za pomocą modułu (flagę --all możesz dodać, jeśli chcesz przeskanować cały rynek)
+          # Uruchamiamy skrypt za pomocą modułu 
           python -m moj_system.scripts.sweep_optimizer --mode PENSION --n_mc 500
 
       - name: Upload Logs
