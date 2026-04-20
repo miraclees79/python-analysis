@@ -5,7 +5,7 @@ on:
   workflow_dispatch:  # Pozwala odpalić ręcznie
 
 jobs:
-  refresh-knf:
+  Research_sweep:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
