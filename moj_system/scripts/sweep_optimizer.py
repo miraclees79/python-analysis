@@ -63,7 +63,7 @@ class SweepManager:
         cash_df = load_local_csv("fund_2720", "MMF")
         use_atr = (stop_type == "atr")
         
-        wf_equity, wf_results, _ = walk_forward(
+        wf_equity, wf_results, wf_trades = walk_forward(
             df=df, cash_df=cash_df, train_years=train_y, test_years=test_y,
             X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
             fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
@@ -99,7 +99,7 @@ class SweepManager:
         wf_bd, wf_res_bd, wf_tr_bd = walk_forward(TBSP, derived["mmf_ext"], train_y, test_y, filter_modes_override=["ma"], X_grid=BOND_GRIDS["X_GRID"], n_jobs=get_n_jobs(), entry_gate_series=derived["bond_gate"])
         
         sig_eq, sig_bd = build_signal_series(wf_eq, wf_tr_eq), build_signal_series(wf_bd, wf_tr_bd)
-        port_eq, _, _, _ = allocation_walk_forward(derived["ret_eq"], derived["ret_bd"], derived["ret_mmf"], sig_eq, sig_bd, sig_eq, sig_bd, wf_res_eq, wf_res_bd)
+        port_eq, wgt_ser, all_realloc_log, alloc_results_df = allocation_walk_forward(derived["ret_eq"], derived["ret_bd"], derived["ret_mmf"], sig_eq, sig_bd, sig_eq, sig_bd, wf_res_eq, wf_res_bd)
         
         trimmed = port_eq.loc[port_eq.index >= common_start]
         if trimmed.empty: return None
@@ -128,13 +128,13 @@ class SweepManager:
             ret_s = build_return_series(px_df, fx_series=fx_s, hedged=fx_hedged)
             rets_dict[lbl] = ret_s.dropna()
             proc_px = px_df if fx_hedged or fx_s is None else build_price_df_from_returns(ret_s, lbl)
-            wf_e, _, wf_t = walk_forward(proc_px, MMF, train_y, test_y, use_atr_stop=use_atr, n_jobs=get_n_jobs())
+            wf_e, wf_r, wf_t = walk_forward(proc_px, MMF, train_y, test_y, use_atr_stop=use_atr, n_jobs=get_n_jobs())
             sigs_full[lbl] = build_signal_series(wf_e, wf_t)
 
         wf_bd, wf_res_bd, wf_tr_bd = walk_forward(TBSP, MMF, train_y, test_y, filter_modes_override=["ma"], X_grid=BOND_GRIDS["X_GRID"], n_jobs=get_n_jobs())
-        rets_dict["TBSP"], sigs_full["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna(), build_signal_series(wf_bd, _)
+        rets_dict["TBSP"], sigs_full["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna(), build_signal_series(wf_bd, wf_tr_bd)
         
-        port_eq, _, _, _ = allocation_walk_forward_n(rets_dict, sigs_full, sigs_full, MMF["Zamkniecie"].pct_change().dropna(), wf_res_bd, list(rets_dict.keys()), train_years=train_y)
+        port_eq, gt_ser, all_realloc_log, alloc_results_df = allocation_walk_forward_n(rets_dict, sigs_full, sigs_full, MMF["Zamkniecie"].pct_change().dropna(), wf_res_bd, list(rets_dict.keys()), train_years=train_y)
         trimmed = port_eq.loc[port_eq.index >= common_start]
         if trimmed.empty: return None
         trimmed = trimmed / trimmed.iloc[0]
@@ -145,7 +145,7 @@ def main():
     parser = argparse.ArgumentParser(description="Professional Multi-Strategy Sweeper")
     parser.add_argument("--mode", choices=["SINGLE", "PENSION", "GLOBAL", "ALL"], required=True)
     parser.add_argument("--assets", nargs="+", help="Dla trybu SINGLE (np. WIG20TR SP500)")
-    parser.add_argument("--n_mc", type=int, default=0, help="Liczba probek MC (0 = pomin)")
+    parser.add_argument("--n_mc", type=int, default=500, help="Liczba probek MC (0 = pomin)")
     args = parser.parse_args()
 
     os.chdir(project_root)
@@ -206,7 +206,9 @@ def main():
         for asset in args.assets:
             for ty, te in SWEEP_WINDOW_CONFIGS:
                 for st in ["fixed", "atr"]:
+                    logging.info("=" * 80)
                     logging.info(f"SINGLE SWEEP: {asset} | {ty}+{te} | {st}")
+                    logging.info("=" * 80)
                     res = manager.run_single_asset_iteration(asset, ty, te, st, common_start)
                     if res: results.append(res)
 
@@ -214,14 +216,18 @@ def main():
         for var in ["GLOBAL_A", "GLOBAL_B"]:
             for ty, te in SWEEP_WINDOW_CONFIGS:
                 for st in ["fixed", "atr"]:
+                    logging.info("=" * 80)
                     logging.info(f"GLOBAL SWEEP: {var} | {ty}+{te} | {st}")
+                    logging.info("=" * 80)
                     res = manager.run_global_iteration(var, ty, te, st, common_start)
                     if res: results.append(res)
 
     if args.mode in ["PENSION", "ALL"]:
         for ty, te in SWEEP_WINDOW_CONFIGS:
             for st in ["fixed", "atr"]:
+                logging.info("=" * 80)
                 logging.info(f"PENSION SWEEP: {ty}+{te} | {st}")
+                logging.info("=" * 80)
                 res = manager.run_pension_iteration(ty, te, st, common_start)
                 if res: results.append(res)
 
