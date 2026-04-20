@@ -43,7 +43,7 @@ FINAL_COLS = [
 ]
 
 class FundReviewer:
-    def __init__(self, update_data=False):
+    def __init__(self, update_data=True):
         self.creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
         self.gdrive = GDriveClient(credentials_path=self.creds_path)
         self.folder_id = os.environ.get("GDRIVE_FOLDER_ID")
