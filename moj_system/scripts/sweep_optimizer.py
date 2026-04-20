@@ -45,11 +45,6 @@ from moj_system.core.robustness import RobustnessEngine
 from moj_system.core.research import get_common_oos_start
 from moj_system.core.utils import build_mmf_extended
 
-# Strategy Core Imports
-
-
-
-
 
 class SweepManager:
     def __init__(self, n_mc):
@@ -62,9 +57,10 @@ class SweepManager:
         """Standard Walk-Forward + Lite MC for one asset."""
         df = load_local_csv(asset_name.lower(), asset_name)
         cash_df = load_local_csv("fund_2720", "MMF")
-        WIBOR1M = load_local_csv("wibor1m", "WIBOR1M")
-        cash_df_ext = build_mmf_extended(cash_df, WIBOR1M)
-        cash_df = cash_df_ext
+        WIBOR1M = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
+        if WIBOR1M is not None:
+            cash_df = build_mmf_extended(cash_df, WIBOR1M, floor_date="1995-01-02")
+        
         use_atr = (stop_type == "atr")
         
         wf_equity, wf_results, wf_trades = walk_forward(
@@ -83,8 +79,9 @@ class SweepManager:
 
         mc_verdict = "N/A"
         if self.n_mc > 0:
+            logging.info(f"Running MC for Single Asset ({self.n_mc} iterations)...")
             mc_df = self.rob_engine.run_mc_test(wf_results, df, cash_df, n_samples=self.n_mc)
-            mc_sum = analyze_robustness(mc_df, m, thresholds=EQUITY_THRESHOLDS_MC)
+            mc_sum = analyze_robustness(mc_df, compute_metrics(wf_equity), thresholds=EQUITY_THRESHOLDS_MC)
             mc_verdict = mc_sum["verdict"]
 
         return {
@@ -93,61 +90,129 @@ class SweepManager:
         }
 
     def run_pension_iteration(self, train_y, test_y, stop_type_eq, common_start):
+        """Standard Walk-Forward for Pension Portfolio + Lite MC on WIG component."""
         WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
         MMF = load_local_csv("fund_2720", "MMF")
         TBSP = build_and_upload(self.folder_id, "tbsp_extended_full.csv", "tbsp_extended_combined.csv", "^tbsp", "stooq", self.creds_path)
         PL10Y, DE10Y = load_local_csv("pl10y", "PL10Y"), load_local_csv("de10y", "DE10Y")
-        WIBOR1M = load_local_csv("wibor1m", "WIBOR1M")
+        WIBOR1M = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
         derived = build_standard_two_asset_data(WIG, TBSP, MMF, WIBOR1M, PL10Y, DE10Y, "1995-01-02")
         
-        wf_eq, wf_res_eq, wf_tr_eq = walk_forward(WIG, derived["mmf_ext"], train_y, test_y, use_atr_stop=(stop_type_eq=="atr"), n_jobs=get_n_jobs())
-        wf_bd, wf_res_bd, wf_tr_bd = walk_forward(TBSP, derived["mmf_ext"], train_y, test_y, filter_modes_override=["ma"], X_grid=BOND_GRIDS["X_GRID"], n_jobs=get_n_jobs(), entry_gate_series=derived["bond_gate"])
+        # WF Equity
+        use_atr = (stop_type_eq == "atr")
+        wf_eq, wf_res_eq, wf_tr_eq = walk_forward(
+            WIG, derived["mmf_ext"], train_y, test_y, 
+            use_atr_stop=use_atr, 
+            N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
+            n_jobs=get_n_jobs(), fast_mode=True
+        )
+        
+        # WF Bond
+        wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
+            TBSP, derived["mmf_ext"], train_y, test_y, 
+            filter_modes_override=["ma"], X_grid=BOND_GRIDS["X_GRID"], 
+            n_jobs=get_n_jobs(), entry_gate_series=derived["bond_gate"], fast_mode=True
+        )
         
         sig_eq, sig_bd = build_signal_series(wf_eq, wf_tr_eq), build_signal_series(wf_bd, wf_tr_bd)
-        port_eq, wgt_ser, all_realloc_log, alloc_results_df = allocation_walk_forward(derived["ret_eq"], derived["ret_bd"], derived["ret_mmf"], sig_eq, sig_bd, sig_eq, sig_bd, wf_res_eq, wf_res_bd)
+        port_eq, wgt_ser, all_realloc_log, alloc_results_df = allocation_walk_forward(
+            derived["ret_eq"], derived["ret_bd"], derived["ret_mmf"], 
+            sig_eq, sig_bd, sig_eq, sig_bd, wf_res_eq, wf_res_bd
+        )
         
         trimmed = port_eq.loc[port_eq.index >= common_start]
         if trimmed.empty: return None
         trimmed = trimmed / trimmed.iloc[0]
         m = compute_metrics(trimmed)
-        return {"Strategy": "PENSION", "Config": f"{train_y}+{test_y}", "Stop": stop_type_eq, "CAGR": m["CAGR"], "CalMAR": m["CalMAR"], "MaxDD": m["MaxDD"], "MC": "N/A"}
+
+        mc_verdict = "N/A"
+        if self.n_mc > 0 and not wf_res_eq.empty:
+            logging.info(f"Running MC for Pension WIG component ({self.n_mc} iterations)...")
+            mc_df = self.rob_engine.run_mc_test(wf_res_eq, WIG, derived["mmf_ext"], n_samples=self.n_mc)
+            mc_sum = analyze_robustness(mc_df, compute_metrics(wf_eq), thresholds=EQUITY_THRESHOLDS_MC)
+            mc_verdict = f"WIG:{mc_sum['verdict']}"
+
+        return {
+            "Strategy": "PENSION", "Config": f"{train_y}+{test_y}", "Stop": stop_type_eq, 
+            "CAGR": m["CAGR"], "CalMAR": m["CalMAR"], "MaxDD": m["MaxDD"], "MC": mc_verdict
+        }
 
     def run_global_iteration(self, variant_key, train_y, test_y, stop_type_eq, common_start):
+        """Standard Walk-Forward for Global Portfolio + Lite MC on ALL equity components."""
         cfg = ASSET_REGISTRY[variant_key]
         mode, fx_hedged = cfg["mode"], cfg["fx_hedged"]
-        WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
-        WIBOR1M = load_local_csv("wibor1m", "WIBOR1M")
-        MMF = load_local_csv("fund_2720", "MMF")
-        MMF_EXT = build_mmf_extended(MMF, WIBOR1M)
-        MMF = MMF_EXT
-        TBSP = build_and_upload(self.folder_id, "tbsp_extended_full.csv", "tbsp_extended_combined.csv", "^tbsp", "stooq", self.creds_path)
         
+        WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
+        WIBOR1M = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
+        MMF = load_local_csv("fund_2720", "MMF")
+        if WIBOR1M is not None:
+            MMF_EXT = build_mmf_extended(MMF, WIBOR1M, floor_date="1995-01-02")
+            MMF = MMF_EXT
+            
+        TBSP = build_and_upload(self.folder_id, "tbsp_extended_full.csv", "tbsp_extended_combined.csv", "^tbsp", "stooq", self.creds_path)
         fx_map = {c: load_local_csv(f"{c.lower()}pln", f"{c}PLN")["Zamkniecie"] for c in ["USD", "EUR", "JPY"]}
+        
         if mode == "global_equity":
             stoxx = build_and_upload(self.folder_id, "stoxx600.csv", "stoxx600_combined.csv", "^STOXX", "yfinance", self.creds_path)
-            assets = {"WIG": (WIG, None), "SP500": (load_local_csv("sp500", "SP500"), fx_map["USD"]), "STOXX600": (stoxx, fx_map["EUR"]), "Nikkei225": (load_local_csv("nk225", "Nikkei225"), fx_map["JPY"])}
+            assets = {"WIG": (WIG, None), "SP500": (load_local_csv("sp500", "SP500"), fx_map["USD"]), 
+                      "STOXX600": (stoxx, fx_map["EUR"]), "Nikkei225": (load_local_csv("nikkei225", "Nikkei225"), fx_map["JPY"])}
         else:
             msciw = build_and_upload(self.folder_id, "msci_world_wsj_raw.csv", "msci_world_combined.csv", "URTH", "yfinance", self.creds_path, is_msci_world=True)
             assets = {"WIG": (WIG, None), "MSCI_World": (msciw, fx_map["USD"])}
 
         rets_dict, sigs_full = {}, {}
         use_atr = (stop_type_eq == "atr")
+        
+        # Słownik przechowujący dane do testu MC: {label: (wf_res, proc_px, wf_eq)}
+        mc_data_queue = {}
+        mc_verdicts = []
+        
         for lbl, (px_df, fx_s) in assets.items():
             ret_s = build_return_series(px_df, fx_series=fx_s, hedged=fx_hedged)
             rets_dict[lbl] = ret_s.dropna()
             proc_px = px_df if fx_hedged or fx_s is None else build_price_df_from_returns(ret_s, lbl)
-            wf_e, wf_r, wf_t = walk_forward(proc_px, MMF, train_y, test_y, use_atr_stop=use_atr, n_jobs=get_n_jobs())
+            
+            wf_e, wf_r, wf_t = walk_forward(
+                proc_px, MMF, train_y, test_y, 
+                use_atr_stop=use_atr, 
+                N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None, 
+                n_jobs=get_n_jobs(), fast_mode=True
+            )
             sigs_full[lbl] = build_signal_series(wf_e, wf_t)
+            mc_data_queue[lbl] = (wf_r, proc_px, wf_e)
 
-        wf_bd, wf_res_bd, wf_tr_bd = walk_forward(TBSP, MMF, train_y, test_y, filter_modes_override=["ma"], X_grid=BOND_GRIDS["X_GRID"], n_jobs=get_n_jobs())
-        rets_dict["TBSP"], sigs_full["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna(), build_signal_series(wf_bd, wf_tr_bd)
+        wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
+            TBSP, MMF, train_y, test_y, filter_modes_override=["ma"], 
+            X_grid=BOND_GRIDS["X_GRID"], n_jobs=get_n_jobs(), fast_mode=True
+        )
+        rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
+        sigs_full["TBSP"] = build_signal_series(wf_bd, wf_tr_bd)
         
-        port_eq, gt_ser, all_realloc_log, alloc_results_df = allocation_walk_forward_n(rets_dict, sigs_full, sigs_full, MMF["Zamkniecie"].pct_change().dropna(), wf_res_bd, list(rets_dict.keys()), train_years=train_y)
+        port_eq, gt_ser, all_realloc_log, alloc_results_df = allocation_walk_forward_n(
+            rets_dict, sigs_full, sigs_full, MMF["Zamkniecie"].pct_change().dropna(), 
+            wf_res_bd, list(rets_dict.keys()), train_years=train_y
+        )
+        
         trimmed = port_eq.loc[port_eq.index >= common_start]
         if trimmed.empty: return None
         trimmed = trimmed / trimmed.iloc[0]
         m = compute_metrics(trimmed)
-        return {"Strategy": variant_key, "Config": f"{train_y}+{test_y}", "Stop": stop_type_eq, "CAGR": m["CAGR"], "CalMAR": m["CalMAR"], "MaxDD": m["MaxDD"], "MC": "N/A"}
+        
+        # --- MC EXECUTION FOR ALL EQUITY ASSETS ---
+        if self.n_mc > 0:
+            for lbl, (wf_res, proc_px, wf_eq) in mc_data_queue.items():
+                if wf_res is not None and not wf_res.empty:
+                    logging.info(f"Running MC for Global {lbl} component ({self.n_mc} iterations)...")
+                    mc_df = self.rob_engine.run_mc_test(wf_res, proc_px, MMF, n_samples=self.n_mc)
+                    mc_sum = analyze_robustness(mc_df, compute_metrics(wf_eq), thresholds=EQUITY_THRESHOLDS_MC)
+                    mc_verdicts.append(f"{lbl[:3]}:{mc_sum['verdict'][:3]}") # Skrócone nazwy dla czytelności tabeli, np. WIG:ROB
+        
+        final_mc_string = "|".join(mc_verdicts) if mc_verdicts else "N/A"
+
+        return {
+            "Strategy": variant_key, "Config": f"{train_y}+{test_y}", "Stop": stop_type_eq, 
+            "CAGR": m["CAGR"], "CalMAR": m["CalMAR"], "MaxDD": m["MaxDD"], "MC": final_mc_string
+        }
 
 def main():
     parser = argparse.ArgumentParser(description="Professional Multi-Strategy Sweeper")
@@ -157,7 +222,25 @@ def main():
     args = parser.parse_args()
 
     os.chdir(project_root)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
+    
+    # --- NOWE LOGOWANIE DLA SWEEPERA ---
+    log_file = f"outputs/sweep_{args.mode.lower()}_run.log"
+    os.makedirs("outputs", exist_ok=True)
+    
+    # Usunięcie starych handlerów, by uniknąć duplikacji w Spyderze
+    for h in logging.root.handlers[:]: 
+        logging.root.removeHandler(h)
+        
+    logging.basicConfig(
+        level=logging.INFO, 
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler(log_file, mode="w", encoding='utf-8'), # Zapis do pliku
+            logging.StreamHandler(sys.stdout) # Wypisywanie na ekran
+        ]
+    )
+    # -----------------------------------
+    
     manager = SweepManager(args.n_mc)
     results = []
 
@@ -172,7 +255,6 @@ def main():
     creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
     folder_id = os.environ.get("GDRIVE_FOLDER_ID")
 
-    # [KROK A] BUDOWA SERII ROZSZERZONYCH (MSCI, STOXX, TBSP)
     # Wymuszamy budowę tych trzech, bo one są najdłuższe
     tbsp_df = build_and_upload(folder_id, "tbsp_extended_full.csv", "tbsp_extended_combined.csv", "^tbsp", "stooq", creds_path)
     msciw_df = build_and_upload(folder_id, "msci_world_wsj_raw.csv", "msci_world_combined.csv", "URTH", "yfinance", creds_path, is_msci_world=True)
@@ -180,15 +262,11 @@ def main():
 
     logging.info("Calculating common OOS start for all possible assets...")
     
-    # [KROK B] BUDOWANIE MAPY DANYCH DLA SILNIKA RESEARCH
     data_map = {}
-    
-    # 1. Dodajemy to, co updater ściągnął do raw_csv (WIG, SP500, Nikkei)
     for a in ["WIG", "SP500", "Nikkei225"]:
         df = load_local_csv(a.lower(), a, mandatory=False)
         if df is not None: data_map[a] = df
 
-    # 2. Dodajemy nasze rozszerzone serie (nadpisujemy jeśli updater pobrał krótkie wersje)
     if tbsp_df is not None: 
         data_map["TBSP"] = tbsp_df
         logging.info(f"Using Extended TBSP for OOS calc: {tbsp_df.index.min().date()}")
@@ -199,11 +277,8 @@ def main():
         data_map["STOXX600"] = stoxx_df
         logging.info(f"Using Extended STOXX600 for OOS calc: {stoxx_df.index.min().date()}")
 
-    # [KROK C] WYLICZENIE WSPÓLNEGO STARTU
-    # Silnik sprawdzi każdą serię i każdą konfigurację okien (6..9 lat)
     common_start = get_common_oos_start(data_map, SWEEP_WINDOW_CONFIGS)
     
-    # LOGOWANIE "DOWODU" - sprawdzamy co nas blokuje
     logging.info("OOS Constraint Analysis:")
     for name, df in data_map.items():
         earliest_oos = df.index.min() + pd.DateOffset(years=9) # Najdłuższy train
