@@ -45,12 +45,17 @@ BOND_GRIDS = {
 }
 
 # Research Window Configurations
-SWEEP_WINDOW_CONFIGS = [
+
+SWEEP_WINDOW_CONFIGS_FULL = [
     (6, 1), (6, 2),
     (7, 1), (7, 2),
     (8, 1), (8, 2),
     (9, 1), (9, 2),
 ]
+
+# Dry run only
+SWEEP_WINDOW_CONFIGS_TEST = [(6,2)]
+
 
 # ---------------------------------------------------------------------------
 # Asset-class threshold presets
