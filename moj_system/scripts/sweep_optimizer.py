@@ -36,15 +36,20 @@ from moj_system.core.global_engine import (
 )
 from moj_system.core.robustness_engine import analyze_robustness
 from moj_system.core.utils import build_mmf_extended
-from moj_system.config import ASSET_REGISTRY, BASE_GRIDS, BOND_GRIDS, SWEEP_WINDOW_CONFIGS_TEST, EQUITY_THRESHOLDS_MC, EQUITY_THRESHOLDS_BOOTSTRAP, BOND_THRESHOLDS_MC, BOND_THRESHOLDS_BOOTSTRAP
+from moj_system.config import ( ASSET_REGISTRY, BASE_GRIDS, BOND_GRIDS, 
+                            SWEEP_WINDOW_CONFIGS_TEST, EQUITY_THRESHOLDS_MC, 
+                            EQUITY_THRESHOLDS_BOOTSTRAP, BOND_THRESHOLDS_MC, 
+                            BOND_THRESHOLDS_BOOTSTRAP)
 from moj_system.data.data_manager import load_local_csv
 from moj_system.data.updater import DataUpdater
 from moj_system.data.builder import build_and_upload
 from moj_system.core.robustness import RobustnessEngine
 from moj_system.core.robustness_engine import analyze_bootstrap
-from moj_system.core.research import (
-    get_common_oos_start, prepare_regime_inputs, run_regime_decomposition, extract_flat_regime_stats
-)
+from moj_system.core.research import (get_common_oos_start, 
+                                      prepare_regime_inputs, 
+                                      run_regime_decomposition, 
+                                      extract_flat_regime_stats
+                                             )
 
 SWEEP_WINDOW_CONFIGS = SWEEP_WINDOW_CONFIGS_TEST
 
