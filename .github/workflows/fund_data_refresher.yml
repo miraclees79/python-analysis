@@ -1,9 +1,9 @@
-name: Weekly Fund Review
+name: Daily Fund Data Refresh
 
 on:
   schedule:
-    # Uruchamia się w  o 23:00 UTC
-    - cron: '0 23 * * 5'
+    # Uruchamia się   o 00:00 UTC
+    - cron: '0 0 * * *'
   workflow_dispatch: 
 
 permissions:
@@ -25,19 +25,19 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Refresh KNF & Generate Ranking
+      - name: Refresh data
         env:
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: |
           echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
 
-          # 2. Następnie odpalamy rewizję funduszy z flagą --update (dociągnie KNF i wygeneruje raporty)
-          python moj_system/scripts/fund_reviewer.py --update
+          
+          python moj_system/scripts/fund_data_refresher.py 
 
       - name: Upload Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fund-review-logs
-          path: outputs/fund_ranking_*.csv
+          path: fund_refresh.log
