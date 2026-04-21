@@ -46,7 +46,7 @@ from moj_system.core.research import (
     get_common_oos_start, prepare_regime_inputs, run_regime_decomposition, extract_flat_regime_stats
 )
 
-
+SWEEP_WINDOW_CONFIGS = SWEEP_WINDOW_CONFIGS_TEST
 
 
 class SweepManager:
@@ -164,17 +164,18 @@ class SweepManager:
             mc_df = self.rob_engine.run_mc_test(wf_res_eq, WIG, derived["mmf_ext"], n_samples=self.n_mc)
             mc_sum = analyze_robustness(mc_df, compute_metrics(wf_eq), thresholds=EQUITY_THRESHOLDS_MC)
             mc_verdict = f"WIG:{mc_sum['verdict']}"
+            mc_p05 = mc_sum.get("CAGR", {}).get("p05", float('nan'))
         bb_verdict = "N/A"
         bb_p05 = float('nan')
         if self.n_boot > 0:
             logging.info(f"Running Bootstrap for Pension WIG ({self.n_boot} iterations)...")
             bb_results = self.rob_engine.run_bootstrap_test(
-                df=df, cash_df=cash_df, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+                df=WIG, cash_df=derived["mmf_ext"], n_samples=self.n_boot, train_years=train_y, test_years=test_y,
                 use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
                 X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
                 fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"]
             )
-            bb_sum = analyze_bootstrap(bb_results, compute_metrics(wf_equity), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
+            bb_sum = analyze_bootstrap(bb_results, compute_metrics(wf_eq), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
             bb_verdict = bb_sum["verdict"]
             bb_p05 = bb_sum.get("CAGR", {}).get("p05", float('nan'))
 
@@ -183,8 +184,9 @@ class SweepManager:
         if self.n_mc > 0 and not wf_res_bd.empty:
             logging.info(f"Running MC for Pension TBSP component ({self.n_mc} iterations)...")
             mc_df_bd = self.rob_engine.run_mc_test(wf_res_bd, TBSP, derived["mmf_ext"], n_samples=self.n_mc)
-            mc_sum_bd = analyze_robustness(mc_df, compute_metrics(wf_bd), thresholds=BOND_THRESHOLDS_MC)
-            mc_verdict_bd = f"TBSP:{mc_sum['verdict']}"
+            mc_sum_bd = analyze_robustness(mc_df_bd, compute_metrics(wf_bd), thresholds=BOND_THRESHOLDS_MC)
+            mc_verdict_bd = f"TBSP:{mc_sum_bd['verdict']}"
+            mc_p05 = mc_sum.get("CAGR", {}).get("p05", float('nan'))
         bb_verdict_bd = "N/A"
         bb_p05_bd = float('nan')
         if self.n_boot > 0:
@@ -195,7 +197,7 @@ class SweepManager:
                 X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
                 fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"]
             )
-            bb_sum_bd = analyze_bootstrap(bb_results_bd, compute_metrics(wf_equity), thresholds=BOND_THRESHOLDS_BOOTSTRAP)
+            bb_sum_bd = analyze_bootstrap(bb_results_bd, compute_metrics(wf_bd), thresholds=BOND_THRESHOLDS_BOOTSTRAP)
             bb_verdict_bd = bb_sum_bd["verdict"]
             bb_p05_bd = bb_sum_bd.get("CAGR", {}).get("p05", float('nan'))
 

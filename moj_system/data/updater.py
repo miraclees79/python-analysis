@@ -120,7 +120,7 @@ class DataUpdater:
 
     def _extract_from_zip(self, zip_data: bytes, stooq_ticker: str) -> pd.DataFrame | None:
         """
-        Wyodrębnia dane pojedynczego tickera z dużego archiwum ZIP pobranego ze Stooq.
+        Wyodrebnia dane pojedynczego tickera z duzego archiwum ZIP pobranego ze Stooq.
 
         Mechanism:
         ----------
@@ -188,7 +188,7 @@ class DataUpdater:
                       knf_id: str = None, zip_type: str = "index_pl", 
                       upload_to_drive: bool = False):
         """
-        Aktualizuje dane instrumentu korzystając z hybrydowych źródeł (Stooq ZIP + API).
+        Aktualizuje dane instrumentu korzystając z hybrydowych zrodeł (Stooq ZIP + API).
 
         Mechanism:
             ----------
@@ -199,7 +199,7 @@ class DataUpdater:
 
         Returns:
             --------
-            bool - True jeśli aktualizacja zakończyła się sukcesem.
+            bool - True jesli aktualizacja zakończyła się sukcesem.
             """
 
         logging.info(f"--- Updating: {label} ({stooq_ticker}) ---")
