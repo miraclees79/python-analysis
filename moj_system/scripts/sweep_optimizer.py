@@ -35,11 +35,12 @@ from moj_system.core.global_engine import (
 )
 from moj_system.core.robustness_engine import analyze_robustness
 from moj_system.core.utils import build_mmf_extended
-from moj_system.config import ASSET_REGISTRY, BASE_GRIDS, BOND_GRIDS, SWEEP_WINDOW_CONFIGS, EQUITY_THRESHOLDS_MC
+from moj_system.config import ASSET_REGISTRY, BASE_GRIDS, BOND_GRIDS, SWEEP_WINDOW_CONFIGS, EQUITY_THRESHOLDS_MC, EQUITY_THRESHOLDS_BOOTSTRAP, BOND_THRESHOLDS_MC, BOND_THRESHOLDS_BOOTSTRAP
 from moj_system.data.data_manager import load_local_csv
 from moj_system.data.updater import DataUpdater
 from moj_system.data.builder import build_and_upload
 from moj_system.core.robustness import RobustnessEngine
+from moj_system.core.robustness_engine import analyze_bootstrap
 from moj_system.core.research import (
     get_common_oos_start, prepare_regime_inputs, run_regime_decomposition, extract_flat_regime_stats
 )
@@ -48,6 +49,7 @@ from moj_system.core.research import (
 class SweepManager:
     def __init__(self, n_mc):
         self.n_mc = n_mc
+        self.n_boot = n_boot # <-- DODANY n_boot
         self.rob_engine = RobustnessEngine(n_jobs=get_n_jobs())
         self.creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
         self.folder_id = os.environ.get("GDRIVE_FOLDER_ID")
@@ -84,15 +86,32 @@ class SweepManager:
         regime_metrics = extract_flat_regime_stats(raw_regimes)
 
         mc_verdict = "N/A"
+        mc_p05 = float('nan')
         if self.n_mc > 0:
             logging.info(f"Running MC for Single Asset ({self.n_mc} iterations)...")
             mc_df = self.rob_engine.run_mc_test(wf_results, df, cash_df, n_samples=self.n_mc)
             mc_sum = analyze_robustness(mc_df, compute_metrics(wf_equity), thresholds=EQUITY_THRESHOLDS_MC)
             mc_verdict = mc_sum["verdict"]
+            mc_p05 = mc_sum.get("CAGR", {}).get("p05", float('nan'))
 
+        bb_verdict = "N/A"
+        bb_p05 = float('nan')
+        if self.n_boot > 0:
+            logging.info(f"Running Bootstrap for Single Asset ({self.n_boot} iterations)...")
+            bb_df = self.rob_engine.run_bootstrap_test(
+                df=df, cash_df=cash_df, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+                use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
+                X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
+                fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"]
+            )
+            bb_sum = analyze_bootstrap(bb_df, compute_metrics(wf_equity), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
+            bb_verdict = bb_sum["verdict"]
+            bb_p05 = bb_sum.get("CAGR", {}).get("p05", float('nan'))
         return {
             "Strategy": asset_name, "Config": f"{train_y}+{test_y}", "Stop": stop_type,
-            "CAGR": m["CAGR"], "CalMAR": m["CalMAR"], "MaxDD": m["MaxDD"], "MC": mc_verdict,
+            "CAGR": m["CAGR"], "CalMAR": m["CalMAR"], "MaxDD": m["MaxDD"], 
+            "MC": mc_verdict, "MC_p05": mc_p05,
+            "BB": bb_verdict, "BB_p05": bb_p05,
             **regime_metrics
         }
 
@@ -136,15 +155,52 @@ class SweepManager:
         regime_metrics = extract_flat_regime_stats(raw_regimes)
 
         mc_verdict = "N/A"
+        mc_p05 = float('nan')
         if self.n_mc > 0 and not wf_res_eq.empty:
             logging.info(f"Running MC for Pension WIG component ({self.n_mc} iterations)...")
             mc_df = self.rob_engine.run_mc_test(wf_res_eq, WIG, derived["mmf_ext"], n_samples=self.n_mc)
             mc_sum = analyze_robustness(mc_df, compute_metrics(wf_eq), thresholds=EQUITY_THRESHOLDS_MC)
             mc_verdict = f"WIG:{mc_sum['verdict']}"
+        bb_verdict = "N/A"
+        bb_p05 = float('nan')
+        if self.n_boot > 0:
+            logging.info(f"Running Bootstrap for Pension WIG ({self.n_boot} iterations)...")
+            bb_results = self.rob_engine.run_bootstrap_test(
+                df=df, cash_df=cash_df, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+                use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
+                X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
+                fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"]
+            )
+            bb_sum = analyze_bootstrap(bb_results, compute_metrics(wf_equity), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
+            bb_verdict = bb_sum["verdict"]
+            bb_p05 = bb_sum.get("CAGR", {}).get("p05", float('nan'))
+
+        mc_verdict_bd = "N/A"
+        mc_p05_bd = float('nan')
+        if self.n_mc > 0 and not wf_res_bd.empty:
+            logging.info(f"Running MC for Pension TBSP component ({self.n_mc} iterations)...")
+            mc_df_bd = self.rob_engine.run_mc_test(wf_res_bd, TBSP, derived["mmf_ext"], n_samples=self.n_mc)
+            mc_sum_bd = analyze_robustness(mc_df, compute_metrics(wf_bd), thresholds=BOND_THRESHOLDS_MC)
+            mc_verdict_bd = f"TBSP:{mc_sum['verdict']}"
+        bb_verdict_bd = "N/A"
+        bb_p05_bd = float('nan')
+        if self.n_boot > 0:
+            logging.info(f"Running Bootstrap for Pension TBSP ({self.n_boot} iterations)...")
+            bb_results_bd = self.rob_engine.run_bootstrap_test(
+                df=df, cash_df=cash_df, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+                use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
+                X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
+                fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"]
+            )
+            bb_sum_bd = analyze_bootstrap(bb_results_bd, compute_metrics(wf_equity), thresholds=BOND_THRESHOLDS_BOOTSTRAP)
+            bb_verdict_bd = bb_sum_bd["verdict"]
+            bb_p05_bd = bb_sum_bd.get("CAGR", {}).get("p05", float('nan'))
 
         return {
             "Strategy": "PENSION", "Config": f"{train_y}+{test_y}", "Stop": stop_type_eq, 
-            "CAGR": m["CAGR"], "CalMAR": m["CalMAR"], "MaxDD": m["MaxDD"], "MC": mc_verdict,
+            "CAGR": m["CAGR"], "CalMAR": m["CalMAR"], "MaxDD": m["MaxDD"], 
+            "MC": mc_verdict, "MC_p05": mc_p05,
+            "BB": bb_verdict, "BB_p05": bb_p05,
             **regime_metrics
         }
 
@@ -176,6 +232,7 @@ class SweepManager:
         
         mc_data_queue = {}
         mc_verdicts = []
+        bb_verdicts = []
         
         wig_wf_res = None
         wig_wf_eq = None
@@ -231,18 +288,119 @@ class SweepManager:
                     mc_verdicts.append(f"{lbl[:3]}:{mc_sum['verdict'][:3]}")
         
         final_mc_string = "|".join(mc_verdicts) if mc_verdicts else "N/A"
-
+        # bootstrap execution
+        if self.n_boot > 0:
+            for lbl, (wf_res, proc_px, wf_eq) in mc_data_queue.items():
+                if wf_res is not None and not wf_res.empty:
+                    logging.info(f"Running Bootstrap for Global {lbl} component ({self.n_boot} iterations)...")
+                    bb_df = self.rob_engine.run_bootstrap_test(
+                    df=df, cash_df=cash_df, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+                    use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
+                    X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
+                    fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"]
+                    )
+                    bb_sum = analyze_bootstrap(bb_df, compute_metrics(wf_equity), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
+                    bb_verdict = bb_sum["verdict"]
+                    bb_p05 = bb_sum.get("CAGR", {}).get("p05", float('nan'))
+                    bb_verdicts.append(f"{lbl[:3]}:{bb_sum['verdict'][:3]}")
+        final_bb_string = "|".join(bb_verdicts) if bb_verdicts else "N/A"
         return {
             "Strategy": variant_key, "Config": f"{train_y}+{test_y}", "Stop": stop_type_eq, 
-            "CAGR": m["CAGR"], "CalMAR": m["CalMAR"], "MaxDD": m["MaxDD"], "MC": final_mc_string,
+            "CAGR": m["CAGR"], "CalMAR": m["CalMAR"], "MaxDD": m["MaxDD"], "MC": final_mc_string, 
+            "BB": final_BB_string,
             **regime_metrics
         }
+    # ==============================================================================
+# REPORT FORMATTING (Funkcja pomocnicza do drukowania ładnych tabel w logach)
+# ==============================================================================
+
+def print_sweep_report(results_df: pd.DataFrame, common_start: dt.date):
+    """
+    Drukuje sformatowany raport w konsoli, dzieląc wyniki na sekcje:
+    1. Leaderboard (Główne metryki + Robustness)
+    2. Regime Decomposition (Jak strategia zachowuje się w hossie/bessie)
+    """
+    if results_df.empty:
+        logging.warning("Brak wyników do zaraportowania.")
+        return
+
+    sep = "=" * 120
+    logging.info(f"\n{sep}")
+    logging.info(f"SWEEP OPTIMIZER REPORT (Common OOS Start: {common_start})")
+    logging.info(sep)
+
+    # --- SEKCJA 1: LEADERBOARD & ROBUSTNESS ---
+    logging.info("\n--- 1. PERFORMANCE & ROBUSTNESS LEADERBOARD ---")
+    
+    # Wybieramy i formatujemy kolumny do pokazania
+    display_cols = ["Strategy", "Config", "Stop", "CAGR", "CalMAR", "MaxDD", "MC", "BB"]
+    
+    # Dodajemy p05 jeśli istnieje
+    if "MC_p05" in results_df.columns: display_cols.append("MC_p05")
+    if "BB_p05" in results_df.columns: display_cols.append("BB_p05")
+
+    # Upewniamy się, że kolumny istnieją
+    existing_cols = [c for c in display_cols if c in results_df.columns]
+    
+    format_df = results_df[existing_cols].copy()
+    format_df["CAGR"] = (format_df["CAGR"] * 100).round(2).astype(str) + "%"
+    format_df["MaxDD"] = (format_df["MaxDD"] * 100).round(2).astype(str) + "%"
+    format_df["CalMAR"] = format_df["CalMAR"].round(3)
+    
+    if "MC_p05" in format_df.columns:
+        format_df["MC_p05"] = (format_df["MC_p05"] * 100).round(2).astype(str) + "%"
+    if "BB_p05" in format_df.columns:
+        format_df["BB_p05"] = (format_df["BB_p05"] * 100).round(2).astype(str) + "%"
+
+    logging.info("\n" + format_df.to_string(index=False))
+
+    # --- SEKCJA 2: REGIME DECOMPOSITION ---
+    # Sprawdzamy, czy w ogóle mamy kolumny reżimowe (np. adx_uptrend_strat_cagr)
+    regime_cols = [c for c in results_df.columns if "adx_" in c or "vol_" in c]
+    
+    if regime_cols:
+        logging.info(f"\n{sep}")
+        logging.info("--- 2. REGIME DECOMPOSITION (CAGR in Specific Market Conditions) ---")
+        
+        # Wybieramy tylko najważniejsze kolumny reżimowe do podglądu (żeby tabela się zmieściła)
+        key_regime_cols = [
+            "Strategy", "Config", "Stop",
+            "adx_uptrend_strat_cagr", "adx_uptrend_bh_cagr",
+            "adx_downtrend_strat_cagr", "adx_downtrend_bh_cagr",
+            "vol_high_strat_cagr"
+        ]
+        
+        avail_regime_cols = [c for c in key_regime_cols if c in results_df.columns]
+        regime_df = results_df[avail_regime_cols].copy()
+        
+        # Formatowanie na procenty (w słowniku masz np. 15.4 co oznacza 15.4%)
+        for col in avail_regime_cols:
+            if "cagr" in col:
+                regime_df[col] = regime_df[col].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "N/A")
+
+        # Krótsze nazwy kolumn dla czytelności w logu
+        rename_map = {
+            "adx_uptrend_strat_cagr": "UP_Strat",
+            "adx_uptrend_bh_cagr": "UP_B&H",
+            "adx_downtrend_strat_cagr": "DOWN_Strat",
+            "adx_downtrend_bh_cagr": "DOWN_B&H",
+            "vol_high_strat_cagr": "VOL_HI_Strat"
+        }
+        regime_df = regime_df.rename(columns=rename_map)
+
+        logging.info("\n" + regime_df.to_string(index=False))
+        logging.info("\n* Interpretation:")
+        logging.info("  UP_Strat vs UP_B&H     : Does the strategy capture bull markets? (Expected: Strat <= B&H)")
+        logging.info("  DOWN_Strat vs DOWN_B&H : Does the strategy protect capital? (Expected: Strat >> B&H)")
+    
+    logging.info(sep)
 
 def main():
     parser = argparse.ArgumentParser(description="Professional Multi-Strategy Sweeper")
     parser.add_argument("--mode", choices=["SINGLE", "PENSION", "GLOBAL", "ALL"], required=True)
     parser.add_argument("--assets", nargs="+", help="Dla trybu SINGLE (np. WIG20TR SP500)")
-    parser.add_argument("--n_mc", type=int, default=0, help="Liczba probek MC (0 = pomin)")
+    parser.add_argument("--n_mc", type=int, default=500, help="Liczba probek MC (0 = pomin)")
+    parser.add_argument("--n_boot", type=int, default=0, help="Liczba probek Bootstrap (0 = pomin, domyslnie wylaczone dla szybkosci)")
     args = parser.parse_args()
 
     os.chdir(project_root)
@@ -262,7 +420,7 @@ def main():
         ]
     )
     
-    manager = SweepManager(args.n_mc)
+    manager = SweepManager(args.n_mc, args.n_boot)
     results = []
 
     # 1. Update Data
@@ -338,10 +496,13 @@ def main():
 
     if results:
         final_df = pd.DataFrame(results).sort_values("CalMAR", ascending=False)
-        print(f"\n=== LEADERBOARD (OOS Start: {common_start.date()}) ===")
-        print(final_df.head(20).to_string(index=False))
+        
+        # Wywołanie dedykowanej funkcji drukującej tabele do logów
+        print_sweep_report(final_df, common_start.date())
+        
+        # Zapis pełnych danych do CSV (wszystkie 40+ kolumn)
         final_df.to_csv(f"outputs/sweep_{args.mode.lower()}_results.csv", index=False)
-        logging.info(f"Results saved to outputs/sweep_{args.mode.lower()}_results.csv")
+        logging.info(f"\nPełne wyniki zapisano do: outputs/sweep_{args.mode.lower()}_results.csv")
 
 if __name__ == "__main__":
     main()
