@@ -50,7 +50,7 @@ from moj_system.core.research import (
 
 
 class SweepManager:
-    def __init__(self, n_mc):
+    def __init__(self, n_mc, n_boot):
         self.n_mc = n_mc
         self.n_boot = n_boot # <-- DODANY n_boot
         self.rob_engine = RobustnessEngine(n_jobs=get_n_jobs())
