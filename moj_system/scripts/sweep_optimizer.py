@@ -192,7 +192,7 @@ class SweepManager:
         if self.n_boot > 0:
             logging.info(f"Running Bootstrap for Pension TBSP ({self.n_boot} iterations)...")
             bb_results_bd = self.rob_engine.run_bootstrap_test(
-                df=df, cash_df=cash_df, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+                df=TBSP, cash_df=derived["mmf_ext"], n_samples=self.n_boot, train_years=train_y, test_years=test_y,
                 use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
                 X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
                 fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"]
@@ -299,12 +299,12 @@ class SweepManager:
                 if wf_res is not None and not wf_res.empty:
                     logging.info(f"Running Bootstrap for Global {lbl} component ({self.n_boot} iterations)...")
                     bb_df = self.rob_engine.run_bootstrap_test(
-                    df=df, cash_df=cash_df, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+                    df=proc_px, cash_df=MMF, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
                     use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
                     X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
                     fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"]
                     )
-                    bb_sum = analyze_bootstrap(bb_df, compute_metrics(wf_equity), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
+                    bb_sum = analyze_bootstrap(bb_df, compute_metrics(wf_eq), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
                     bb_verdict = bb_sum["verdict"]
                     bb_p05 = bb_sum.get("CAGR", {}).get("p05", float('nan'))
                     bb_verdicts.append(f"{lbl[:3]}:{bb_sum['verdict'][:3]}")
@@ -312,7 +312,7 @@ class SweepManager:
         return {
             "Strategy": variant_key, "Config": f"{train_y}+{test_y}", "Stop": stop_type_eq, 
             "CAGR": m["CAGR"], "CalMAR": m["CalMAR"], "MaxDD": m["MaxDD"], "MC": final_mc_string, 
-            "BB": final_BB_string,
+            "BB": final_bb_string,
             **regime_metrics
         }
     # ==============================================================================
