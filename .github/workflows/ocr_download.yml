@@ -38,6 +38,7 @@ jobs:
           FOLDER_NAME: ${{ secrets.FOLDER_NAME }}
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: True
         run: |
           # Zapisz credentials do pliku tymczasowego
           echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
