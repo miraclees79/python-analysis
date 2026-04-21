@@ -2,7 +2,7 @@ name: Weekly Fund Review
 
 on:
   schedule:
-    # Uruchamia się w  o 23:00 UTC
+    # Uruchamia się w  piątki o 23:00 UTC
     - cron: '0 23 * * 5'
   workflow_dispatch: 
 
