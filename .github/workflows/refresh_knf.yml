@@ -2,8 +2,8 @@ name: Weekly KNF Fund Refresh
 
 on:
   schedule:
-    # Uruchamia się w każdy poniedziałek o 01:00 UTC
-    - cron: '0 1 * * 1'
+    # Uruchamia się w każdy piątek o 01:00 UTC
+    - cron: '0 1 * * 5'
   workflow_dispatch:  # Pozwala odpalić ręcznie
 
 permissions:
