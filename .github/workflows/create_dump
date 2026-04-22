@@ -1,0 +1,55 @@
+# Nazwa całego workflow, widoczna w zakładce "Actions" na GitHubie
+name: Zrzut Kodu Repozytorium
+
+# Definicja wyzwalaczy (triggerów), które uruchamiają ten workflow
+on:
+  # Umożliwia ręczne uruchomienie workflow z interfejsu GitHub
+  workflow_dispatch:
+  
+  # Opcjonalnie: Możesz odkomentować poniższe linie, aby workflow
+  # uruchamiał się automatycznie po każdym pushu do gałęzi 'main'
+  # push:
+  #   branches: [ "main" ]
+
+# Definicja zadań (jobs) do wykonania w ramach workflow
+jobs:
+  # Nazwa zadania (może być dowolna, ale opisowa)
+  create-dump-job:
+    # Nazwa zadania wyświetlana w interfejsie GitHub
+    name: Generuj plik z kodem
+
+    # Określenie systemu operacyjnego, na którym ma działać zadanie
+    runs-on: ubuntu-latest
+
+    # Sekwencja kroków (steps) do wykonania w ramach zadania
+    steps:
+      # Krok 1: Pobranie kodu repozytorium na maszynę wirtualną GitHub
+      - name: Pobierz kod repozytorium
+        uses: actions/checkout@v4
+
+      # Krok 2: Ustawienie środowiska Python
+      - name: Ustaw środowisko Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Krok 3: Instalacja zależności (w tym przypadku biblioteki PyYAML)
+      - name: Zainstaluj zależności
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml
+
+      # Krok 4: Uruchomienie skryptu Pythona, który tworzy zrzut kodu
+      - name: Uruchom skrypt tworzący zrzut
+        run: python create_dump.py --config config.yml
+      
+      # Krok 5: Przesłanie wygenerowanego pliku jako artefaktu
+      # Dzięki temu będzie można go pobrać po zakończeniu działania workflow
+      - name: Prześlij zrzut repozytorium jako artefakt
+        uses: actions/upload-artifact@v4
+        with:
+          # Nazwa artefaktu, która będzie widoczna w podsumowaniu workflow
+          name: zrzut-kodu-repozytorium
+          # Ścieżka do pliku, który ma zostać przesłany.
+          # Upewnij się, że nazwa pliku jest zgodna z tą w config.yml!
+          path: repo_do_analizy.txt
