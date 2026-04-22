@@ -16,10 +16,7 @@ import matplotlib
 matplotlib.use('Agg')
 
 # --- Path Setup ---
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(script_dir, '..', '..'))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+from moj_system.config import OUTPUT_DIR
 
 # --- New, Clean Imports ---
 from moj_system.config import ASSET_REGISTRY, BASE_GRIDS, BOND_GRIDS
@@ -41,8 +38,9 @@ from moj_system.core.global_engine import (build_return_series, build_price_df_f
 from moj_system.core.utils import  build_mmf_extended
 
 def setup_logging(output_prefix):
-    log_file = f"outputs/{output_prefix}.log"
-    os.makedirs("outputs", exist_ok=True)
+    
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    log_file = f"{OUTPUT_DIR}/{output_prefix}.log"
     for h in logging.root.handlers[:]: logging.root.removeHandler(h)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s",
         handlers=[logging.FileHandler(log_file, mode="w", encoding='utf-8'), logging.StreamHandler(sys.stdout)])
@@ -193,7 +191,7 @@ def main():
     parser.add_argument("--stop_mode", type=str, choices=["fixed", "atr", "auto"], default="auto")
     args = parser.parse_args()
 
-    os.chdir(project_root)
+    
     cfg = ASSET_REGISTRY.get(args.asset)
     if not cfg: sys.exit(f"Error: Unknown asset '{args.asset}'.")
     setup_logging(args.asset.lower())

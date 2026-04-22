@@ -17,16 +17,15 @@ from datetime import datetime as dt
 
 
 # --- Path Setup ---
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(script_dir, '..', '..'))
-sys.path.append(project_root)
+from moj_system.config import OUTPUT_DIR
 
 from moj_system.data.updater import DataUpdater
 from moj_system.data.gdrive import GDriveClient
 
-os.chdir(project_root)
 
-log_file = "fund_refresh.log"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+log_file = OUTPUT_DIR / "fund_refresh.log"
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",

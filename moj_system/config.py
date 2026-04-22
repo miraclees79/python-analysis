@@ -15,7 +15,7 @@ Centralized configuration for strategy grids and system paths.
 import os
 from pathlib import Path
 
-# Paths
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "moj_system" / "data" / "raw_csv"
 OUTPUT_DIR = PROJECT_ROOT / "outputs"
