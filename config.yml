@@ -1,0 +1,34 @@
+# Konfiguracja skryptu do zrzucania kodu repozytorium
+
+# Nazwa pliku wyjściowego, do którego zostanie zapisany cały kod.
+output_filename: "repo_do_analizy.txt"
+
+# Lista rozszerzeń plików, które mają być uwzględnione.
+# Możesz tu dodać np. ".js", ".html", ".css", ".md", ".json" itd.
+include_extensions:
+  - ".py"
+  - ".yml"
+  - ".yaml"
+  - ".md"
+  - ".txt"
+
+# Lista folderów, które mają być całkowicie zignorowane podczas skanowania.
+# Domyślnie ignoruje foldery systemowe i środowiska wirtualne.
+exclude_dirs:
+  - ".git"
+  - "venv"
+  - ".venv"
+  - "__pycache__"
+  - "env"
+  - "node_modules"
+  - ".vscode"
+  - "dist"
+  - "build"
+
+# Lista konkretnych plików (według nazwy), które mają być zignorowane.
+# WAŻNE: Dodaj tutaj nazwę pliku wyjściowego oraz pliku konfiguracyjnego,
+# aby skrypt nie próbował dołączyć samego siebie do analizy.
+exclude_files:
+  - "repo_do_analizy.txt" # Taka sama nazwa jak w 'output_filename'
+  - "config.yml"
+  - ".env" # Pliki ze zmiennymi środowiskowymi
