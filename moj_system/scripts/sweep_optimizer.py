@@ -492,7 +492,7 @@ def main():
         final_df = pd.DataFrame(results).sort_values("oos_calmar", ascending=False)
         print_sweep_report(final_df, common_start.date())
         
-        ts = dt.now().strftime("%Y%m%d_%H%M")
+        ts = dt.datetime.now().strftime("%Y%m%d_%H%M")
         res_path = f"outputs/sweep_results_{ts}.csv"
         win_path = f"outputs/sweep_windows_{ts}.csv"
         
