@@ -33,7 +33,7 @@ jobs:
           echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
 
           
-          python moj_system/scripts/fund_data_refresher.py 
+          python -m moj_system.scripts.fund_data_refresher.py 
 
       - name: Upload Logs
         if: always()
