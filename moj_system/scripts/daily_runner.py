@@ -29,10 +29,7 @@ from moj_system.reporting.global_equity_daily_output import build_daily_outputs 
 from moj_system.core.research import (prepare_regime_inputs, 
                                     run_regime_decomposition,
                                     extract_flat_regime_stats, 
-                                    print_live_regime_report
-                                    )
-
-
+                                    print_live_regime_report)
 
 from moj_system.core.strategy_engine import (get_n_jobs, walk_forward, compute_metrics, 
                                              analyze_trades, compute_buy_and_hold, print_backtest_report)
@@ -40,12 +37,13 @@ from moj_system.core.pension_engine import (build_signal_series,
                                             allocation_walk_forward, print_multiasset_report, build_standard_two_asset_data)
 from moj_system.core.global_engine import (build_return_series, build_price_df_from_returns, 
                                            allocation_walk_forward_n, print_global_equity_report)
-from moj_system.core.utils import  build_mmf_extended
+from moj_system.core.utils import build_mmf_extended
+
 
 def setup_logging(output_prefix):
-    
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    log_file = f"{OUTPUT_DIR}/{output_prefix}.log"
+    # Użycie operatora / z biblioteki pathlib
+    log_file = OUTPUT_DIR / f"{output_prefix}.log"
     for h in logging.root.handlers[:]: logging.root.removeHandler(h)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s",
         handlers=[logging.FileHandler(log_file, mode="w", encoding='utf-8'), logging.StreamHandler(sys.stdout)])
@@ -84,18 +82,19 @@ def run_single_asset(asset_name, stop_mode_arg, creds_path):
     wf_metrics = {k: float(v) for k, v in compute_metrics(wf_equity).items()}
     trade_stats = analyze_trades(wf_trades)
     
-    # CORRECTED CALL
     print_backtest_report(metrics=wf_metrics, trades=wf_trades, trade_stats=trade_stats, 
                           wf_results=wf_results, position_mode="full", filter_modes_override=None)
     
     oos_start, oos_end = wf_results["TestStart"].min(), wf_results["TestEnd"].max()
     bh_equity, bh_metrics = compute_buy_and_hold(df, "Zamkniecie", oos_start, oos_end)
+    
+    # Raportowanie reżimów
     regime_inputs = prepare_regime_inputs(df, wf_results, wf_equity, bh_equity)
     raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
     regime_metrics = extract_flat_regime_stats(raw_regimes)
     print_live_regime_report(regime_metrics)
     
-    
+    # Wysyłanie (wewnętrznie wywołuje upload na GDrive)
     build_daily_outputs(
         wf_equity=wf_equity, 
         wf_trades=wf_trades, 
@@ -104,9 +103,9 @@ def run_single_asset(asset_name, stop_mode_arg, creds_path):
         bh_equity=bh_equity, 
         bh_metrics=bh_metrics, 
         df=df, 
-        output_dir=f"outputs/{output_prefix}", 
+        output_dir=str(OUTPUT_DIR / output_prefix), 
         asset_name=asset_name,
-        price_col="Zamkniecie", # <--- UPEWNIJ SIĘ, ŻE TU JEST "Zamkniecie"
+        price_col="Zamkniecie", 
         logfile_name=f"{output_prefix}_signal_log.csv",
         gdrive_folder_id=os.environ.get("GDRIVE_FOLDER_ID"),
         gdrive_credentials=creds_path if os.path.exists(creds_path) else None
@@ -144,17 +143,17 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
     
     print_multiasset_report(m_p, bh_m_eq, bh_m_bd, alloc_df, realloc, sig_eq_oos, sig_bd_oos, oos_s, oos_e, sig_bd)
 
-    regime_inputs = prepare_regime_inputs(WIG, wf_res_eq, wf_eq, bh_eq)
+    # Raportowanie reżimów
+    regime_inputs = prepare_regime_inputs(WIG, wf_res_eq, port_eq, bh_eq)
     raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
     regime_metrics = extract_flat_regime_stats(raw_regimes)
     print_live_regime_report(regime_metrics)
 
+    # Wysyłanie (wewnętrznie wywołuje upload na GDrive)
     build_multiasset_outputs(wf_eq, wf_tr_eq, wf_res_eq, wf_bd, wf_tr_bd, wf_res_bd, port_eq, m_p, w_s, realloc, bh_eq, 
                              bh_m_eq, bh_bd, bh_m_bd, 
-                             WIG, TBSP, sig_eq_oos, sig_bd_oos, "outputs/pension", None, folder_id, creds_path)
+                             WIG, TBSP, sig_eq_oos, sig_bd_oos, str(OUTPUT_DIR / "pension"), None, folder_id, creds_path)
                              
-                             
-
 def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
     cfg = ASSET_REGISTRY[asset_key]
     mode, train_y, test_y, fx_h = cfg["mode"], cfg["train"], cfg["test"], cfg["fx_hedged"]
@@ -178,12 +177,15 @@ def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
     rets_dict, sigs_full, bh_metrics_all = {}, {}, {}
     n_jobs = get_n_jobs()
 
+    wig_wf_res = None
     for lbl, (px_df, fx_s) in assets.items():
         ret_s = build_return_series(px_df, fx_series=fx_s, hedged=fx_h)
         rets_dict[lbl] = ret_s.dropna()
-        proc_px = px_df if fx_h or fx_s is None else build_price_df_from_returns(ret_s, lbl)
+        proc_px = px_df if fx_hedged or fx_s is None else build_price_df_from_returns(ret_s, lbl)
         wf_e, wf_r, wf_t = walk_forward(proc_px, MMF, train_y, test_y, n_jobs=n_jobs)
         sigs_full[lbl] = build_signal_series(wf_e, wf_t)
+        if lbl == "WIG":
+            wig_wf_res = wf_r
 
     wf_bd, wf_res_bd, wf_tr_bd = walk_forward(TBSP, MMF, train_y, test_y, filter_modes_override=["ma"], n_jobs=n_jobs)
     rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
@@ -199,7 +201,15 @@ def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
 
     print_global_equity_report(m, bh_metrics_all, a_df, realloc, sigs_full, p_e.index.min(), p_e.index.max(), mode, fx_h)
     
-    build_global_outputs({}, p_e, m, w_s, realloc, bh_metrics_all, rets_dict, sigs_full, list(rets_dict.keys()), mode, fx_h, f"outputs/{asset_key.lower()}", folder_id, creds_path)
+    # Raportowanie reżimów (Z użyciem WIG jako rynkowego kontekstu odniesienia)
+    bh_wig = (1 + rets_dict["WIG"].reindex(p_e.index).fillna(0.0)).cumprod()
+    regime_inputs = prepare_regime_inputs(WIG, wig_wf_res, p_e, bh_wig)
+    raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
+    regime_metrics = extract_flat_regime_stats(raw_regimes)
+    print_live_regime_report(regime_metrics)
+    
+    # Wysyłanie (wewnętrznie wywołuje upload na GDrive)
+    build_global_outputs({}, p_e, m, w_s, realloc, bh_metrics_all, rets_dict, sigs_full, list(rets_dict.keys()), mode, fx_h, str(OUTPUT_DIR / asset_key.lower()), None, folder_id, creds_path)
 
 def main():
     parser = argparse.ArgumentParser(description="Universal Daily Strategy Runner")
@@ -207,7 +217,6 @@ def main():
     parser.add_argument("--stop_mode", type=str, choices=["fixed", "atr", "auto"], default="auto")
     args = parser.parse_args()
 
-    
     cfg = ASSET_REGISTRY.get(args.asset)
     if not cfg: sys.exit(f"Error: Unknown asset '{args.asset}'.")
     setup_logging(args.asset.lower())
