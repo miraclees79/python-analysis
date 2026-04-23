@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 import gc  # Garbage Collector
 from pdf2image import convert_from_path, pdfinfo_from_path
+from pathlib import Path
 
 # Import naszego nowego klienta GDrive
 try:
@@ -180,171 +181,157 @@ def run_ocr_pipeline():
         if not poppler_path:
             logging.warning("System Windows wykryty, ale brak zmiennej środowiskowej POPPLER_PATH!")
         else:
-                logging.info(f"Używam ścieżki Popplera: {poppler_path}")
-            # 2. Ścieżka do Tesseracta (DODAJ TO TERAZ)
+            logging.info(f"Używam ścieżki Popplera: {poppler_path}")
         tesseract_exe = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
         if os.path.exists(tesseract_exe):
             pytesseract.pytesseract.tesseract_cmd = tesseract_exe
             logging.info("Tesseract skonfigurowany poprawnie.")
         else:
-                logging.warning(f"Nie znaleziono Tesseracta w: {tesseract_exe}")
+            logging.warning(f"Nie znaleziono Tesseracta w: {tesseract_exe}")
+
     if zip_url:
         zip_url = zip_url.strip().strip("'\"")
 
     if not all([zip_url, zip_password]):
         raise ValueError("Krytyczne zmienne środowiskowe (ZIP_URL, ZIP_PASSWORD) nie są ustawione.")
 
-    work_dir = "/tmp" if sys.platform != "win32" else os.getenv("TEMP")
-    # Definiujemy ścieżkę do pliku PDF, który będzie na dysku tymczasowym
-    pdf_path = os.path.join(work_dir, "processed_document.pdf")
-
-    try:
-        logging.info("Pobieranie pliku z URL...")
-        resp = requests.get(zip_url, timeout=60)
-        resp.raise_for_status()
-        file_content = resp.content
-        
-        # --- NOWA LOGIKA: ZIP CZY PDF? ---
-        is_zip = False
-        try:
-            # Próba 1: Traktujemy plik jak zaszyfrowany ZIP
-            with pyzipper.AESZipFile(io.BytesIO(file_content)) as zf:
-                zf.setpassword(zip_password.encode('utf-8'))
-                
-                # Upewniamy się, że plik PDF, którego szukamy, jest w środku
-                if pdf_target_name not in zf.namelist():
-                    raise FileNotFoundError(f"Plik '{pdf_target_name}' nie został znaleziony wewnątrz archiwum ZIP.")
-                
-                # Rozpakowujemy plik PDF na dysk
-                zf.extract(pdf_target_name, path=work_dir)
-                # Zmieniamy nazwę na naszą standardową, jeśli trzeba
-                os.rename(os.path.join(work_dir, pdf_target_name), pdf_path)
-                
-            logging.info(f"Pomyślnie rozpakowano {pdf_target_name} z archiwum ZIP.")
-            is_zip = True
-        except (pyzipper.zipfile.BadZipFile, RuntimeError):
-            # RuntimeError jest rzucany przez pyzipper przy złym haśle
-            logging.info("Plik nie jest poprawnym archiwum ZIP lub hasło jest błędne. Próbuję jako bezpośredni PDF...")
-            is_zip = False
-        
-        if not is_zip:
-            # Próba 2: Zapisujemy pobraną treść bezpośrednio jako plik PDF
-            with open(pdf_path, 'wb') as f:
-                f.write(file_content)
-            logging.info(f"Zapisano pobrany plik bezpośrednio jako {pdf_path}.")
-
-    except Exception as e:
-        raise RuntimeError(f"Błąd podczas pobierania lub przygotowywania pliku PDF: {e}")
-
-    # --- Dalsza część bez zmian, ale z przekazaniem hasła do pdf2image ---
+    # [ZMIANA] Inicjalizujemy listę na wyniki poza blokiem `with`
     all_rows = []
-    try:
-        # Przekazujemy hasło do obu funkcji z pdf2image
-        info = pdfinfo_from_path(pdf_path, userpw=zip_password, poppler_path=poppler_path)
-        total_pages = info["Pages"]
-        logging.info(f"Przetwarzanie {total_pages} stron...")
-
-        for i in range(1, total_pages + 1):
-            images = convert_from_path(
-                pdf_path, 
-                first_page=i, 
-                last_page=i, 
-                dpi=300, 
-                thread_count=2,
-                userpw=zip_password, 
-                poppler_path=poppler_path # <-- KLUCZOWY PARAMETR
-            )
-            # ... reszta pętli OCR bez zmian ...
-            if not images: continue
-            
-            img = np.array(images[0])
-            gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            
-            custom_config = r'--oem 3 --psm 6 -l pol+eng'
-            text = pytesseract.image_to_string(binary, config=custom_config)
-            
-            page_count = 0
-            for line in text.split('\n'):
-                match = ROW_PATTERN.search(line)
-                if match:
-                    all_rows.append(list(match.groups()))
-                    page_count += 1
-            
-            logging.info(f"Strona {i}: Wyodrębniono {page_count} wierszy.")
-            
-            del images, img, gray, binary, text
-            gc.collect()
-
-    except Exception as e:
-        # Próba posprzątania po sobie
-        if os.path.exists(pdf_path):
-            os.remove(pdf_path)
-        raise RuntimeError(f"Błąd podczas przetwarzania OCR: {e}")
-    finally:
-        # Zawsze usuwamy plik tymczasowy po zakończeniu pracy
-        if os.path.exists(pdf_path):
-            os.remove(pdf_path)
-
-    # 4. Czyszczenie danych i transformacja
-    df = pd.DataFrame(all_rows, columns=['Date', 'Col2', 'Col3', 'Col4', 'Col5', 'Col6'])
     
-        
-    # --- NOWA LOGIKA: Korekta sekwencji dat ---
-    df = sanitize_date_sequence(df)
-    # ------------------------------------------
+    # [ZMIANA] Używamy bezpiecznego menedżera kontekstu dla plików tymczasowych
+    with tempfile.TemporaryDirectory() as work_dir:
+        # [ZMIANA] Tworzymy ścieżki jako obiekty Path
+        work_dir_path = Path(work_dir)
+        pdf_path = work_dir_path / "processed_document.pdf"
 
-        
-    correction_count = 0
-    for col in df.columns[1:]:
-        processed = df[col].apply(fix_ocr_number)
-        df[col] = [x[0] for x in processed]
-        correction_count += sum(x[1] for x in processed)
-
-    logging.info(f"Łączna liczba zastosowanych korekt: {correction_count}")
-    
-# --- LOGIKA UPLOADU (POPRAWIONA) ---
-    if not _GDRIVE_AVAILABLE or not folder_name:
-        logging.warning(f"Brak klienta GDrive ({_GDRIVE_AVAILABLE}) lub nazwy folderu ({folder_name}). Pomijam upload.")
-    else:
         try:
-            # GDriveClient domyślnie szuka credentials.json w Temp - to już mamy przetestowane!
-            client = GDriveClient() 
-            if not client.service:
-                raise ConnectionError("Nie można utworzyć serwisu Google Drive. Sprawdź credentials.json.")
+            logging.info("Pobieranie pliku z URL...")
+            resp = requests.get(zip_url, timeout=60)
+            resp.raise_for_status()
+            file_content = resp.content
             
-            # 1. Znajdź ID folderu po nazwie
-            logging.info(f"Szukam folderu '{folder_name}' na Drive...")
-            folder_id = client.find_file_id(client.root_folder_id, folder_name)
+            is_zip = False
+            try:
+                with pyzipper.AESZipFile(io.BytesIO(file_content)) as zf:
+                    zf.setpassword(zip_password.encode('utf-8'))
+                    if pdf_target_name not in zf.namelist():
+                        raise FileNotFoundError(f"Plik '{pdf_target_name}' nie został znaleziony wewnątrz archiwum ZIP.")
+                    
+                    # [ZMIANA] Rozpakowujemy do bezpiecznego, tymczasowego folderu
+                    zf.extract(pdf_target_name, path=work_dir_path)
+                    (work_dir_path / pdf_target_name).rename(pdf_path)
+                    
+                logging.info(f"Pomyślnie rozpakowano {pdf_target_name} z archiwum ZIP.")
+                is_zip = True
+            except (pyzipper.zipfile.BadZipFile, RuntimeError):
+                logging.info("Plik nie jest poprawnym archiwum ZIP lub hasło jest błędne. Próbuję jako bezpośredni PDF...")
+                is_zip = False
             
-            if not folder_id:
-                # Jeśli nie ma, spróbujmy poszukać w głównym katalogu (root)
-                # (Zmieniam na bardziej elastyczne szukanie)
-                query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-                res = client.service.files().list(q=query, fields='files(id)').execute()
-                files = res.get('files', [])
-                if files:
-                    folder_id = files[0]['id']
-
-            if not folder_id:
-                raise FileNotFoundError(f"Folder '{folder_name}' nie został znaleziony na Twoim Drive.")
-
-            file_name = "filtered_table.csv"
-            
-            # 2. Zapisz DataFrame do pliku tymczasowego
-            temp_path = os.path.join(work_dir, "upload_temp.csv")
-            df.to_csv(temp_path, index=False, header=False, sep=";", encoding='utf-8')
-
-            # 3. Upload za pomocą zaufanej metody upload_csv
-            logging.info(f"Wysyłam plik {file_name} do folderu {folder_name} ...")
-            client.upload_csv(folder_id, temp_path, file_name)
-            
-            # 4. Sprzątanie
-            os.remove(temp_path)
-            logging.info("Plik pomyślnie wysłany na Google Drive.")
+            if not is_zip:
+                # [ZMIANA] Używamy metody z pathlib do zapisu
+                pdf_path.write_bytes(file_content)
+                logging.info(f"Zapisano pobrany plik bezpośrednio jako {pdf_path}.")
 
         except Exception as e:
-            logging.error(f"Błąd interakcji z Google Drive: {e}")
+            raise RuntimeError(f"Błąd podczas pobierania lub przygotowywania pliku PDF: {e}")
+
+        try:
+            info = pdfinfo_from_path(str(pdf_path), userpw=zip_password, poppler_path=poppler_path)
+            total_pages = info["Pages"]
+            logging.info(f"Przetwarzanie {total_pages} stron...")
+
+            for i in range(1, total_pages + 1):
+                images = convert_from_path(
+                    str(pdf_path), 
+                    first_page=i, 
+                    last_page=i, 
+                    dpi=300, 
+                    thread_count=2,
+                    userpw=zip_password, 
+                    poppler_path=poppler_path
+                )
+                if not images: continue
+                
+                img = np.array(images[0])
+                gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+                _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                
+                custom_config = r'--oem 3 --psm 6 -l pol+eng'
+                text = pytesseract.image_to_string(binary, config=custom_config)
+                
+                page_count = 0
+                for line in text.split('\n'):
+                    match = ROW_PATTERN.search(line)
+                    if match:
+                        all_rows.append(list(match.groups()))
+                        page_count += 1
+                
+                logging.info(f"Strona {i}: Wyodrębniono {page_count} wierszy.")
+                
+                del images, img, gray, binary, text
+                gc.collect()
+
+        except Exception as e:
+            raise RuntimeError(f"Błąd podczas przetwarzania OCR: {e}")
+        
+        # --- LOGIKA UPLOADU ---
+        # [ZMIANA] Przeniesiono tę logikę do wnętrza bloku 'with', aby mieć dostęp do 'work_dir'
+        
+        # Tworzenie DataFrame musi nastąpić przed uploadem
+        df = pd.DataFrame(all_rows, columns=['Date', 'Col2', 'Col3', 'Col4', 'Col5', 'Col6'])
+        df = sanitize_date_sequence(df)
+        
+        correction_count = 0
+        for col in df.columns[1:]:
+            processed = df[col].apply(fix_ocr_number)
+            df[col] = [x[0] for x in processed]
+            correction_count += sum(x[1] for x in processed)
+        logging.info(f"Łączna liczba zastosowanych korekt: {correction_count}")
+        
+        if not _GDRIVE_AVAILABLE or not folder_name:
+            logging.warning(f"Brak klienta GDrive ({_GDRIVE_AVAILABLE}) lub nazwy folderu ({folder_name}). Pomijam upload.")
+        else:
+            try:
+                client = GDriveClient() 
+                if not client.service:
+                    raise ConnectionError("Nie można utworzyć serwisu Google Drive. Sprawdź credentials.json.")
+                
+                logging.info(f"Szukam folderu '{folder_name}' na Drive...")
+                folder_id = client.find_file_id(client.root_folder_id, folder_name)
+                
+                if not folder_id:
+                    query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+                    res = client.service.files().list(q=query, fields='files(id)').execute()
+                    files = res.get('files', [])
+                    if files:
+                        folder_id = files[0]['id']
+
+                if not folder_id:
+                    raise FileNotFoundError(f"Folder '{folder_name}' nie został znaleziony na Twoim Drive.")
+
+                file_name = "filtered_table.csv"
+                
+                # [ZMIANA] Używamy ścieżki z pathlib
+                temp_path = work_dir_path / "upload_temp.csv"
+                df.to_csv(temp_path, index=False, header=False, sep=";", encoding='utf-8')
+
+                logging.info(f"Wysyłam plik {file_name} do folderu {folder_name} ...")
+                client.upload_csv(folder_id, str(temp_path), file_name)
+                
+                logging.info("Plik pomyślnie wysłany na Google Drive.")
+
+            except Exception as e:
+                logging.error(f"Błąd interakcji z Google Drive: {e}")
+
+    # [ZMIANA] Blok `with` zakończył się, folder tymczasowy został automatycznie usunięty.
+    # Koniec jawnego bloku `finally` i ręcznego usuwania plików.
+
+    # [ZMIANA] Przeniesiono tworzenie DataFrame do bloku 'with', aby logika uploadu działała
+    # Jeśli `all_rows` jest puste, DataFrame będzie pusty, co jest OK.
+    if not all_rows:
+        logging.warning("Nie znaleziono żadnych wierszy danych w pliku PDF.")
+        df = pd.DataFrame(columns=['Date', 'Col2', 'Col3', 'Col4', 'Col5', 'Col6'])
+    
     logging.info("Potok OCR zakończony pomyślnie.")
 
 # Umożliwia uruchomienie pliku jako skryptu z terminala
