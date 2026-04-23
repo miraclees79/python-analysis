@@ -169,8 +169,7 @@ class SweepManager:
             bb_p05 = bb_verdicts_dict[first_bb_key].get("CAGR", {}).get("p05", pd.NA)
 
         print_live_regime_report(regime_metrics)
-        win_stats = win_stats if win_stats is not None else {}
-        #regime_metrics = regime_metrics if regime_metrics is not None else {}
+        
         
         
         return {
@@ -212,8 +211,13 @@ class SweepManager:
 
         bh_equity, bh_metrics = compute_buy_and_hold(df, "Zamkniecie", common_start, trimmed.index.max())
         regime_inputs = prepare_regime_inputs(df, wf_results, trimmed, bh_equity)
-        raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
-        regime_metrics = extract_flat_regime_stats(raw_regimes)
+        
+        if regime_inputs: # <--- DODAJ TO SPRAWDZENIE
+            raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
+            regime_metrics = extract_flat_regime_stats(raw_regimes)
+        else:
+            logging.warning(f"Skipping regime analysis for {asset_name} due to insufficient data overlap.")
+            regime_metrics = extract_flat_regime_stats({}) # Zwróci słownik z NaN
 
         mc_res, bb_res = {}, {}
         if self.n_mc > 0:
@@ -254,9 +258,16 @@ class SweepManager:
 
         bh_equity, bh_metrics = compute_buy_and_hold(WIG, "Zamkniecie", common_start, trimmed.index.max())
         regime_inputs = prepare_regime_inputs(WIG, wf_res_eq, trimmed, bh_equity)
-        raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
-        regime_metrics = extract_flat_regime_stats(raw_regimes)
-        print_live_regime_report(regime_metrics)
+        
+
+        if regime_inputs: # <--- DODAJ TO SPRAWDZENIE
+            raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
+            regime_metrics = extract_flat_regime_stats(raw_regimes)
+            print_live_regime_report(regime_metrics)
+        else:
+            logging.warning("Skipping regime analysis for PENSION due to insufficient data overlap.")
+            regime_metrics = extract_flat_regime_stats({}) # Zwróci słownik z NaN
+
 
         mc_res, bb_res = {}, {}
         if self.n_mc > 0:
@@ -345,8 +356,13 @@ class SweepManager:
 
         bh_equity, bh_metrics = compute_buy_and_hold(WIG, "Zamkniecie", common_start, trimmed.index.max())
         regime_inputs = prepare_regime_inputs(WIG, wig_wf_res, trimmed, bh_equity)
-        raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
-        regime_metrics = extract_flat_regime_stats(raw_regimes)
+     
+        if regime_inputs: # <--- DODAJ TO SPRAWDZENIE
+            raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
+            regime_metrics = extract_flat_regime_stats(raw_regimes)
+        else:
+            logging.warning(f"Skipping regime analysis for {variant_key} due to insufficient data overlap.")
+            regime_metrics = extract_flat_regime_stats({}) # Zwróci słownik z NaN
 
         mc_res, bb_res = {}, {}
         for lbl, (res_df, px_df, base_eq, mc_thr, bb_thr) in mc_data_queue.items():

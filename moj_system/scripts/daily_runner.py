@@ -92,9 +92,15 @@ def run_single_asset(asset_name, stop_mode_arg, creds_path):
     
     # Raportowanie reżimów
     regime_inputs = prepare_regime_inputs(df, wf_results, wf_equity, bh_equity)
-    raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
-    regime_metrics = extract_flat_regime_stats(raw_regimes)
-    print_live_regime_report(regime_metrics)
+
+    
+    if regime_inputs: # <--- DODAJ TO SPRAWDZENIE
+        raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
+        regime_metrics = extract_flat_regime_stats(raw_regimes)
+        print_live_regime_report(regime_metrics)
+    else:
+        logging.warning(f"Skipping regime analysis for {asset_name} due to insufficient data overlap.")
+        regime_metrics = extract_flat_regime_stats({}) # Zwróci słownik z NaN
     
     # Wysyłanie (wewnętrznie wywołuje upload na GDrive)
     build_daily_outputs(
