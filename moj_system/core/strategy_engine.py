@@ -1132,7 +1132,7 @@ def walk_forward(
 
     # Resolve ATR grid default
     if N_atr_grid is None:
-        N_atr_grid = [2.0, 3.0, 4.0, 5.0, 6.0]
+        N_atr_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
 
     # The stop grid for neighbour_mean: X_grid in fixed mode, N_atr_grid in ATR mode
     stop_grid = N_atr_grid if use_atr_stop else X_grid

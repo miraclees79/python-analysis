@@ -25,15 +25,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # --- CORE ENGINE IMPORTS ---
-from moj_system.core.strategy_engine import (get_n_jobs, 
-                                             walk_forward, 
-                                             compute_metrics,
-                                             analyze_trades, 
-                                             compute_buy_and_hold, 
-                                             print_backtest_report, 
-                                             annual_cagr_by_year, 
-                                             count_year_wins
-                                             )
+from moj_system.core.strategy_engine import get_n_jobs, walk_forward, compute_metrics
 from moj_system.core.pension_engine import (
     build_signal_series, allocation_walk_forward, build_standard_two_asset_data,
     allocation_weight_robustness, print_allocation_robustness_report
@@ -54,7 +46,6 @@ from moj_system.data.data_manager import load_local_csv
 from moj_system.data.builder import build_and_upload
 from moj_system.core.robustness import RobustnessEngine
 from moj_system.core.research import get_common_oos_start
-from moj_system.core.utils import build_mmf_extended
 
 
 class ValidationManager:
@@ -66,19 +57,15 @@ class ValidationManager:
         self.creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
         self.folder_id = os.environ.get("GDRIVE_FOLDER_ID")
 
-    def validate_single(self, asset_name, train_y, test_y, stop_type, common_start):
+    def validate_single(self, asset_name, train_y, test_y, stop_type, df, cash_df):
         logging.info(f"VALIDATING SINGLE ASSET: {asset_name} | {train_y}+{test_y} | {stop_type}")
-        
-        df = load_local_csv(asset_name.lower(), asset_name)
-        cash_df = load_local_csv("fund_2720", "MMF")
-        WIBOR1M = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
-        if WIBOR1M is not None:
-            cash_df = build_mmf_extended(cash_df, WIBOR1M, floor_date="1995-01-02")
         use_atr = (stop_type == "atr")
 
         # 1. Base Walk-Forward
         wf_eq, wf_res, _ = walk_forward(
             df=df, cash_df=cash_df, train_years=train_y, test_years=test_y,
+            X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
+            fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
             use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
             n_jobs=get_n_jobs(), fast_mode=True
         )
@@ -91,43 +78,59 @@ class ValidationManager:
         # 3. Bootstrap Test
         if self.n_boot > 0:
             bb_results = self.rob_engine.run_bootstrap_test(
-                df, cash_df, n_samples=self.n_boot, train_years=train_y, test_years=test_y, use_atr_stop=use_atr
+                df, cash_df, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+                X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
+                fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
+                use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None
             )
             analyze_bootstrap(bb_results, compute_metrics(wf_eq), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
 
     def validate_pension(self, train_y, test_y, stop_type_eq):
-        logging.info(f"VALIDATING PENSION PORTFOLIO | {train_y}+{test_y} |  EQ Stop: {stop_type_eq}")
+        logging.info(f"VALIDATING PENSION PORTFOLIO | EQ Stop: {stop_type_eq}")
         
         WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
         MMF = load_local_csv("fund_2720", "MMF")
         TBSP = build_and_upload(self.folder_id, "tbsp_extended_full.csv", "tbsp_extended_combined.csv", "^tbsp", "stooq", self.creds_path)
-        PL10Y, DE10Y = load_local_csv("pl10y", "PL10Y"), load_local_csv("de10y", "DE10Y")
         WIBOR1M = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
-        
+        PL10Y, DE10Y = load_local_csv("pl10y", "PL10Y"), load_local_csv("de10y", "DE10Y")
         derived = build_standard_two_asset_data(WIG, TBSP, MMF, WIBOR1M, PL10Y, DE10Y, "1995-01-02")
         use_atr_eq = (stop_type_eq == 'atr')
         
-        logging.info("--- Component 1: WIG Robustness ---")
-        self.validate_single("WIG", train_y, test_y, stop_type_eq, WIG.index.min())
+        logging.info("\n" + "="*60 + "\n--- Component 1: WIG Robustness ---\n" + "="*60)
+        # Przekazujemy WIG już z nałożonym floor'em 1995-01-02 z portfela PENSION
+        self.validate_single("WIG", train_y, test_y, stop_type_eq, WIG, derived["mmf_ext"])
         
-        logging.info("--- Component 2: TBSP Robustness ---")
-        wf_bd_eq, wf_bd_res, _ = walk_forward(TBSP, derived["mmf_ext"], train_y, test_y, 
-                                              filter_modes_override=["ma"], X_grid=BOND_GRIDS["X_GRID"], fast_mode=True)
+        logging.info("\n" + "="*60 + "\n--- Component 2: TBSP Robustness ---\n" + "="*60)
+        wf_bd_eq, wf_bd_res, _ = walk_forward(
+            TBSP, derived["mmf_ext"], train_y, test_y, filter_modes_override=["ma"], 
+            X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
+            fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
+            n_jobs=get_n_jobs(), fast_mode=True
+        )
         if self.n_mc > 0:
             mc_bd = self.rob_engine.run_mc_test(wf_bd_res, TBSP, derived["mmf_ext"], n_samples=self.n_mc)
             analyze_robustness(mc_bd, compute_metrics(wf_bd_eq), thresholds=BOND_THRESHOLDS_MC)
-        
         if self.n_boot > 0:
-            bb_results_bd = self.rob_engine.run_bootstrap_test(
-                TBSP, MMF, n_samples=self.n_boot, train_years=train_y, test_years=test_y, use_atr_stop=False
+            bb_bd = self.rob_engine.run_bootstrap_test(
+                TBSP, derived["mmf_ext"], n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+                filter_modes_override=["ma"], 
+                X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
+                fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
+                use_atr_stop=False
             )
-            analyze_bootstrap(bb_results_bd, compute_metrics(wf_bd_eq), thresholds=BOND_THRESHOLDS_BOOTSTRAP)
+            analyze_bootstrap(bb_bd, compute_metrics(wf_bd_eq), thresholds=BOND_THRESHOLDS_BOOTSTRAP)
+
         # Level 3 - Perturbacja Wag
         if self.run_weights_perturb:
             logging.info("\n" + "="*80 + "\n--- Level 3: Allocation Weight Perturbation Test (PENSION) ---\n" + "="*80)
             
-            wf_eq, wf_res_eq, wf_tr_eq = walk_forward(WIG, derived["mmf_ext"], train_y, test_y, 
-                                                      use_atr_stop=use_atr_eq, n_jobs=get_n_jobs(), fast_mode=True)
+            wf_eq, wf_res_eq, wf_tr_eq = walk_forward(
+                WIG, derived["mmf_ext"], train_y, test_y, 
+                X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
+                fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
+                use_atr_stop=use_atr_eq, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr_eq else None,
+                n_jobs=get_n_jobs(), fast_mode=True
+            )
             sig_eq_full = build_signal_series(wf_eq, wf_tr_eq)
             sig_bd_full = build_signal_series(wf_bd_eq, _)
             
@@ -161,7 +164,6 @@ class ValidationManager:
         mode, fx_hedged = cfg["mode"], cfg.get("fx_hedged", True)
         use_atr = (stop_type_eq == "atr")
 
-        # 1. Przygotowanie danych globalnych
         WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
         WIBOR1M = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
         MMF = load_local_csv("fund_2720", "MMF")
@@ -185,7 +187,7 @@ class ValidationManager:
 
         rets_dict, sigs_full = {}, {}
         
-        # 2. Testy komponentów: Generowanie sygnałów + MC + Bootstrap
+        # Testy komponentów: MC + Bootstrap na danych syntetycznych (skorygowanych o FX)
         for lbl, (px_df, fx_s) in assets.items():
             logging.info("\n" + "="*60 + f"\n--- Component Robustness: {lbl} ---\n" + "="*60)
             
@@ -195,6 +197,8 @@ class ValidationManager:
             
             wf_e, wf_r, wf_t = walk_forward(
                 proc_px, MMF, train_y, test_y, 
+                X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
+                fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
                 use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None, 
                 n_jobs=get_n_jobs(), fast_mode=True
             )
@@ -207,6 +211,8 @@ class ValidationManager:
             if self.n_boot > 0:
                 bb_res = self.rob_engine.run_bootstrap_test(
                     proc_px, MMF, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+                    X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
+                    fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
                     use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None
                 )
                 analyze_bootstrap(bb_res, compute_metrics(wf_e), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
@@ -215,7 +221,9 @@ class ValidationManager:
         logging.info("\n" + "="*60 + "\n--- Component Robustness: TBSP ---\n" + "="*60)
         wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
             TBSP, MMF, train_y, test_y, filter_modes_override=["ma"], 
-            X_grid=BOND_GRIDS["X_GRID"], n_jobs=get_n_jobs(), fast_mode=True
+            X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
+            fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
+            n_jobs=get_n_jobs(), fast_mode=True
         )
         rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
         sigs_full["TBSP"] = build_signal_series(wf_bd, wf_tr_bd)
@@ -227,7 +235,10 @@ class ValidationManager:
         if self.n_boot > 0:
             bb_bd = self.rob_engine.run_bootstrap_test(
                 TBSP, MMF, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
-                filter_modes_override=["ma"], X_grid=BOND_GRIDS["X_GRID"], use_atr_stop=False
+                filter_modes_override=["ma"], 
+                X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
+                fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
+                use_atr_stop=False
             )
             analyze_bootstrap(bb_bd, compute_metrics(wf_bd), thresholds=BOND_THRESHOLDS_BOOTSTRAP)
 
@@ -296,8 +307,8 @@ def main():
         if not args.asset:
             sys.exit("Dla trybu SINGLE wymagany jest argument --asset.")
         df = load_local_csv(args.asset.lower(), args.asset)
-        common_start = get_common_oos_start({args.asset: df}, [(args.train, args.test)])
-        validator.validate_single(args.asset, args.train, args.test, args.stop, common_start)
+        cash_df = load_local_csv("fund_2720", "MMF")
+        validator.validate_single(args.asset, args.train, args.test, args.stop, df, cash_df)
 
     elif args.mode == "PENSION":
         validator.validate_pension(args.train, args.test, args.stop)
