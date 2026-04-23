@@ -21,10 +21,7 @@ import datetime as dt
 matplotlib.use('Agg')
 
 # --- PATH SETUP ---
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(script_dir, '..', '..'))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+from moj_system.config import OUTPUT_DIR
 
 # --- CORE ENGINE IMPORTS ---
 from moj_system.core.strategy_engine import (
@@ -46,7 +43,7 @@ from moj_system.data.updater import DataUpdater
 from moj_system.data.builder import build_and_upload
 from moj_system.core.robustness import RobustnessEngine
 from moj_system.core.research import (
-    get_common_oos_start, prepare_regime_inputs, run_regime_decomposition, extract_flat_regime_stats
+    get_common_oos_start, prepare_regime_inputs, run_regime_decomposition, extract_flat_regime_stats, print_live_regime_report
 )
 from moj_system.core.utils import build_mmf_extended
 
@@ -129,22 +126,7 @@ def _compile_window_stats(window_rows: list) -> dict:
             summary[col] = pd.NA
     return summary
 
-def print_live_regime_report(regime_metrics: dict):
-    if not regime_metrics: return
-    logging.info("  --- REGIME ANALYSIS (CAGR %) ---")
-    header = f"  {'Regime':<15} | {'Strategy':>10} | {'Buy&Hold':>10}"
-    logging.info(header)
-    logging.info("  " + "-" * len(header))
-    regimes = [("ADX Uptrend", "adx_uptrend"), ("ADX Downtrend", "adx_downtrend"),
-               ("ADX Sideways", "adx_sideways"), ("Vol High", "vol_high_vol"),
-               ("Vol Normal", "vol_normal_vol"), ("Vol Low", "vol_low_vol")]
-    for label, prefix in regimes:
-        strat_val = regime_metrics.get(f"{prefix}_strat_cagr", pd.NA)
-        bh_val = regime_metrics.get(f"{prefix}_bh_cagr", pd.NA)
-        s_str = f"{strat_val:.2f}%" if pd.notna(strat_val) else "N/A"
-        b_str = f"{bh_val:.2f}%" if pd.notna(bh_val) else "N/A"
-        logging.info(f"  {label:<15} | {s_str:>10} | {b_str:>10}")
-    logging.info("  --------------------------------")
+
 
 
 # ==============================================================================
@@ -259,7 +241,7 @@ class SweepManager:
         wf_bd, wf_res_bd, wf_tr_bd = walk_forward(TBSP, derived["mmf_ext"], train_y, test_y, filter_modes_override=["ma"], X_grid=BOND_GRIDS["X_GRID"], n_jobs=get_n_jobs(), entry_gate_series=derived["bond_gate"], fast_mode=True)
         
         sig_eq, sig_bd = build_signal_series(wf_eq, wf_tr_eq), build_signal_series(wf_bd, wf_tr_bd)
-        port_eq, _, _, alloc_df = allocation_walk_forward(derived["ret_eq"], derived["ret_bd"], derived["ret_mmf"], sig_eq, sig_bd, sig_eq, sig_bd, wf_res_eq, wf_res_bd)
+        port_eq, port_wgts, realloc_log, alloc_df = allocation_walk_forward(derived["ret_eq"], derived["ret_bd"], derived["ret_mmf"], sig_eq, sig_bd, sig_eq, sig_bd, wf_res_eq, wf_res_bd)
         
         trimmed = port_eq.loc[port_eq.index >= common_start]
         if trimmed.empty: return None
@@ -346,7 +328,7 @@ class SweepManager:
         sigs_full["TBSP"] = build_signal_series(wf_bd, wf_tr_bd)
         mc_data_queue["TBSP"] = (wf_res_bd, TBSP, wf_bd, BOND_THRESHOLDS_MC, BOND_THRESHOLDS_BOOTSTRAP)
         
-        port_eq, _, _, _ = allocation_walk_forward_n(
+        port_eq, port_wgts, realloc_log, alloc_df = allocation_walk_forward_n(
             rets_dict, sigs_full, sigs_full, MMF["Zamkniecie"].pct_change().dropna(), 
             wf_res_bd, list(rets_dict.keys()), train_years=train_y
         )
@@ -389,7 +371,7 @@ def print_sweep_report(results_df: pd.DataFrame, common_start):
     logging.info(f"\n{sep}\nSWEEP OPTIMIZER REPORT (Common OOS Start: {common_start})\n{sep}")
     logging.info("\n--- 1. PERFORMANCE & ROBUSTNESS LEADERBOARD ---")
     
-    display_cols = ["Strategy", "Config", "stop_mode", "oos_cagr", "oos_calmar", "oos_maxdd", "MC_Verdict", "BB_Verdict"]
+    display_cols = ["Strategy", "train_years", "test_years", "stop_mode", "oos_cagr", "oos_calmar", "oos_maxdd", "MC_Verdict", "BB_Verdict"]
     if "MC_p05_CAGR" in results_df.columns: display_cols.append("MC_p05_CAGR")
     
     existing_cols = [c for c in display_cols if c in results_df.columns]
@@ -405,7 +387,7 @@ def print_sweep_report(results_df: pd.DataFrame, common_start):
     if regime_cols:
         logging.info(f"\n{sep}\n--- 2. REGIME DECOMPOSITION (CAGR in Specific Market Conditions) ---")
         key_regime_cols = [
-            "Strategy", "Config", "stop_mode",
+            "Strategy", "train_years", "test_years", "stop_mode",
             "adx_uptrend_strat_cagr", "adx_uptrend_bh_cagr",
             "adx_downtrend_strat_cagr", "adx_downtrend_bh_cagr",
             "vol_high_strat_cagr"
@@ -434,9 +416,10 @@ def main():
     parser.add_argument("--n_boot", type=int, default=0, help="Liczba probek Bootstrap (0 = pomin)")
     args = parser.parse_args()
 
-    os.chdir(project_root)
-    log_file = f"outputs/sweep_{args.mode.lower()}_run.log"
-    os.makedirs("outputs", exist_ok=True)
+    
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    log_file = OUTPUT_DIR / f"sweep_{args.mode.lower()}_run.log"
+    
     for h in logging.root.handlers[:]: logging.root.removeHandler(h)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s",
                         handlers=[logging.FileHandler(log_file, mode="w", encoding='utf-8'), logging.StreamHandler(sys.stdout)])

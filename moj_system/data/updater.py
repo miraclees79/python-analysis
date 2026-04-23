@@ -17,7 +17,8 @@ from pathlib import Path
 from moj_system.data.gdrive import GDriveClient
 
 # --- PATH CONFIGURATION ---
-DATA_ROOT = Path(__file__).resolve().parent
+from moj_system.config import OUTPUT_DIR, DATA_DIR
+DATA_ROOT = DATA_DIR
 RAW_DIR = DATA_ROOT / "raw_csv"
 ZIP_DIR = DATA_ROOT / "zips"
 

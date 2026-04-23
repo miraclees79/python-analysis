@@ -21,12 +21,10 @@ import pandas as pd
 import tempfile
 import matplotlib
 matplotlib.use('Agg')
+import datetime as dt
 
 # --- PATH SETUP ---
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(script_dir, '..', '..'))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+from moj_system.config import OUTPUT_DIR
 
 # --- CORE ENGINE IMPORTS ---
 from moj_system.core.strategy_engine import (
@@ -123,8 +121,16 @@ def main():
     parser.add_argument("--n_boot", type=int, default=500)
     args = parser.parse_args()
     
-    os.chdir(project_root)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    ts = dt.datetime.now().strftime("%Y%m%d_%H%M")
+    log_file = OUTPUT_DIR / f"validate_{args.mode.lower()}_{ts}_run.log"
+
+    # Ustawiamy handlery logowania
+    for h in logging.root.handlers[:]: logging.root.removeHandler(h)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s",
+                        handlers=[logging.FileHandler(log_file, mode="w", encoding='utf-8'), logging.StreamHandler(sys.stdout)])
+    
+
     creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
     updater = DataUpdater(credentials_path=creds_path)
     updater.run_full_update(get_funds=False)    

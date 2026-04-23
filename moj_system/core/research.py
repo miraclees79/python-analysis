@@ -215,11 +215,13 @@ def extract_flat_regime_stats(regime_results: dict) -> dict:
         for reg in ["uptrend", "downtrend", "sideways"]:
             if reg in adx_stats.index:
                 r = adx_stats.loc[reg]
-                out[f"adx_{reg}_strat_cagr"]  = float(r.get("strat_cagr", np.nan))
-                out[f"adx_{reg}_bh_cagr"]      = float(r.get("bh_cagr", np.nan))
+                out[f"adx_{reg}_strat_cagr"]  = round(float(r.get("strat_cagr",   np.nan)), 2)
+                out[f"adx_{reg}_bh_cagr"]      = round(float(r.get("bh_cagr",      np.nan)), 2)
+                out[f"adx_{reg}_strat_sharpe"] = round(float(r.get("strat_sharpe", np.nan)), 3)
+                out[f"adx_{reg}_pct_time"]      = round(float(r.get("pct_time",     np.nan)), 1)
             else:
-                out[f"adx_{reg}_strat_cagr"] = np.nan
-                out[f"adx_{reg}_bh_cagr"] = np.nan
+                for col in ["strat_cagr", "bh_cagr", "strat_sharpe", "pct_time"]:
+                    out[f"adx_{reg}_{col}"] = np.nan
 
     # Volatility
     vol_stats = regime_results.get("Volatility", {}).get("stats")
@@ -227,9 +229,27 @@ def extract_flat_regime_stats(regime_results: dict) -> dict:
         for reg in ["high_vol", "normal_vol", "low_vol"]:
             if reg in vol_stats.index:
                 r = vol_stats.loc[reg]
-                out[f"vol_{reg}_strat_cagr"] = float(r.get("strat_cagr", np.nan))
-                out[f"vol_{reg}_bh_cagr"]      = float(r.get("bh_cagr", np.nan))
+                out[f"vol_{reg}_strat_cagr"] = round(float(r.get("strat_cagr", np.nan)), 2)
+                out[f"vol_{reg}_bh_cagr"]    = round(float(r.get("bh_cagr",    np.nan)), 2)
+                out[f"vol_{reg}_pct_time"]   = round(float(r.get("pct_time",   np.nan)), 1)
             else:
-                out[f"vol_{reg}_strat_cagr"] = np.nan
-                out[f"vol_{reg}_bh_cagr"] = np.nan
-    return out
+                for col in ["strat_cagr", "bh_cagr", "pct_time"]:
+                    out[f"vol_{reg}_{col}"] = np.nann
+    return 
+    
+def print_live_regime_report(regime_metrics: dict):
+    if not regime_metrics: return
+    logging.info("  --- REGIME ANALYSIS (CAGR %) ---")
+    header = f"  {'Regime':<15} | {'Strategy':>10} | {'Buy&Hold':>10}"
+    logging.info(header)
+    logging.info("  " + "-" * len(header))
+    regimes = [("ADX Uptrend", "adx_uptrend"), ("ADX Downtrend", "adx_downtrend"),
+               ("ADX Sideways", "adx_sideways"), ("Vol High", "vol_high_vol"),
+               ("Vol Normal", "vol_normal_vol"), ("Vol Low", "vol_low_vol")]
+    for label, prefix in regimes:
+        strat_val = regime_metrics.get(f"{prefix}_strat_cagr", pd.NA)
+        bh_val = regime_metrics.get(f"{prefix}_bh_cagr", pd.NA)
+        s_str = f"{strat_val:.2f}%" if pd.notna(strat_val) else "N/A"
+        b_str = f"{bh_val:.2f}%" if pd.notna(bh_val) else "N/A"
+        logging.info(f"  {label:<15} | {s_str:>10} | {b_str:>10}")
+    logging.info("  --------------------------------")

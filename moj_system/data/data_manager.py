@@ -11,7 +11,10 @@ import logging
 import pandas as pd
 
 # Target data path: moj_system/data/raw_csv/
-DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), 'raw_csv'))
+from moj_system.config import OUTPUT_DIR, DATA_DIR as DATA_ROOT
+
+DATA_DIR = DATA_ROOT / "raw_csv"
+
 
 def ensure_data_dir_exists():
     if not os.path.exists(DATA_DIR):

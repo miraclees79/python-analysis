@@ -26,6 +26,11 @@ from moj_system.data.builder import build_and_upload
 from moj_system.reporting.daily_output import build_daily_outputs
 from moj_system.reporting.multiasset_daily_output import build_daily_outputs as build_multiasset_outputs
 from moj_system.reporting.global_equity_daily_output import build_daily_outputs as build_global_outputs
+from moj_system.core.research import (prepare_regime_inputs, 
+                                    run_regime_decomposition,
+                                    extract_flat_regime_stats, 
+                                    print_live_regime_report
+                                    )
 
 
 
@@ -85,7 +90,12 @@ def run_single_asset(asset_name, stop_mode_arg, creds_path):
     
     oos_start, oos_end = wf_results["TestStart"].min(), wf_results["TestEnd"].max()
     bh_equity, bh_metrics = compute_buy_and_hold(df, "Zamkniecie", oos_start, oos_end)
-
+    regime_inputs = prepare_regime_inputs(df, wf_results, wf_equity, bh_equity)
+    raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
+    regime_metrics = extract_flat_regime_stats(raw_regimes)
+    print_live_regime_report(regime_metrics)
+    
+    
     build_daily_outputs(
         wf_equity=wf_equity, 
         wf_trades=wf_trades, 
@@ -133,6 +143,12 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
     bh_bd, bh_m_bd = compute_buy_and_hold(TBSP, "Zamkniecie", oos_s, oos_e)
     
     print_multiasset_report(m_p, bh_m_eq, bh_m_bd, alloc_df, realloc, sig_eq_oos, sig_bd_oos, oos_s, oos_e, sig_bd)
+
+    regime_inputs = prepare_regime_inputs(WIG, wf_res_eq, wf_eq, bh_eq)
+    raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
+    regime_metrics = extract_flat_regime_stats(raw_regimes)
+    print_live_regime_report(regime_metrics)
+
     build_multiasset_outputs(wf_eq, wf_tr_eq, wf_res_eq, wf_bd, wf_tr_bd, wf_res_bd, port_eq, m_p, w_s, realloc, bh_eq, 
                              bh_m_eq, bh_bd, bh_m_bd, 
                              WIG, TBSP, sig_eq_oos, sig_bd_oos, "outputs/pension", None, folder_id, creds_path)
