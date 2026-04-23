@@ -656,19 +656,19 @@ def build_daily_outputs(
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # [ZMIANA] Dynamiczne nazwy plików z użyciem asset_name
+    prefix = asset_name.lower()
+    logfile_name  = f"{prefix}_signal_log.csv"
     log_path      = out_dir / logfile_name
-    status_path   = out_dir / "signal_status.txt"
-    chart_path    = out_dir / "equity_chart.png"
-    snapshot_path = out_dir / "signal_snapshot.json"
+    status_path   = out_dir / f"{prefix}_signal_status.txt"
+    chart_path    = out_dir / f"{prefix}_equity_chart.png"
+    snapshot_path = out_dir / f"{prefix}_signal_snapshot.json"
 
-    # Pre-fetch Drive log before action determination
+    # [ZMIANA] Używamy logfile_name do ściągania poprzedniego logu
     if gdrive_folder_id and gdrive_credentials:
         fetch_file_from_drive(log_path, gdrive_folder_id, logfile_name, gdrive_credentials)
     else:
-        logging.info(
-            "daily_output: gdrive credentials not supplied — "
-            "skipping Drive log fetch; action determined from local file only."
-        )
+        logging.info("daily_output: gdrive credentials not supplied — skipping Drive log fetch.")
 
     # Build snapshot
     snap = _build_snapshot(

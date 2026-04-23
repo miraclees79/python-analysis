@@ -53,10 +53,7 @@ from moj_system.core.research import get_current_adx_regime
 # ---------------------------------------------------------------------------
 
 BOUNDARY_EXITS = {"CARRY", "SAMPLE_END"}
-STATUS_FILE    = "multiasset_signal_status.txt"
-LOG_FILE       = "multiasset_signal_log.csv"
-CHART_FILE     = "multiasset_equity_chart.png"
-SNAP_FILE      = "multiasset_signal_snapshot.json"
+
 
 
 # ---------------------------------------------------------------------------
@@ -544,6 +541,7 @@ def build_daily_outputs(
     sig_eq_oos:        pd.Series,
     sig_bd_oos:        pd.Series,
     output_dir:        str       = "outputs",
+    asset_name:        str       = "PENSION", 
     run_date:          dt.date | None = None,
     gdrive_folder_id:   str | None = None,
     gdrive_credentials: str | None = None,
@@ -560,18 +558,18 @@ def build_daily_outputs(
     out_dir       = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    log_path      = out_dir / LOG_FILE
-    status_path   = out_dir / STATUS_FILE
-    chart_path    = out_dir / CHART_FILE
-    snapshot_path = out_dir / SNAP_FILE
+    # [ZMIANA] Dynamiczne nazwy plików
+    prefix = asset_name.lower()
+    logfile_name  = f"{prefix}_signal_log.csv"
+    log_path      = out_dir / logfile_name
+    status_path   = out_dir / f"{prefix}_signal_status.txt"
+    chart_path    = out_dir / f"{prefix}_equity_chart.png"
+    snapshot_path = out_dir / f"{prefix}_signal_snapshot.json"
 
     if gdrive_folder_id and gdrive_credentials:
-        fetch_file_from_drive(log_path, gdrive_folder_id, LOG_FILE, gdrive_credentials)
+        fetch_file_from_drive(log_path, gdrive_folder_id, logfile_name, gdrive_credentials)
     else:
-        logging.info(
-            "multiasset_daily_output: Drive credentials not supplied — "
-            "skipping log pre-fetch."
-        )
+        logging.info("multiasset_daily_output: skipping Drive log fetch.")
 
     snap = _build_snapshot(
         wf_equity_eq     = wf_equity_eq,

@@ -151,8 +151,13 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
 
     # Wysyłanie (wewnętrznie wywołuje upload na GDrive)
     build_multiasset_outputs(wf_eq, wf_tr_eq, wf_res_eq, wf_bd, wf_tr_bd, wf_res_bd, port_eq, m_p, w_s, realloc, bh_eq, 
-                             bh_m_eq, bh_bd, bh_m_bd, 
-                             WIG, TBSP, sig_eq_oos, sig_bd_oos, str(OUTPUT_DIR / "pension"), None, folder_id, creds_path)
+                         bh_m_eq, bh_bd, bh_m_bd, 
+                         WIG, TBSP, sig_eq_oos, sig_bd_oos, 
+                         output_dir=str(OUTPUT_DIR / "pension"), 
+                         asset_name="PENSION", # [Ważne]
+                         run_date=None, 
+                         gdrive_folder_id=folder_id, 
+                         gdrive_credentials=creds_path)
                              
 def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
     cfg = ASSET_REGISTRY[asset_key]
@@ -209,7 +214,12 @@ def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
     print_live_regime_report(regime_metrics)
     
     # Wysyłanie (wewnętrznie wywołuje upload na GDrive)
-    build_global_outputs({}, p_e, m, w_s, realloc, bh_metrics_all, rets_dict, sigs_full, list(rets_dict.keys()), mode, fx_h, str(OUTPUT_DIR / asset_key.lower()), None, folder_id, creds_path)
+    build_global_outputs({}, p_e, m, w_s, realloc, bh_metrics_all, rets_dict, sigs_full, list(rets_dict.keys()), mode, fx_h, 
+                         output_dir=str(OUTPUT_DIR / asset_key.lower()), 
+                         asset_name=asset_key, # [Ważne] - czyli np. GLOBAL_A lub GLOBAL_B
+                         run_date=None, 
+                         gdrive_folder_id=folder_id, 
+                         gdrive_credentials=creds_path)
 
 def main():
     parser = argparse.ArgumentParser(description="Universal Daily Strategy Runner")

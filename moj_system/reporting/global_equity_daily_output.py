@@ -54,10 +54,6 @@ from moj_system.reporting.output_base import (
 # Constants
 # ---------------------------------------------------------------------------
 
-STATUS_FILE = "global_equity_signal_status.txt"
-LOG_FILE    = "global_equity_signal_log.csv"
-CHART_FILE  = "global_equity_chart.png"
-SNAP_FILE   = "global_equity_signal_snapshot.json"
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +343,7 @@ def build_daily_outputs(
     portfolio_mode:    str,
     fx_hedged:         bool,
     output_dir:        str           = "outputs",
+    asset_name:        str           = "GLOBAL_EQUITY",
     run_date:          dt.date | None = None,
     gdrive_folder_id:  str | None    = None,
     gdrive_credentials: str | None   = None,
@@ -383,18 +380,18 @@ def build_daily_outputs(
     out_dir       = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    log_path      = out_dir / LOG_FILE
-    status_path   = out_dir / STATUS_FILE
-    chart_path    = out_dir / CHART_FILE
-    snapshot_path = out_dir / SNAP_FILE
+    # [ZMIANA] Dynamiczne nazwy
+    prefix = asset_name.lower()
+    logfile_name  = f"{prefix}_signal_log.csv"
+    log_path      = out_dir / logfile_name
+    status_path   = out_dir / f"{prefix}_signal_status.txt"
+    chart_path    = out_dir / f"{prefix}_equity_chart.png"
+    snapshot_path = out_dir / f"{prefix}_signal_snapshot.json"
 
     if gdrive_folder_id and gdrive_credentials:
-        fetch_file_from_drive(log_path, gdrive_folder_id, LOG_FILE, gdrive_credentials)
+        fetch_file_from_drive(log_path, gdrive_folder_id, logfile_name, gdrive_credentials)
     else:
-        logging.info(
-            "build_daily_outputs: Drive credentials not supplied — "
-            "skipping log pre-fetch."
-        )
+        logging.info("global_equity_daily_output: skipping log pre-fetch.")
 
     snap = _build_snapshot(
         portfolio_equity  = portfolio_equity,
