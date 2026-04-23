@@ -11,6 +11,10 @@ on:
   # push:
   #   branches: [ "main" ]
 
+# Jawne ograniczenie uprawnień GITHUB_TOKEN (zasada najmniejszych uprawnień)
+permissions:
+  contents: read
+
 # Definicja zadań (jobs) do wykonania w ramach workflow
 jobs:
   # Nazwa zadania (może być dowolna, ale opisowa)
