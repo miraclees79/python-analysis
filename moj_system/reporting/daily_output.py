@@ -71,7 +71,7 @@ from moj_system.reporting.output_base import (
     append_log_row,
     fetch_file_from_drive,
 )
-from moj_system.core.research import get_current_adx_regim
+from moj_system.core.research import get_current_adx_regime
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
