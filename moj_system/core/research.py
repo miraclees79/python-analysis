@@ -253,3 +253,42 @@ def print_live_regime_report(regime_metrics: dict):
         b_str = f"{bh_val:.2f}%" if pd.notna(bh_val) else "N/A"
         logging.info(f"  {label:<15} | {s_str:>10} | {b_str:>10}")
     logging.info("  --------------------------------")
+
+
+# moj_system/core/research.py (dodaj na końcu pliku)
+
+def get_current_adx_regime(df: pd.DataFrame) -> str:
+    """
+    Oblicza i zwraca bieżący reżim rynkowy (ADX) na podstawie najnowszych danych.
+
+    Używa funkcji label_regime_adx do wygenerowania serii reżimów i zwraca
+    ostatnią dostępną wartość.
+
+    Args:
+        df: DataFrame z danymi cenowymi, musi zawierać kolumny 
+            'Zamkniecie', 'Najwyzszy', 'Najnizszy'.
+
+    Returns:
+        Nazwa bieżącego reżimu ('uptrend', 'downtrend', 'sideways') lub 'N/A', 
+        jeśli danych jest za mało lub wystąpi błąd.
+    """
+    if df is None or len(df) < 50:  # ADX potrzebuje historii do obliczeń
+        return "N/A"
+    
+    # Upewnijmy się, że mamy potrzebne kolumny
+    required_cols = ["Zamkniecie", "Najwyzszy", "Najnizszy"]
+    if not all(col in df.columns for col in required_cols):
+        logging.warning("Brak kolumn High/Low w danych, reżim ADX może być mniej dokładny.")
+        close = df["Zamkniecie"]
+        high = df.get("Najwyzszy", close) # Fallback na 'Zamkniecie'
+        low = df.get("Najnizszy", close)  # Fallback na 'Zamkniecie'
+    else:
+        close, high, low = df["Zamkniecie"], df["Najwyzszy"], df["Najnizszy"]
+
+    try:
+        regime_series = label_regime_adx(close=close, high=high, low=low)
+        # Zwracamy ostatnią wartość z serii
+        return regime_series.iloc[-1]
+    except Exception as e:
+        logging.error(f"Błąd podczas obliczania reżimu ADX: {e}")
+        return "N/A"

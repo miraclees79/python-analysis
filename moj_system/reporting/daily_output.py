@@ -71,7 +71,7 @@ from moj_system.reporting.output_base import (
     append_log_row,
     fetch_file_from_drive,
 )
-
+from moj_system.core.research import get_current_adx_regim
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -289,7 +289,7 @@ def _build_snapshot(
         }
     else:
         snap["active_window"] = {}
-
+    snap['current_regime_adx'] = get_current_adx_regime(df)
     return snap
 
 
@@ -308,6 +308,7 @@ def _build_status_text(snap: dict, action: str, asset_name: str) -> str:
         f"  Signal:      {snap['signal']}",
         f"  Action:      {action}",
         f"  Price today: {snap['today_price']}",
+        f"  Rynek (ADX):   {snap.get('current_regime_adx', 'N/A').upper()}",
         sep2,
     ]
 
@@ -415,6 +416,7 @@ def _build_log_row(snap: dict, action: str) -> dict:
         "mom_filter_on":   snap.get("mom_state", {}).get("filter_on"),
         "active_filter":   snap.get("params", {}).get("filter_mode", "ma"),
         "active_filter_on": snap.get("active_filter_on"),
+        "regime_adx": snap.get("current_regime_adx"),
         "cagr":            round(sm.get("CAGR",   0) * 100, 4),
         "maxdd":           round(sm.get("MaxDD",  0) * 100, 4),
         "calmar":          round(sm.get("CalMAR", 0),       4),

@@ -47,7 +47,7 @@ from moj_system.reporting.output_base import (
     append_log_row,
     fetch_file_from_drive,
 )
-
+from moj_system.core.research import get_current_adx_regime
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -311,7 +311,7 @@ def _build_snapshot(
         }
     else:
         snap["last_realloc"] = None
-
+    snap['current_regime_adx'] = get_current_adx_regime(WIG)
     return snap
 
 
@@ -335,6 +335,7 @@ def _build_status_text(snap: dict, action: str) -> str:
         f"  Action:         {action}",
         f"  Equity signal:  {snap['signal_equity']}",
         f"  Bond signal:    {snap['signal_bond']}",
+        f"  Rynek (ADX):      {snap.get('current_regime_adx', 'N/A').upper()}",
         sep2,
         "  CURRENT ALLOCATION",
         f"  Equity (WIG):   {w['equity']*100:.0f}%" if w['equity'] is not None else "  Equity (WIG):   N/A",
@@ -427,6 +428,7 @@ def _build_log_row(snap: dict, action: str) -> dict:
         "action":            action,
         "signal_equity":     snap["signal_equity"],
         "signal_bond":       snap["signal_bond"],
+        "regime_adx":        snap.get("current_regime_adx"),
         "w_equity":          w.get("equity"),
         "w_bond":            w.get("bond"),
         "w_mmf":             w.get("mmf"),
