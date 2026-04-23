@@ -1,65 +1,18 @@
 import pandas as pd
 import numpy as np
-import requests
+
 import time
 import random
 import os
 import sys
 import datetime as dt
 from joblib import Parallel, delayed
-from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
+
 
 
 import logging
 
 
-# ============================================================
-# CONSOLIDATED STOOQ LOCAL LOADER
-# ============================================================
-
-def load_stooq_local(
-    ticker: str,
-    label: str,
-    data_dir: str,
-    data_start: str = "1990-01-01",
-    mandatory: bool = True,
-) -> pd.DataFrame | None:
-    """
-    Ładuje lokalny plik CSV z danymi Stooq i przeprowadza wstępną walidację dat.
-
-    Parameters:
-    -----------
-    ticker : str     - Nazwa pliku bazowego (np. 'wig20tr').
-    label : str      - Etykieta czytelna dla logów (np. 'WIG20TR').
-    data_dir : str   - Ścieżka do katalogu z danymi surowymi.
-    data_start : str - Data początkowa w formacie ISO (YYYY-MM-DD).
-    mandatory : bool - Jeśli True, brak pliku przerywa działanie programu.
-
-    Returns:
-    --------
-    pd.DataFrame | None - DataFrame z indeksem Datetime i kolumnami cenowymi.
-    """
-    path = os.path.join(data_dir, f"{ticker}.csv")
-    df = load_csv(path)                          # load_csv already in strategy_test_library
-
-    if df is None:
-        if mandatory:
-            logging.error(
-                "FAIL: load_csv returned None for %s (%s) — exiting.", label, path
-            )
-            sys.exit(1)
-        logging.warning(
-            "WARN: %s (%s) — not available, skipping.", label, path
-        )
-        return None
-
-    df = df.loc[df.index >= pd.Timestamp(data_start)]
-    logging.info(
-        "OK  : %-14s  %5d rows  %s to %s",
-        label, len(df),
-        df.index.min().date(), df.index.max().date(),
-    )
-    return df
 
 
 # ============================================================
@@ -180,77 +133,7 @@ def count_year_wins(
 
 
 
-# ============================================================
-# DATA ACQUISITION
-# ============================================================
-
-
-
-import subprocess
-
-
-# Only import headless browser when needed
-try:
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-except ImportError:
-    webdriver = None
-
-
-
-def download_csv_old(url, filename):
-
-    #### Note - do not delete, preserve for reference ####
-    """
-    Download a CSV file from a URL and save it to disk.
-
-    Rotates User-Agent headers randomly to reduce the likelihood of
-    being blocked by the server. Returns True on success, False on
-    any failure (timeout, HTTP error, empty response).
-
-    Parameters
-    ----------
-    url      : str  — full URL to fetch
-    filename : str  — local path where the file will be saved
-    """
-    
-    # List of User-Agent headers for different browsers
-    USER_AGENTS = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/118.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_5_2) AppleWebKit/537.36 (KHTML, like Gecko) Safari/605.1.15"
-    ]
-
-    
-    try:
-        headers = {"User-Agent": random.choice(USER_AGENTS)}
-        logging.info(f"Downloading {url} with User-Agent: {headers['User-Agent']}")
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-
-        if not response.content.strip():
-            logging.warning(f"The file from {url} is empty.")
-            return False
-
-        # Save file locally
-        with open(filename, "wb") as f:
-            f.write(response.content)
-
-        logging.info(f"Downloaded and saved: {filename}")
-        return True
-
-    except requests.exceptions.Timeout:
-        logging.error(f"Timeout while downloading {url}")
-    except requests.exceptions.HTTPError as e:
-        logging.error(f"HTTP error: {e}")
-    except Exception as e:
-        logging.error(f"Unexpected error: {e}")
-
-    return False
-    
-
+#
 
 def load_csv(filename):
     
@@ -345,145 +228,6 @@ def load_csv(filename):
     
     return df
 
-def download_fund_navs(fund_codes, tmp_dir):
-    """
-    Download fund NAV series from stooq.pl and build the FUND_FILES dict.
-    """
-
-    BASE_URL = "https://stooq.pl/q/d/l/?s={code}.n&i=d"
-
-    fund_files = {}
-
-    for code, name in fund_codes.items():
-        url      = BASE_URL.format(code=code)
-        filepath = os.path.join(tmp_dir, f"fund_{code}_{name}.csv")
-
-        success = download_csv(url, filepath)
-
-        if success:
-            fund_files[name] = filepath
-            logging.info("Fund %s (%s) — downloaded to %s.", name, code, filepath)
-        else:
-            logging.warning(
-                "Fund %s (%s) — download failed, will be excluded from panel.",
-                name, code
-            )
-    delay = random.uniform(0.3, 1)
-    time.sleep(delay)
-    logging.info(
-        "download_fund_navs: %d of %d funds downloaded successfully.",
-        len(fund_files), len(fund_codes)
-    )
-
-    return fund_files
-
-    
-def build_funds_df(fund_files, price_col="Zamkniecie", min_history_years=10):
-    """
-    Build a combined fund NAV panel from a list of CSV files.
-    """
-
-    MAX_GAP_DAYS = 30
-
-    series_list = []
-    excluded    = []
-
-    for fund_id, filepath in fund_files.items():
-
-        df = load_csv(filepath)
-
-        if df is None:
-            logging.warning("Fund %s — load_csv returned None, skipping.", fund_id)
-            excluded.append((fund_id, "load failed"))
-            continue
-
-        if price_col not in df.columns:
-            logging.warning(
-                "Fund %s — column '%s' not found. Available: %s. Skipping.",
-                fund_id, price_col, list(df.columns)
-            )
-            excluded.append((fund_id, f"missing column {price_col}"))
-            continue
-
-        series = df[price_col].copy()
-        series.name = fund_id
-
-        years = (series.index.max() - series.index.min()).days / 365.25
-        if years < min_history_years:
-            logging.warning(
-                "Fund %s — only %.1f years of history (min %.0f). Skipping.",
-                fund_id, years, min_history_years
-            )
-            excluded.append((fund_id, f"insufficient history ({years:.1f}y)"))
-            continue
-
-        series_list.append(series)
-        logging.info(
-            "Fund %s — loaded %d rows from %s to %s.",
-            fund_id,
-            len(series),
-            series.index.min().date(),
-            series.index.max().date()
-        )
-
-    if len(series_list) < 2:
-        logging.error(
-            "build_funds_df: fewer than 2 funds loaded successfully. "
-            "Fund breadth filter requires at least 2 funds."
-        )
-        return pd.DataFrame()
-
-    funds_df = pd.concat(series_list, axis=1, join="outer", sort=True)
-    funds_df.sort_index(inplace=True)
-    funds_df = funds_df.ffill()
-
-    for fund_id in funds_df.columns:
-        col = funds_df[fund_id]
-        first_valid = col.first_valid_index()
-        if first_valid is None:
-            logging.warning(
-                "Fund %s — entirely NaN after merge, dropping.", fund_id
-            )
-            funds_df.drop(columns=[fund_id], inplace=True)
-            excluded.append((fund_id, "entirely NaN"))
-            continue
-
-        interior = col.loc[first_valid:]
-        max_gap = interior.isna().astype(int).groupby(
-            interior.notna().astype(int).cumsum()
-        ).sum().max()
-
-        if pd.notna(max_gap) and max_gap > MAX_GAP_DAYS:
-            logging.warning(
-                "Fund %s — gap of %d consecutive missing days after "
-                "forward-fill. Dropping.",
-                fund_id, int(max_gap)
-            )
-            funds_df.drop(columns=[fund_id], inplace=True)
-            excluded.append((fund_id, f"gap of {int(max_gap)} days"))
-
-    min_funds_required = max(2, len(funds_df.columns) // 2)
-    funds_df = funds_df.dropna(thresh=min_funds_required)
-
-    if funds_df.empty:
-        logging.error("build_funds_df: panel is empty after cleaning.")
-        return pd.DataFrame()
-
-    logging.info(
-        "build_funds_df: panel ready — %d funds, %d rows, %s to %s.",
-        len(funds_df.columns),
-        len(funds_df),
-        funds_df.index.min().date(),
-        funds_df.index.max().date()
-    )
-
-    if excluded:
-        logging.info(
-            "build_funds_df: excluded funds — %s",
-            ", ".join(f"{fid} ({reason})" for fid, reason in excluded)
-        )
-
-    return funds_df
 
 
 def prepare_cash_returns(cash_df, price_col="Zamkniecie"):
@@ -563,84 +307,7 @@ def compute_momentum(
     return blended
 
 
-# ============================
-# FUND BREADTH SIGNAL
-# ============================
 
-def compute_fund_breadth_signal(
-    funds_df,
-    lookback_days=30,
-    n_top=2,
-    entry_roll_thresh=0.03,
-    entry_since_thresh=0.05,
-    exit_roll_thresh=-0.03,
-    exit_since_thresh=-0.05,
-):
-    """
-    Compute a binary IN/OUT signal from a panel of fund NAV series.
-    """
-
-    fund_rets = funds_df.pct_change()
-
-    roll_ret = (1 + fund_rets).rolling(lookback_days).apply(
-        np.prod, raw=True
-    ) - 1
-
-    signal   = pd.Series(0, index=funds_df.index)
-    state    = 0
-    last_change_idx = funds_df.index[0]
-
-    for i, date in enumerate(funds_df.index):
-
-        if i < lookback_days:
-            signal.iloc[i] = state
-            continue
-
-        todays_roll = roll_ret.loc[date].dropna()
-
-        if todays_roll.empty:
-            signal.iloc[i] = state
-            continue
-
-        ref_prices = funds_df.loc[:last_change_idx].iloc[-1]
-        curr_prices = funds_df.loc[date]
-
-        since_rets = (curr_prices / ref_prices - 1).dropna()
-
-        common_funds = todays_roll.index.intersection(since_rets.index)
-
-        if len(common_funds) < n_top:
-            signal.iloc[i] = state
-            continue
-
-        todays_roll  = todays_roll.loc[common_funds]
-        since_rets   = since_rets.loc[common_funds]
-
-        top_funds    = todays_roll.nlargest(n_top)
-        bottom_funds = todays_roll.nsmallest(n_top)
-
-        top_since    = since_rets.loc[top_funds.index]
-        bottom_since = since_rets.loc[bottom_funds.index]
-
-        if state == 0:
-            roll_condition  = top_funds.mean()  >= entry_roll_thresh
-            since_condition = top_since.mean()  >= entry_since_thresh
-
-            if roll_condition or since_condition:
-                state = 1
-                last_change_idx = date
-
-        elif state == 1:
-            roll_condition  = bottom_funds.mean()  <= exit_roll_thresh
-            since_condition = bottom_since.mean()  <= exit_since_thresh
-
-            if roll_condition or since_condition:
-                state = 0
-                last_change_idx = date
-
-        signal.iloc[i] = state
-
-    return signal.shift(1).fillna(0)
     
 # ============================
 # Performance Metrics
