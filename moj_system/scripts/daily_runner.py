@@ -181,7 +181,7 @@ def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
     for lbl, (px_df, fx_s) in assets.items():
         ret_s = build_return_series(px_df, fx_series=fx_s, hedged=fx_h)
         rets_dict[lbl] = ret_s.dropna()
-        proc_px = px_df if fx_hedged or fx_s is None else build_price_df_from_returns(ret_s, lbl)
+        proc_px = px_df if fx_h or fx_s is None else build_price_df_from_returns(ret_s, lbl)
         wf_e, wf_r, wf_t = walk_forward(proc_px, MMF, train_y, test_y, n_jobs=n_jobs)
         sigs_full[lbl] = build_signal_series(wf_e, wf_t)
         if lbl == "WIG":
