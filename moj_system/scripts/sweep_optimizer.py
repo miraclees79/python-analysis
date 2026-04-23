@@ -168,7 +168,7 @@ class SweepManager:
             first_bb_key = list(bb_verdicts_dict.keys())[0]
             bb_p05 = bb_verdicts_dict[first_bb_key].get("CAGR", {}).get("p05", pd.NA)
 
-        print_live_regime_report(regime_metrics)
+        
         
         
         

@@ -205,16 +205,18 @@ def run_regime_decomposition(inputs: dict, generate_plots: bool = False) -> dict
         
     return results
 
+
 def extract_flat_regime_stats(regime_results: dict) -> dict:
     """Zawsze zwraca pełny zestaw kluczy, nawet jeśli dane są puste (NaN)."""
     out = {}
-    metrics = ["strat_cagr", "bh_cagr"]
+    # Definicja wszystkich metryk, które chcemy mieć w słowniku/pliku CSV
+    metrics = ["strat_cagr", "bh_cagr", "strat_sharpe", "pct_time"]
     regimes = [
         "adx_uptrend", "adx_downtrend", "adx_sideways",
         "vol_high_vol", "vol_normal_vol", "vol_low_vol"
     ]
     
-    # Inicjalizacja Nanami, aby kolumny zawsze istniały w CSV
+    # Inicjalizacja Nanami, aby kolumny zawsze istniały w strukturze danych
     for r in regimes:
         for m in metrics:
             out[f"{r}_{m}"] = np.nan
@@ -222,42 +224,70 @@ def extract_flat_regime_stats(regime_results: dict) -> dict:
     if not regime_results:
         return out
 
-    # Mapowanie wyników ADX
-    adx_stats = regime_results.get("ADX trend", {}).get("stats")
+    # Mapowanie wyników ADX trend
+    adx_res = regime_results.get("ADX trend", {})
+    adx_stats = adx_res.get("stats")
     if adx_stats is not None and not adx_stats.empty:
         for reg in ["uptrend", "downtrend", "sideways"]:
             if reg in adx_stats.index:
-                out[f"adx_{reg}_strat_cagr"] = adx_stats.loc[reg, "strat_cagr"]
-                out[f"adx_{reg}_bh_cagr"] = adx_stats.loc[reg, "bh_cagr"]
+                r = adx_stats.loc[reg]
+                out[f"adx_{reg}_strat_cagr"]   = round(float(r.get("strat_cagr",   np.nan)), 2)
+                out[f"adx_{reg}_bh_cagr"]       = round(float(r.get("bh_cagr",      np.nan)), 2)
+                out[f"adx_{reg}_strat_sharpe"]  = round(float(r.get("strat_sharpe", np.nan)), 3)
+                out[f"adx_{reg}_pct_time"]      = round(float(r.get("pct_time",     np.nan)), 1)
 
     # Mapowanie wyników Volatility
-    vol_stats = regime_results.get("Volatility", {}).get("stats")
+    vol_res = regime_results.get("Volatility", {})
+    vol_stats = vol_res.get("stats")
     if vol_stats is not None and not vol_stats.empty:
         for reg in ["high_vol", "normal_vol", "low_vol"]:
             if reg in vol_stats.index:
-                out[f"vol_{reg}_strat_cagr"] = vol_stats.loc[reg, "strat_cagr"]
-                out[f"vol_{reg}_bh_cagr"] = vol_stats.loc[reg, "bh_cagr"]
+                r = vol_stats.loc[reg]
+                out[f"vol_{reg}_strat_cagr"]   = round(float(r.get("strat_cagr",   np.nan)), 2)
+                out[f"vol_{reg}_bh_cagr"]       = round(float(r.get("bh_cagr",      np.nan)), 2)
+                out[f"vol_{reg}_strat_sharpe"]  = round(float(r.get("strat_sharpe", np.nan)), 3) # Dodano Sharpe
+                out[f"vol_{reg}_pct_time"]      = round(float(r.get("pct_time",     np.nan)), 1)
                 
-    return out 
+    return out
     
 def print_live_regime_report(regime_metrics: dict):
-    if not regime_metrics: return
-    logging.info("  --- REGIME ANALYSIS (CAGR %) ---")
-    header = f"  {'Regime':<15} | {'Strategy':>10} | {'Buy&Hold':>10}"
+    if not regime_metrics: 
+        logging.warning("No regime metrics available to print.")
+        return
+        
+    logging.info("  --- DETAILED REGIME ANALYSIS ---")
+    # Nowy nagłówek z większą liczbą kolumn
+    header = f"  {'Regime':<15} | {'Strat CAGR':>10} | {'B&H CAGR':>10} | {'Sharpe':>8} | {'% Time':>8}"
     logging.info(header)
     logging.info("  " + "-" * len(header))
-    regimes = [("ADX Uptrend", "adx_uptrend"), ("ADX Downtrend", "adx_downtrend"),
-               ("ADX Sideways", "adx_sideways"), ("Vol High", "vol_high_vol"),
-               ("Vol Normal", "vol_normal_vol"), ("Vol Low", "vol_low_vol")]
+    
+    regimes = [
+        ("ADX Uptrend",   "adx_uptrend"), 
+        ("ADX Downtrend", "adx_downtrend"),
+        ("ADX Sideways",  "adx_sideways"), 
+        ("Vol High",      "vol_high_vol"),
+        ("Vol Normal",    "vol_normal_vol"), 
+        ("Vol Low",       "vol_low_vol")
+    ]
+    
     for label, prefix in regimes:
-        strat_val = regime_metrics.get(f"{prefix}_strat_cagr", pd.NA)
-        bh_val = regime_metrics.get(f"{prefix}_bh_cagr", pd.NA)
-        s_str = f"{strat_val:.2f}%" if pd.notna(strat_val) else "N/A"
-        b_str = f"{bh_val:.2f}%" if pd.notna(bh_val) else "N/A"
-        logging.info(f"  {label:<15} | {s_str:>10} | {b_str:>10}")
-    logging.info("  --------------------------------")
-
-
+        # Pobieranie wartości
+        s_cagr   = regime_metrics.get(f"{prefix}_strat_cagr", pd.NA)
+        b_cagr   = regime_metrics.get(f"{prefix}_bh_cagr", pd.NA)
+        s_sharpe = regime_metrics.get(f"{prefix}_strat_sharpe", pd.NA)
+        p_time   = regime_metrics.get(f"{prefix}_pct_time", pd.NA)
+        
+        # Formatowanie do wyświetlenia
+        s_str  = f"{s_cagr:>.2f}%" if pd.notna(s_cagr) else "N/A"
+        b_str  = f"{b_cagr:>.2f}%" if pd.notna(b_cagr) else "N/A"
+        sh_str = f"{s_sharpe:>.2f}" if pd.notna(s_sharpe) else "N/A"
+        t_str  = f"{p_time:>.1f}%" if pd.notna(p_time) else "N/A"
+        
+        logging.info(f"  {label:<15} | {s_str:>10} | {b_str:>10} | {sh_str:>8} | {t_str:>8}")
+        
+    logging.info("  " + "-" * len(header))
+    
+    
 # moj_system/core/research.py (dodaj na końcu pliku)
 
 def get_current_adx_regime(df: pd.DataFrame) -> str:
