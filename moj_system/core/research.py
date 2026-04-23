@@ -54,37 +54,38 @@ import matplotlib.patches as mpatches
 # --- REGIME DECOMPOSITION FUNCTIONS ---
 
 def prepare_regime_inputs(df: pd.DataFrame, wf_results: pd.DataFrame, wf_equity: pd.Series, bh_equity: pd.Series) -> dict:
-    """Przygotowuje zsynchronizowane serie danych dla analizy reżimów w okresie OOS."""
-    oos_start = pd.Timestamp(wf_results["TestStart"].min())
-    oos_end   = pd.Timestamp(wf_results["TestEnd"].max())
+    """Przygotowuje dane zsynchronizowane z faktycznym zakresem dostarczonej krzywej kapitału."""
+    
+    # Używamy zakresu dat z krzywej kapitału (wf_equity), a nie z okien WF
+    # To rozwiązuje problem przesunięcia common_start
+    common_idx = wf_equity.index.intersection(bh_equity.index).intersection(df.index)
+    
+    if len(common_idx) < 30:
+        logging.warning("Za mało wspólnych dat dla analizy reżimów.")
+        return {}
 
-    mask = (df.index >= oos_start) & (df.index <= oos_end)
-    close = df.loc[mask, "Zamkniecie"].copy()
-    high  = df.loc[mask, "Najwyzszy"].copy()
-    low   = df.loc[mask, "Najnizszy"].copy()
+    close = df.loc[common_idx, "Zamkniecie"].copy()
+    # Obsługa braku kolumn High/Low (fallback na Close)
+    high  = df.loc[common_idx, "Najwyzszy"].copy() if "Najwyzszy" in df.columns else close
+    low   = df.loc[common_idx, "Najnizszy"].copy() if "Najnizszy" in df.columns else close
 
-    equity_strat = wf_equity.reindex(close.index).ffill()
-    equity_bh    = bh_equity.reindex(close.index).ffill()
+    equity_strat = wf_equity.reindex(common_idx).ffill()
+    equity_bh    = bh_equity.reindex(common_idx).ffill()
 
     daily_returns_strat = equity_strat.pct_change().dropna()
     daily_returns_bh    = equity_bh.pct_change().dropna()
 
-    close = close.reindex(daily_returns_strat.index)
-    high  = high.reindex(daily_returns_strat.index)
-    low   = low.reindex(daily_returns_strat.index)
-
+    # Finalna synchronizacja do zwrotów
+    final_idx = daily_returns_strat.index
     return dict(
-        close               = close,
-        high                = high,
-        low                 = low,
+        close               = close.reindex(final_idx),
+        high                = high.reindex(final_idx),
+        low                 = low.reindex(final_idx),
         daily_returns_strat = daily_returns_strat,
         daily_returns_bh    = daily_returns_bh,
-        equity_strat        = equity_strat,
-        equity_bh           = equity_bh,
-        oos_start           = oos_start,
-        oos_end             = oos_end,
+        equity_strat        = equity_strat.reindex(final_idx),
+        equity_bh           = equity_bh.reindex(final_idx)
     )
-
 def compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period=20) -> tuple:
     delta_high = high.diff()
     delta_low  = -low.diff()
@@ -205,37 +206,39 @@ def run_regime_decomposition(inputs: dict, generate_plots: bool = False) -> dict
     return results
 
 def extract_flat_regime_stats(regime_results: dict) -> dict:
-    """Spłaszcza wielowymiarowy słownik wyników reżimów do jednowymiarowego słownika na potrzeby tabeli (Sweep)."""
+    """Zawsze zwraca pełny zestaw kluczy, nawet jeśli dane są puste (NaN)."""
     out = {}
-    if not regime_results: return out
+    metrics = ["strat_cagr", "bh_cagr"]
+    regimes = [
+        "adx_uptrend", "adx_downtrend", "adx_sideways",
+        "vol_high_vol", "vol_normal_vol", "vol_low_vol"
+    ]
+    
+    # Inicjalizacja Nanami, aby kolumny zawsze istniały w CSV
+    for r in regimes:
+        for m in metrics:
+            out[f"{r}_{m}"] = np.nan
 
-    # ADX trend
+    if not regime_results:
+        return out
+
+    # Mapowanie wyników ADX
     adx_stats = regime_results.get("ADX trend", {}).get("stats")
     if adx_stats is not None and not adx_stats.empty:
         for reg in ["uptrend", "downtrend", "sideways"]:
             if reg in adx_stats.index:
-                r = adx_stats.loc[reg]
-                out[f"adx_{reg}_strat_cagr"]  = round(float(r.get("strat_cagr",   np.nan)), 2)
-                out[f"adx_{reg}_bh_cagr"]      = round(float(r.get("bh_cagr",      np.nan)), 2)
-                out[f"adx_{reg}_strat_sharpe"] = round(float(r.get("strat_sharpe", np.nan)), 3)
-                out[f"adx_{reg}_pct_time"]      = round(float(r.get("pct_time",     np.nan)), 1)
-            else:
-                for col in ["strat_cagr", "bh_cagr", "strat_sharpe", "pct_time"]:
-                    out[f"adx_{reg}_{col}"] = np.nan
+                out[f"adx_{reg}_strat_cagr"] = adx_stats.loc[reg, "strat_cagr"]
+                out[f"adx_{reg}_bh_cagr"] = adx_stats.loc[reg, "bh_cagr"]
 
-    # Volatility
+    # Mapowanie wyników Volatility
     vol_stats = regime_results.get("Volatility", {}).get("stats")
     if vol_stats is not None and not vol_stats.empty:
         for reg in ["high_vol", "normal_vol", "low_vol"]:
             if reg in vol_stats.index:
-                r = vol_stats.loc[reg]
-                out[f"vol_{reg}_strat_cagr"] = round(float(r.get("strat_cagr", np.nan)), 2)
-                out[f"vol_{reg}_bh_cagr"]    = round(float(r.get("bh_cagr",    np.nan)), 2)
-                out[f"vol_{reg}_pct_time"]   = round(float(r.get("pct_time",   np.nan)), 1)
-            else:
-                for col in ["strat_cagr", "bh_cagr", "pct_time"]:
-                    out[f"vol_{reg}_{col}"] = np.nann
-    return 
+                out[f"vol_{reg}_strat_cagr"] = vol_stats.loc[reg, "strat_cagr"]
+                out[f"vol_{reg}_bh_cagr"] = vol_stats.loc[reg, "bh_cagr"]
+                
+    return out 
     
 def print_live_regime_report(regime_metrics: dict):
     if not regime_metrics: return

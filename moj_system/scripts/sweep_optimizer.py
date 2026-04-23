@@ -124,6 +124,7 @@ def _compile_window_stats(window_rows: list) -> dict:
                     "window_cagr_max", "param_change_count",
                     "dominant_filter", "filter_consistency"):
             summary[col] = pd.NA
+    
     return summary
 
 
@@ -168,7 +169,10 @@ class SweepManager:
             bb_p05 = bb_verdicts_dict[first_bb_key].get("CAGR", {}).get("p05", pd.NA)
 
         print_live_regime_report(regime_metrics)
-
+        win_stats = win_stats if win_stats is not None else {}
+        #regime_metrics = regime_metrics if regime_metrics is not None else {}
+        
+        
         return {
             "Strategy": strat_name, "train_years": train_y, "test_years": test_y, "stop_mode": stop_type,
             "oos_cagr": m_trimmed.get("CAGR", pd.NA), "oos_calmar": m_trimmed.get("CalMAR", pd.NA), 
@@ -252,6 +256,7 @@ class SweepManager:
         regime_inputs = prepare_regime_inputs(WIG, wf_res_eq, trimmed, bh_equity)
         raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
         regime_metrics = extract_flat_regime_stats(raw_regimes)
+        print_live_regime_report(regime_metrics)
 
         mc_res, bb_res = {}, {}
         if self.n_mc > 0:
