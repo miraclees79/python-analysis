@@ -414,6 +414,8 @@ class KNFTools:
             return
         
         # Zapisujemy summary wszystkich pobranych funduszy (jeśli use_tfi_scope=False to wyślemy GIGANTYCZNY słownik)
+        out_dir = Path("outputs")
+        out_dir.mkdir(exist_ok=True)
         summary_path = out_dir / "knf_summary.csv"
         knf_df.to_csv(summary_path, index=False, sep=";")
         self.gdrive.upload_csv(self.root_folder, str(summary_path))    
@@ -429,8 +431,7 @@ class KNFTools:
         
         logging.info(f"\nMatch Results: {len(matched)} successful (Price Verified), {len(unmatched)} failed.")
         
-        out_dir = Path("outputs")
-        out_dir.mkdir(exist_ok=True)
+        
         
         match_path = out_dir / "knf_stooq_matches.csv"
         unmatched_path = out_dir / "knf_stooq_unmatched.csv"
@@ -447,3 +448,60 @@ class KNFTools:
         self.gdrive.upload_csv(self.root_folder, str(review_path))
         logging.info("Matches uploaded to Google Drive.")
         
+    def verify_confirmed_matches(self, confirmed_file="knf_stooq_confirmed.csv"):
+        """
+        Pobiera potwierdzoną listę funduszy z GDrive i tylko dla nich uruchamia weryfikację cen.
+        Nie szuka nowych dopasowań, nie skanuje pełnego API KNF.
+        """
+        if not self.root_folder:
+            logging.error("GDRIVE_FOLDER_ID not set. Cannot download confirmed list.")
+            return
+
+        logging.info(f"Downloading confirmed matches from {confirmed_file}...")
+        df_confirmed = self.gdrive.download_csv(self.root_folder, confirmed_file, sep=",")
+        
+        if df_confirmed is None or df_confirmed.empty:
+            logging.error("Confirmed list is empty or could not be downloaded.")
+            return
+
+        # Zachowujemy tylko te, które mają ID Stooq
+        df_to_verify = df_confirmed.dropna(subset=['stooq_id']).copy()
+        
+        if df_to_verify.empty:
+            logging.info("No valid stooq_id entries found in the confirmed list.")
+            return
+
+        total_funds = len(df_to_verify)
+        logging.info(f"\n--- Starting Fast Price Verification for {total_funds} confirmed funds ---")
+
+        success_count = 0
+        failed_funds = []
+
+        for index, row in df_to_verify.iterrows():
+            subfund_id = int(float(row['subfundId']))
+            stooq_id = int(float(row['stooq_id']))
+            fund_name = row.get('name', f"Subfund {subfund_id}")
+            
+            logging.info(f"Verifying: {fund_name} (KNF: {subfund_id}, Stooq: {stooq_id})")
+            
+            is_match = self._verify_price_match(subfund_id, stooq_id)
+            
+            if is_match:
+                success_count += 1
+            else:
+                failed_funds.append(f"KNF: {subfund_id} | Stooq: {stooq_id} | Name: {fund_name}")
+                
+            time.sleep(0.1) # Drobne opóźnienie dla stabilności
+            
+        logging.info("\n" + "="*50)
+        logging.info("VERIFICATION SUMMARY")
+        logging.info("="*50)
+        logging.info(f"Total checked: {total_funds}")
+        logging.info(f"Passed:        {success_count}")
+        logging.info(f"Failed:        {total_funds - success_count}")
+        
+        if failed_funds:
+            logging.warning("Failed funds:")
+            for f in failed_funds:
+                logging.warning(f"  - {f}")
+        logging.info("="*50)
