@@ -318,7 +318,7 @@ def _build_chart(
     plt.tight_layout()
 
     buf = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    plt.savefig(buf.name, dpi=130, bbox_inches="tight")
+    plt.savefig(buf.name, dpi=72, bbox_inches="tight")
     plt.close(fig)
     buf.close()
     atomic_write_bytes(chart_path, open(buf.name, "rb").read())
