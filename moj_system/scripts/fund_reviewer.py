@@ -91,13 +91,26 @@ class FundReviewer:
         df_funds = df_funds.dropna(subset=['stooq_id']).copy()
         
         fund_prices = {}
-        for _, row in df_funds.iterrows():
+        for row_index, fund_row in df_funds.iterrows():
+            sid = "Unknown"
             try:
-                sid = str(int(float(row['stooq_id'])))
-                prices_df = load_local_csv(f"fund_{sid}", row.get('knf_name'), mandatory=False)
+                # Konwersja ID
+                sid = str(int(float(fund_row['stooq_id'])))
+                knf_label = fund_row.get('knf_name', 'Unknown')
+                
+                # Jawne przekazanie argumentów
+                prices_df = load_local_csv(
+                    ticker=f"fund_{sid}", 
+                    label=knf_label, 
+                    mandatory=False
+                )
+                
                 if prices_df is not None:
                     fund_prices[sid] = prices_df["Zamkniecie"].squeeze()
-            except: continue
+                    
+            except Exception as exc:
+                logging.warning(f"Skipping price load for fund index {row_index} (SID: {sid}): {exc}")
+                continue
         
         logging.info(f"Loaded {len(fund_prices)} price histories.")
         return df_funds, fund_prices
@@ -106,22 +119,29 @@ class FundReviewer:
         """Builds synthetic benchmarks for each KNF category."""
         logging.info("Building synthetic category benchmarks...")
         category_rets = defaultdict(list)
-        for _, row in df_funds.iterrows():
+        
+        for row_index, fund_row in df_funds.iterrows():
+            sid = "Unknown"
             try:
-                sid = str(int(float(row['stooq_id'])))
-                category = row.get('category')
+                sid = str(int(float(fund_row['stooq_id'])))
+                category = fund_row.get('category')
                 prices = fund_prices.get(sid)
+                
                 if category and prices is not None:
+                    # Obliczanie log-zwrotów
                     log_ret = np.log(prices / prices.shift(1)).dropna()
                     log_ret.name = sid
                     category_rets[category].append(log_ret)
-            except: continue
+                    
+            except Exception as exc:
+                logging.warning(f"Error processing returns for benchmark at index {row_index} (SID: {sid}): {exc}")
+                continue
 
         benchmarks = {}
         for cat, rets in category_rets.items():
             if rets:
-                # FIXED: Added sort=True to silence Pandas4Warning
-                benchmarks[cat] = pd.concat(rets, axis=1, sort=True).mean(axis=1)
+                # Jawne przekazanie argumentów do concat
+                benchmarks[cat] = pd.concat(objs=rets, axis=1, sort=True).mean(axis=1)
         return benchmarks
 
     def evaluate_fund(self, fund_row, prices, cat_benchmarks):
@@ -188,15 +208,31 @@ class FundReviewer:
         category_benchmarks = self.build_category_benchmarks(df_funds, fund_prices)
         
         all_results = []
-        for _, fund_row in df_funds.iterrows():
+        # Changed 'index' instead of '_' to satisfy developer instructions
+        for row_index, fund_row in df_funds.iterrows():
+            sid = "Unknown"
             try:
                 sid = str(int(float(fund_row['stooq_id'])))
                 prices = fund_prices.get(sid)
+                
                 if prices is not None:
-                    all_results.extend(self.evaluate_fund(fund_row, prices, category_benchmarks))
-            except: continue
+                    # Explicit argument passing as per instructions
+                    fund_evaluation = self.evaluate_fund(
+                        fund_row=fund_row, 
+                        prices=prices, 
+                        cat_benchmarks=category_benchmarks
+                    )
+                    all_results.extend(fund_evaluation)
+                    
+            except Exception as exc:
+                # Log the error so we know WHICH fund failed and WHY
+                fund_name = fund_row.get('knf_name', 'Unknown')
+                logging.error(f"Failed to evaluate fund '{fund_name}' (SID: {sid}) at index {row_index}: {exc}")
+                continue
 
-        if not all_results: return
+        if not all_results:
+            logging.warning("No results were generated during fund evaluation.")
+            return
 
         final_df = pd.DataFrame(all_results)
         

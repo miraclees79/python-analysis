@@ -26,29 +26,66 @@ CLOSE_COL = "Zamkniecie"
 
 
 def _parse_wsj_csv(raw_bytes: bytes) -> pd.DataFrame | None:
-    """Parses WSJ export format."""
-    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+    """Parses WSJ export format using multiple encoding attempts."""
+    raw = None
+    encodings_to_try = ("utf-8-sig", "utf-8", "latin-1")
+    
+    for current_encoding in encodings_to_try:
         try:
-            raw = pd.read_csv(io.BytesIO(raw_bytes), encoding=encoding, thousands=",", skipinitialspace=True)
+            # Jawne przekazanie wszystkich argumentów
+            raw = pd.read_csv(
+                filepath_or_buffer=io.BytesIO(initial_bytes=raw_bytes), 
+                encoding=current_encoding, 
+                thousands=",", 
+                skipinitialspace=True
+            )
+            logging.info(f"WSJ CSV parsed successfully using encoding: {current_encoding}")
             break
-        except Exception:
+        except Exception as exc:
+            logging.debug(f"Encoding attempt '{current_encoding}' failed: {exc}")
             continue
-    else:
+            
+    if raw is None:
+        logging.error("Failed to parse WSJ CSV: None of the attempted encodings worked.")
         return None
 
+    # Normalizacja nazw kolumn
     col_map = {c: c.strip().capitalize() for c in raw.columns}
-    col_map.update({c: "Close" for c in raw.columns if c.strip().lower() in ("close", "price", "last", "adj close")})
-    col_map.update({c: "Date" for c in raw.columns if c.strip().lower() in ("date", "data")})
+    for col_name in raw.columns:
+        clean_name = col_name.strip().lower()
+        if clean_name in ("close", "price", "last", "adj close"):
+            col_map[col_name] = "Close"
+        elif clean_name in ("date", "data"):
+            col_map[col_name] = "Date"
+            
     raw = raw.rename(columns=col_map)
 
-    raw["Date"] = pd.to_datetime(raw["Date"], format="mixed", errors="coerce")
+    # Konwersja daty z jawnymi argumentami
+    raw["Date"] = pd.to_datetime(
+        arg=raw["Date"], 
+        format="mixed", 
+        errors="coerce"
+    )
     raw = raw.dropna(subset=["Date"])
     
-    out = pd.DataFrame(index=raw["Date"].dt.tz_localize(None))
+    # Budowa wynikowej ramki danych
+    out = pd.DataFrame(index=raw["Date"].dt.tz_localize(tz=None))
     out.index.name = "Data"
-    out[CLOSE_COL] = pd.to_numeric(raw["Close"].values, errors="coerce")
-    out["Najwyzszy"] = pd.to_numeric(raw.get("High", raw["Close"]).values, errors="coerce")
-    out["Najnizszy"] = pd.to_numeric(raw.get("Low", raw["Close"]).values, errors="coerce")
+    
+    # Konwersje numeryczne z jawnymi argumentami
+    out[CLOSE_COL] = pd.to_numeric(
+        arg=raw["Close"].values, 
+        errors="coerce"
+    )
+    out["Najwyzszy"] = pd.to_numeric(
+        arg=raw.get("High", raw["Close"]).values, 
+        errors="coerce"
+    )
+    out["Najnizszy"] = pd.to_numeric(
+        arg=raw.get("Low", raw["Close"]).values, 
+        errors="coerce"
+    )
+    
     return out.sort_index().dropna()
 
 
