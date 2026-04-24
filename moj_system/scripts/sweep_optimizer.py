@@ -499,11 +499,11 @@ def main():
         print_sweep_report(final_df, common_start.date())
         
         ts = dt.datetime.now().strftime("%Y%m%d_%H%M")
-        res_path = OUTPUT_DIR / f"outputs/sweep_results_{ts}.csv"
-        res_path_latest = OUTPUT_DIR / f"outputs/sweep_results_{ts}.csv"
+        res_path = OUTPUT_DIR / f"sweep_results_{ts}.csv"
+        res_path_latest = OUTPUT_DIR / f"sweep_results_{ts}.csv"
       
-        win_path =  OUTPUT_DIR / f"outputs/sweep_windows_{ts}.csv"
-        win_path_latest =  OUTPUT_DIR / f"outputs/sweep_windows_{ts}.csv"
+        win_path =  OUTPUT_DIR / f"sweep_windows_{ts}.csv"
+        win_path_latest =  OUTPUT_DIR / f"sweep_windows_{ts}.csv"
         
         final_df.to_csv(res_path, index=False, sep=";")
         final_df.to_csv(res_path_latest, index=False, sep=";")
