@@ -499,16 +499,19 @@ def main():
         print_sweep_report(final_df, common_start.date())
         
         ts = dt.datetime.now().strftime("%Y%m%d_%H%M")
-        res_path = f"outputs/sweep_results_{ts}.csv"
-        win_path = f"outputs/sweep_windows_{ts}.csv"
+        res_path = OUTPUT_DIR / f"outputs/sweep_results_{ts}.csv"
+        res_path_latest = OUTPUT_DIR / f"outputs/sweep_results_{ts}.csv"
+      
+        win_path =  OUTPUT_DIR / f"outputs/sweep_windows_{ts}.csv"
+        win_path_latest =  OUTPUT_DIR / f"outputs/sweep_windows_{ts}.csv"
         
         final_df.to_csv(res_path, index=False, sep=";")
-        final_df.to_csv("outputs/sweep_results_latest.csv", index=False, sep=";")
+        final_df.to_csv(res_path_latest, index=False, sep=";")
         
         if manager.all_windows:
             win_df = pd.DataFrame(manager.all_windows)
             win_df.to_csv(win_path, index=False, sep=";")
-            win_df.to_csv("outputs/sweep_windows_latest.csv", index=False, sep=";")
+            win_df.to_csv(win_path_latest , index=False, sep=";")
             logging.info(f"Saved individual windows stats to: {win_path}")
 
         logging.info(f"Full results saved to: {res_path}")
