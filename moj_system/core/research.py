@@ -53,38 +53,49 @@ import matplotlib.patches as mpatches
 
 # --- REGIME DECOMPOSITION FUNCTIONS ---
 
-def prepare_regime_inputs(df: pd.DataFrame, wf_results: pd.DataFrame, wf_equity: pd.Series, bh_equity: pd.Series) -> dict:
-    """Przygotowuje dane zsynchronizowane z faktycznym zakresem dostarczonej krzywej kapitału."""
-    
-    # Używamy zakresu dat z krzywej kapitału (wf_equity), a nie z okien WF
-    # To rozwiązuje problem przesunięcia common_start
-    common_idx = wf_equity.index.intersection(bh_equity.index).intersection(df.index)
+def prepare_regime_inputs(df, wf_results, wf_equity, bh_equity):
+    """
+    Przygotowuje zsynchronizowane serie danych dla analizy reżimów.
+    Odporna na zduplikowane etykiety dat.
+    """
+    # --- PANCERNE USUWANIE DUPLIKATÓW (Zgodnie z Twoją instrukcją: bez '_') ---
+    if not wf_equity.index.is_unique:
+        duplicates_count = wf_equity.index.duplicated().sum()
+        logging.warning(msg=f"Found {duplicates_count} duplicate dates in wf_equity. Removing...")
+        wf_equity = wf_equity.loc[~wf_equity.index.duplicated(keep='last')]
+        
+    if not bh_equity.index.is_unique:
+        bh_duplicates_count = bh_equity.index.duplicated().sum()
+        logging.warning(msg=f"Found {bh_duplicates_count} duplicate dates in bh_equity. Removing...")
+        bh_equity = bh_equity.loc[~bh_equity.index.duplicated(keep='last')]
+
+    # Używamy zakresu dat z krzywej kapitału
+    common_idx = wf_equity.index.intersection(other=bh_equity.index).intersection(other=df.index)
     
     if len(common_idx) < 30:
-        logging.warning("Za mało wspólnych dat dla analizy reżimów.")
+        logging.warning(msg="Za mało wspólnych dat dla analizy reżimów.")
         return {}
 
     close = df.loc[common_idx, "Zamkniecie"].copy()
-    # Obsługa braku kolumn High/Low (fallback na Close)
     high  = df.loc[common_idx, "Najwyzszy"].copy() if "Najwyzszy" in df.columns else close
     low   = df.loc[common_idx, "Najnizszy"].copy() if "Najnizszy" in df.columns else close
 
-    equity_strat = wf_equity.reindex(common_idx).ffill()
-    equity_bh    = bh_equity.reindex(common_idx).ffill()
+    # Jawne przekazanie argumentów do reindex
+    equity_strat = wf_equity.reindex(labels=common_idx).ffill()
+    equity_bh    = bh_equity.reindex(labels=common_idx).ffill()
 
     daily_returns_strat = equity_strat.pct_change().dropna()
     daily_returns_bh    = equity_bh.pct_change().dropna()
 
-    # Finalna synchronizacja do zwrotów
     final_idx = daily_returns_strat.index
     return dict(
-        close               = close.reindex(final_idx),
-        high                = high.reindex(final_idx),
-        low                 = low.reindex(final_idx),
+        close               = close.reindex(labels=final_idx),
+        high                = high.reindex(labels=final_idx),
+        low                 = low.reindex(labels=final_idx),
         daily_returns_strat = daily_returns_strat,
         daily_returns_bh    = daily_returns_bh,
-        equity_strat        = equity_strat.reindex(final_idx),
-        equity_bh           = equity_bh.reindex(final_idx)
+        equity_strat        = equity_strat.reindex(labels=final_idx),
+        equity_bh           = equity_bh.reindex(labels=final_idx)
     )
 def compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period=20) -> tuple:
     delta_high = high.diff()
