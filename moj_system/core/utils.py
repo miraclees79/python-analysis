@@ -313,16 +313,24 @@ def build_mmf_extended(
 
     synthetic_prices = price_reverse.iloc[::-1]          # back to chronological
 
-    # ── Combine synthetic extension + real MMF ────────────────────────────
-    combined = pd.concat([synthetic_prices, mmf_close])
+# ── Combine synthetic extension + real MMF ────────────────────────────
+    # Jawne przekazanie obiektów do połączenia
+    combined = pd.concat(objs=[synthetic_prices, mmf_close], axis=0)
     combined = combined.sort_index()
-    # Sanity: the join should be seamless — synthetic ends just before mmf_start
-    assert combined.index.min() >= floor_ts, "Combined series starts before floor"
 
-    # Build stooq-format output
+    # Sanity check zastępujący niebezpieczny 'assert'
+    if combined.index.min() < floor_ts:
+        error_msg = (
+            f"Data integrity error: Combined series starts at {combined.index.min().date()} "
+            f"which is before requested floor {floor_ts.date()}"
+        )
+        logging.error(msg=error_msg)
+        raise ValueError(error_msg)
+
+    # Build stooq-format output z jawnym przekazaniem indeksu
     out = pd.DataFrame(index=combined.index)
     out[CLOSE_COL]   = combined
-    out["Najwyzszy"] = combined   # no intraday data
+    out["Najwyzszy"] = combined
     out["Najnizszy"] = combined
     out.index.name   = "Data"
 
