@@ -408,7 +408,7 @@ def print_sweep_report(results_df: pd.DataFrame, common_start):
 
     regime_cols = [c for c in results_df.columns if "adx_" in c or "vol_" in c]
     if regime_cols:
-        logging.info(f"\n{sep}\n--- 2. REGIME DECOMPOSITION (CAGR in Specific Market Conditions, as defined by WIG regime) ---")
+        logging.info(f"\n{sep}\n--- 2. REGIME DECOMPOSITION: CAGR in Specific Market Conditions, \n as defined by ADX regime - WIG for PENSION and GLOBAL, specific asset for SINGLE) ---")
         key_regime_cols = [
             "Strategy", "train_years", "test_years", "stop_mode",
             "adx_uptrend_strat_cagr", "adx_uptrend_bh_cagr",
