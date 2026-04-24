@@ -215,6 +215,7 @@ class SweepManager:
         if regime_inputs: # <--- DODAJ TO SPRAWDZENIE
             raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
             regime_metrics = extract_flat_regime_stats(raw_regimes)
+            print_live_regime_report(regime_metrics)
         else:
             logging.warning(f"Skipping regime analysis for {asset_name} due to insufficient data overlap.")
             regime_metrics = extract_flat_regime_stats({}) # Zwróci słownik z NaN
