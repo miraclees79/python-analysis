@@ -58,7 +58,7 @@ def prepare_regime_inputs(df, wf_results, wf_equity, bh_equity):
     Przygotowuje zsynchronizowane serie danych dla analizy reżimów.
     Odporna na zduplikowane etykiety dat.
     """
-    # --- PANCERNE USUWANIE DUPLIKATÓW (Zgodnie z Twoją instrukcją: bez '_') ---
+    # --- PANCERNE USUWANIE DUPLIKATÓW ---
     if not wf_equity.index.is_unique:
         duplicates_count = wf_equity.index.duplicated().sum()
         logging.warning(msg=f"Found {duplicates_count} duplicate dates in wf_equity. Removing...")
@@ -80,23 +80,25 @@ def prepare_regime_inputs(df, wf_results, wf_equity, bh_equity):
     high  = df.loc[common_idx, "Najwyzszy"].copy() if "Najwyzszy" in df.columns else close
     low   = df.loc[common_idx, "Najnizszy"].copy() if "Najnizszy" in df.columns else close
 
-    # Jawne przekazanie argumentów do reindex
-    equity_strat = wf_equity.reindex(labels=common_idx).ffill()
-    equity_bh    = bh_equity.reindex(labels=common_idx).ffill()
+    # Używamy keyword 'index' zamiast 'labels' dla Series/DataFrame
+    equity_strat = wf_equity.reindex(index=common_idx).ffill()
+    equity_bh    = bh_equity.reindex(index=common_idx).ffill()
 
     daily_returns_strat = equity_strat.pct_change().dropna()
     daily_returns_bh    = equity_bh.pct_change().dropna()
 
     final_idx = daily_returns_strat.index
+    
     return dict(
-        close               = close.reindex(labels=final_idx),
-        high                = high.reindex(labels=final_idx),
-        low                 = low.reindex(labels=final_idx),
+        close               = close.reindex(index=final_idx),
+        high                = high.reindex(index=final_idx),
+        low                 = low.reindex(index=final_idx),
         daily_returns_strat = daily_returns_strat,
         daily_returns_bh    = daily_returns_bh,
-        equity_strat        = equity_strat.reindex(labels=final_idx),
-        equity_bh           = equity_bh.reindex(labels=final_idx)
+        equity_strat        = equity_strat.reindex(index=final_idx),
+        equity_bh           = equity_bh.reindex(index=final_idx)
     )
+
 def compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period=20) -> tuple:
     delta_high = high.diff()
     delta_low  = -low.diff()
