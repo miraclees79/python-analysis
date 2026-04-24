@@ -147,6 +147,7 @@ def regime_stats(daily_returns_strat: pd.Series, daily_returns_bh: pd.Series, re
             return (cum / cum.cummax() - 1).min()
 
         strat_vol = ann_vol(grp.strat)
+        bh_vol = ann_vol(grp.bh)
         
         
         rows.append({
@@ -156,7 +157,7 @@ def regime_stats(daily_returns_strat: pd.Series, daily_returns_bh: pd.Series, re
             "strat_cagr"   : round(ann_return(grp.strat) * 100, 2),
             "bh_cagr"      : round(ann_return(grp.bh)    * 100, 2),
             "strat_vol"    : round(strat_vol * 100, 2),
-            "bh_vol"       : round(ann_vol(grp.bh)    * 100, 2),
+            "bh_vol"       : round(bh_vol    * 100, 2),
             "strat_maxdd"  : round(max_dd(grp.strat)   * 100, 2),
             "bh_maxdd"     : round(max_dd(grp.bh)      * 100, 2),
             "strat_sharpe" : round(ann_return(grp.strat) / strat_vol, 3) if strat_vol > 0 else np.nan,
