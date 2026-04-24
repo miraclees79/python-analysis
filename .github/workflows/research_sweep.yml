@@ -29,7 +29,7 @@ jobs:
           # Zapisz credentials
           echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
           # Uruchamiamy skrypt za pomocą modułu 
-          python -m moj_system.scripts.sweep_optimizer --mode PENSION --n_mc 10 --n_boot 0 #smoke test setting
+          python -m moj_system.scripts.sweep_optimizer --mode SINGLE --assets WIG20TR --n_mc 500 --n_boot 0 
 
       - name: Upload Logs
         if: always()
