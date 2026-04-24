@@ -406,12 +406,12 @@ def print_sweep_report(results_df: pd.DataFrame, common_start):
 
     regime_cols = [c for c in results_df.columns if "adx_" in c or "vol_" in c]
     if regime_cols:
-        logging.info(f"\n{sep}\n--- 2. REGIME DECOMPOSITION (CAGR in Specific Market Conditions) ---")
+        logging.info(f"\n{sep}\n--- 2. REGIME DECOMPOSITION (CAGR in Specific Market Conditions, as defined by WIG regime) ---")
         key_regime_cols = [
             "Strategy", "train_years", "test_years", "stop_mode",
             "adx_uptrend_strat_cagr", "adx_uptrend_bh_cagr",
             "adx_downtrend_strat_cagr", "adx_downtrend_bh_cagr",
-            "vol_high_strat_cagr"
+            "adx_sideways_strat_cagr", "adx_sideways_bh_cagr",
         ]
         avail_regime_cols = [c for c in key_regime_cols if c in results_df.columns]
         regime_df = results_df[avail_regime_cols].copy()
@@ -422,7 +422,7 @@ def print_sweep_report(results_df: pd.DataFrame, common_start):
         rename_map = {
             "adx_uptrend_strat_cagr": "UP_Strat", "adx_uptrend_bh_cagr": "UP_B&H",
             "adx_downtrend_strat_cagr": "DOWN_Strat", "adx_downtrend_bh_cagr": "DOWN_B&H",
-            "vol_high_strat_cagr": "VOL_HI_Strat"
+            "adx_sideways_strat_cagr": "RGBOUND_Strat", "adx_sideways_bh_cagr": "RGBOUND_B&H"
         }
         regime_df = regime_df.rename(columns=rename_map)
 

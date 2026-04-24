@@ -148,6 +148,7 @@ def regime_stats(daily_returns_strat: pd.Series, daily_returns_bh: pd.Series, re
 
         strat_vol = ann_vol(grp.strat)
         
+        
         rows.append({
             label          : reg,
             "days"         : n_days,
@@ -159,6 +160,7 @@ def regime_stats(daily_returns_strat: pd.Series, daily_returns_bh: pd.Series, re
             "strat_maxdd"  : round(max_dd(grp.strat)   * 100, 2),
             "bh_maxdd"     : round(max_dd(grp.bh)      * 100, 2),
             "strat_sharpe" : round(ann_return(grp.strat) / strat_vol, 3) if strat_vol > 0 else np.nan,
+            "bh_sharpe"    : round(ann_return(grp.bh) / bh_vol, 3) if bh_vol > 0 else np.nan,
         })
 
     return pd.DataFrame(rows).set_index(label)
