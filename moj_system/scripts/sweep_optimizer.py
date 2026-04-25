@@ -439,7 +439,7 @@ def main():
     data_map["STOXX600"] = build_and_upload(folder_id, "stoxx600.csv", "stoxx600_combined.csv", "^STOXX", "yfinance", creds_path)
 
     # Ładowanie reszty
-    check_list = ["WIG", "SP500", "NIKKEI225", "WIG20TR", "MWIG40TR", "SWIG80TR", "NASDAQ100", "PL10Y", "DE10Y"]
+    check_list = ["WIG", "SP500", "NIKKEI225", "WIG20TR", "NASDAQ100", "PL10Y", "DE10Y"]
     if args.assets: check_list.extend([a.upper() for a in args.assets])
     
     for asset_key in set(check_list):
