@@ -2,7 +2,7 @@
 """
 moj_system/scripts/sweep_optimizer.py
 ======================================
-Advanced Strategy Sweeper. Supports:
+Advanced Strategy Sweeper. Optimized for extended data handling.
 - SINGLE assets (e.g., WIG20TR, MWIG40TR) with Common OOS and individual regime analysis.
 - PENSION Portfolio (WIG+TBSP) with WIG-based regime analysis.
 - GLOBAL Portfolios (Mode A & Mode B) with WIG-based regime analysis.
@@ -101,7 +101,6 @@ def _extract_window_rows(
     return rows
 
 def _compile_window_stats(window_rows: list) -> dict:
-    """Calculates aggregate statistics over the extracted windows."""
     summary = {}
     if window_rows:
         win_cagrs = [w["win_cagr"] for w in window_rows if pd.notna(w["win_cagr"])]
@@ -124,10 +123,7 @@ def _compile_window_stats(window_rows: list) -> dict:
                     "window_cagr_max", "param_change_count",
                     "dominant_filter", "filter_consistency"):
             summary[col] = pd.NA
-    
     return summary
-
-
 
 
 # ==============================================================================
@@ -135,9 +131,10 @@ def _compile_window_stats(window_rows: list) -> dict:
 # ==============================================================================
 
 class SweepManager:
-    def __init__(self, n_mc, n_boot):
+    def __init__(self, n_mc, n_boot, data_map):
         self.n_mc = n_mc
         self.n_boot = n_boot
+        self.data_map = data_map # <--- Dane wczytane raz w main()
         self.rob_engine = RobustnessEngine(n_jobs=get_n_jobs())
         self.creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
         self.folder_id = os.environ.get("GDRIVE_FOLDER_ID")
@@ -147,17 +144,13 @@ class SweepManager:
                              wf_results, wf_equity_trimmed, m_trimmed, bh_metrics, 
                              regime_metrics, mc_verdicts_dict, bb_verdicts_dict):
         """Unified result compiler for all 3 modes."""
-        
-        # 1. Window Stats
         window_rows = _extract_window_rows(strat_name, train_y, test_y, wf_results, stop_type)
         self.all_windows.extend(window_rows)
         win_stats = _compile_window_stats(window_rows)
 
-        # 2. Stringify Robustness verdicts (e.g. "WIG:ROB|TBS:FRA")
         mc_verdict = "|".join([f"{k[:3]}:{v['verdict'][:3]}" for k,v in mc_verdicts_dict.items()]) if mc_verdicts_dict else "N/A"
         bb_verdict = "|".join([f"{k[:3]}:{v['verdict'][:3]}" for k,v in bb_verdicts_dict.items()]) if bb_verdicts_dict else "N/A"
         
-        # Pull p05 for the primary asset (usually the first key, e.g. WIG or the Single Asset)
         mc_p05 = pd.NA
         if mc_verdicts_dict:
             first_mc_key = list(mc_verdicts_dict.keys())[0]
@@ -168,10 +161,6 @@ class SweepManager:
             first_bb_key = list(bb_verdicts_dict.keys())[0]
             bb_p05 = bb_verdicts_dict[first_bb_key].get("CAGR", {}).get("p05", pd.NA)
 
-        
-        
-        
-        
         return {
             "Strategy": strat_name, "train_years": train_y, "test_years": test_y, "stop_mode": stop_type,
             "oos_cagr": m_trimmed.get("CAGR", pd.NA), "oos_calmar": m_trimmed.get("CalMAR", pd.NA), 
@@ -187,14 +176,15 @@ class SweepManager:
         }
 
     def run_single_asset_iteration(self, asset_name, train_y, test_y, stop_type, common_start):
-        df = load_local_csv(asset_name.lower(), asset_name)
-        cash_df = load_local_csv("fund_2720", "MMF")
-        WIBOR1M = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
-        if WIBOR1M is not None:
-            cash_df = build_mmf_extended(cash_df, WIBOR1M, floor_date="1995-01-02")
+        # [ZMIANA] Bierzemy dane z data_map zamiast z dysku
+        df = self.data_map.get(asset_name.upper())
+        cash_df = self.data_map.get("MMF_EXT") # MMF_EXT przygotowany w main
         
+        if df is None or cash_df is None:
+            logging.error(f"Missing pre-loaded data for {asset_name}")
+            return None
+
         use_atr = (stop_type == "atr")
-        
         wf_equity, wf_results, _ = walk_forward(
             df=df, cash_df=cash_df, train_years=train_y, test_years=test_y,
             X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
@@ -210,24 +200,21 @@ class SweepManager:
         m = compute_metrics(trimmed)
 
         bh_equity, bh_metrics = compute_buy_and_hold(df, "Zamkniecie", common_start, trimmed.index.max())
-        regime_inputs = prepare_regime_inputs(df, wf_results, trimmed, bh_equity)
+        regime_inputs = prepare_regime_inputs(df=df, wf_results=wf_results, wf_equity=trimmed, bh_equity=bh_equity)
         
-        if regime_inputs: # <--- DODAJ TO SPRAWDZENIE
+        if regime_inputs:
             raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
             regime_metrics = extract_flat_regime_stats(raw_regimes)
             print_live_regime_report(regime_metrics)
         else:
-            logging.warning(f"Skipping regime analysis for {asset_name} due to insufficient data overlap.")
-            regime_metrics = extract_flat_regime_stats({}) # Zwróci słownik z NaN
+            regime_metrics = extract_flat_regime_stats({})
 
         mc_res, bb_res = {}, {}
         if self.n_mc > 0:
-            logging.info(f"  Running MC for Single Asset ({self.n_mc} iterations)...")
             mc_df = self.rob_engine.run_mc_test(wf_results, df, cash_df, n_samples=self.n_mc)
             mc_res[asset_name] = analyze_robustness(mc_df, compute_metrics(wf_equity), thresholds=EQUITY_THRESHOLDS_MC)
             
         if self.n_boot > 0:
-            logging.info(f"  Running Bootstrap for Single Asset ({self.n_boot} iterations)...")
             bb_df = self.rob_engine.run_bootstrap_test(df, cash_df, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
                                                        use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
                                                        X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
@@ -238,16 +225,18 @@ class SweepManager:
                                          wf_results, trimmed, m, bh_metrics, regime_metrics, mc_res, bb_res)
 
     def run_pension_iteration(self, train_y, test_y, stop_type_eq, common_start):
-        WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
-        MMF = load_local_csv("fund_2720", "MMF")
-        TBSP = build_and_upload(self.folder_id, "tbsp_extended_full.csv", "tbsp_extended_combined.csv", "^tbsp", "stooq", self.creds_path)
-        PL10Y, DE10Y = load_local_csv("pl10y", "PL10Y"), load_local_csv("de10y", "DE10Y")
-        WIBOR1M = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
-        derived = build_standard_two_asset_data(WIG, TBSP, MMF, WIBOR1M, PL10Y, DE10Y, "1995-01-02")
+        # [ZMIANA] Bierzemy dane z data_map
+        WIG = self.data_map.get("WIG")
+        TBSP = self.data_map.get("TBSP")
+        MMF_EXT = self.data_map.get("MMF_EXT")
+        PL10Y = self.data_map.get("PL10Y")
+        DE10Y = self.data_map.get("DE10Y")
+        
+        derived = build_standard_two_asset_data(WIG, TBSP, MMF_EXT, None, PL10Y, DE10Y, "1995-01-02")
         
         use_atr = (stop_type_eq == "atr")
-        wf_eq, wf_res_eq, wf_tr_eq = walk_forward(WIG, derived["mmf_ext"], train_y, test_y, use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None, n_jobs=get_n_jobs(), fast_mode=True)
-        wf_bd, wf_res_bd, wf_tr_bd = walk_forward(TBSP, derived["mmf_ext"], train_y, test_y, filter_modes_override=["ma"], X_grid=BOND_GRIDS["X_GRID"], n_jobs=get_n_jobs(), entry_gate_series=derived["bond_gate"], fast_mode=True)
+        wf_eq, wf_res_eq, wf_tr_eq = walk_forward(WIG, MMF_EXT, train_y, test_y, use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None, n_jobs=get_n_jobs(), fast_mode=True)
+        wf_bd, wf_res_bd, wf_tr_bd = walk_forward(TBSP, MMF_EXT, train_y, test_y, filter_modes_override=["ma"], X_grid=BOND_GRIDS["X_GRID"], n_jobs=get_n_jobs(), entry_gate_series=derived["bond_gate"], fast_mode=True)
         
         sig_eq, sig_bd = build_signal_series(wf_eq, wf_tr_eq), build_signal_series(wf_bd, wf_tr_bd)
         port_eq, port_wgts, realloc_log, alloc_df = allocation_walk_forward(derived["ret_eq"], derived["ret_bd"], derived["ret_mmf"], sig_eq, sig_bd, sig_eq, sig_bd, wf_res_eq, wf_res_bd)
@@ -258,38 +247,29 @@ class SweepManager:
         m = compute_metrics(trimmed)
 
         bh_equity, bh_metrics = compute_buy_and_hold(WIG, "Zamkniecie", common_start, trimmed.index.max())
-        regime_inputs = prepare_regime_inputs(WIG, wf_res_eq, trimmed, bh_equity)
+        regime_inputs = prepare_regime_inputs(df=WIG, wf_results=wf_res_eq, wf_equity=trimmed, bh_equity=bh_equity)
         
-
-        if regime_inputs: # <--- DODAJ TO SPRAWDZENIE
+        if regime_inputs:
             raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
             regime_metrics = extract_flat_regime_stats(raw_regimes)
             print_live_regime_report(regime_metrics)
         else:
-            logging.warning("Skipping regime analysis for PENSION due to insufficient data overlap.")
-            regime_metrics = extract_flat_regime_stats({}) # Zwróci słownik z NaN
-
+            regime_metrics = extract_flat_regime_stats({})
 
         mc_res, bb_res = {}, {}
         if self.n_mc > 0:
-            logging.info(f"  Running MC for WIG...")
-            mc_df = self.rob_engine.run_mc_test(wf_res_eq, WIG, derived["mmf_ext"], n_samples=self.n_mc)
+            mc_df = self.rob_engine.run_mc_test(wf_res_eq, WIG, MMF_EXT, n_samples=self.n_mc)
             mc_res["WIG"] = analyze_robustness(mc_df, compute_metrics(wf_eq), thresholds=EQUITY_THRESHOLDS_MC)
-            
-            logging.info(f"  Running MC for TBSP...")
-            mc_df_bd = self.rob_engine.run_mc_test(wf_res_bd, TBSP, derived["mmf_ext"], n_samples=self.n_mc)
+            mc_df_bd = self.rob_engine.run_mc_test(wf_res_bd, TBSP, MMF_EXT, n_samples=self.n_mc)
             mc_res["TBSP"] = analyze_robustness(mc_df_bd, compute_metrics(wf_bd), thresholds=BOND_THRESHOLDS_MC)
 
         if self.n_boot > 0:
-            logging.info(f"  Running Bootstrap for WIG...")
-            bb_df = self.rob_engine.run_bootstrap_test(WIG, derived["mmf_ext"], n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+            bb_df = self.rob_engine.run_bootstrap_test(WIG, MMF_EXT, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
                                                        use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
                                                        X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
                                                        fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"])
             bb_res["WIG"] = analyze_bootstrap(bb_df, compute_metrics(wf_eq), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
-            
-            logging.info(f"  Running Bootstrap for TBSP...")
-            bb_df_bd = self.rob_engine.run_bootstrap_test(TBSP, derived["mmf_ext"], n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+            bb_df_bd = self.rob_engine.run_bootstrap_test(TBSP, MMF_EXT, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
                                                           filter_modes_override=["ma"], X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
                                                           fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"])
             bb_res["TBSP"] = analyze_bootstrap(bb_df_bd, compute_metrics(wf_bd), thresholds=BOND_THRESHOLDS_BOOTSTRAP)
@@ -301,25 +281,27 @@ class SweepManager:
         cfg = ASSET_REGISTRY[variant_key]
         mode, fx_hedged = cfg["mode"], cfg["fx_hedged"]
         
-        WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
-        WIBOR1M = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
-        MMF = load_local_csv("fund_2720", "MMF")
-        if WIBOR1M is not None:
-            MMF = build_mmf_extended(MMF, WIBOR1M, floor_date="1995-01-02")
-            
-        TBSP = build_and_upload(self.folder_id, "tbsp_extended_full.csv", "tbsp_extended_combined.csv", "^tbsp", "stooq", self.creds_path)
-        fx_map = {c: load_local_csv(f"{c.lower()}pln", f"{c}PLN")["Zamkniecie"] for c in ["USD", "EUR", "JPY"]}
+        WIG = self.data_map.get("WIG")
+        MMF_EXT = self.data_map.get("MMF_EXT")
+        TBSP = self.data_map.get("TBSP")
+        
+        fx_map = {c: self.data_map.get(f"{c}PLN")["Zamkniecie"] for c in ["USD", "EUR", "JPY"]}
         
         if mode == "global_equity":
-            stoxx = build_and_upload(self.folder_id, "stoxx600.csv", "stoxx600_combined.csv", "^STOXX", "yfinance", self.creds_path)
-            assets = {"WIG": (WIG, None), "SP500": (load_local_csv("sp500", "SP500"), fx_map["USD"]), "STOXX600": (stoxx, fx_map["EUR"]), "Nikkei225": (load_local_csv("nikkei225", "Nikkei225"), fx_map["JPY"])}
+            assets = {
+                "WIG": (WIG, None), 
+                "SP500": (self.data_map.get("SP500"), fx_map["USD"]), 
+                "STOXX600": (self.data_map.get("STOXX600"), fx_map["EUR"]), 
+                "NIKKEI225": (self.data_map.get("NIKKEI225"), fx_map["JPY"])
+            }
         else:
-            msciw = build_and_upload(self.folder_id, "msci_world_wsj_raw.csv", "msci_world_combined.csv", "URTH", "yfinance", self.creds_path, is_msci_world=True)
-            assets = {"WIG": (WIG, None), "MSCI_World": (msciw, fx_map["USD"])}
+            assets = {
+                "WIG": (WIG, None), 
+                "MSCI_WORLD": (self.data_map.get("MSCI_WORLD"), fx_map["USD"])
+            }
 
         rets_dict, sigs_full = {}, {}
         use_atr = (stop_type_eq == "atr")
-        
         mc_data_queue = {}
         wig_wf_res = None
         
@@ -329,7 +311,9 @@ class SweepManager:
             proc_px = px_df if fx_hedged or fx_s is None else build_price_df_from_returns(ret_s, lbl)
             
             wf_e, wf_r, wf_t = walk_forward(
-                proc_px, MMF, train_y, test_y, 
+                proc_px, MMF_EXT, train_y, test_y, 
+                X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
+                fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
                 use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None, 
                 n_jobs=get_n_jobs(), fast_mode=True
             )
@@ -338,15 +322,17 @@ class SweepManager:
             if lbl == "WIG": wig_wf_res = wf_r
 
         wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
-            TBSP, MMF, train_y, test_y, filter_modes_override=["ma"], 
-            X_grid=BOND_GRIDS["X_GRID"], n_jobs=get_n_jobs(), fast_mode=True
+            TBSP, MMF_EXT, train_y, test_y, filter_modes_override=["ma"], 
+            X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
+            fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
+            n_jobs=get_n_jobs(), fast_mode=True
         )
         rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
         sigs_full["TBSP"] = build_signal_series(wf_bd, wf_tr_bd)
         mc_data_queue["TBSP"] = (wf_res_bd, TBSP, wf_bd, BOND_THRESHOLDS_MC, BOND_THRESHOLDS_BOOTSTRAP)
         
         port_eq, port_wgts, realloc_log, alloc_df = allocation_walk_forward_n(
-            rets_dict, sigs_full, sigs_full, MMF["Zamkniecie"].pct_change().dropna(), 
+            rets_dict, sigs_full, sigs_full, MMF_EXT["Zamkniecie"].pct_change().dropna(), 
             wf_res_bd, list(rets_dict.keys()), train_years=train_y
         )
         
@@ -356,31 +342,23 @@ class SweepManager:
         m = compute_metrics(trimmed)
 
         bh_equity, bh_metrics = compute_buy_and_hold(WIG, "Zamkniecie", common_start, trimmed.index.max())
-        regime_inputs = prepare_regime_inputs(
-            df=WIG, 
-            wf_results=wig_wf_res, 
-            wf_equity=trimmed, 
-            bh_equity=bh_equity
-            )
+        regime_inputs = prepare_regime_inputs(df=WIG, wf_results=wig_wf_res, wf_equity=trimmed, bh_equity=bh_equity)
      
-        if regime_inputs: # <--- DODAJ TO SPRAWDZENIE
+        if regime_inputs:
             raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
             regime_metrics = extract_flat_regime_stats(raw_regimes)
             print_live_regime_report(regime_metrics)
         else:
-            logging.warning(f"Skipping regime analysis for {variant_key} due to insufficient data overlap.")
-            regime_metrics = extract_flat_regime_stats({}) # Zwróci słownik z NaN
+            regime_metrics = extract_flat_regime_stats({})
 
         mc_res, bb_res = {}, {}
         for lbl, (res_df, px_df, base_eq, mc_thr, bb_thr) in mc_data_queue.items():
-            if self.n_mc > 0 and res_df is not None and not res_df.empty:
-                logging.info(f"  Running MC for {lbl}...")
-                mc_df = self.rob_engine.run_mc_test(res_df, px_df, MMF, n_samples=self.n_mc)
+            if self.n_mc > 0:
+                mc_df = self.rob_engine.run_mc_test(res_df, px_df, MMF_EXT, n_samples=self.n_mc)
                 mc_res[lbl] = analyze_robustness(mc_df, compute_metrics(base_eq), thresholds=mc_thr)
-            if self.n_boot > 0 and res_df is not None and not res_df.empty:
-                logging.info(f"  Running Bootstrap for {lbl}...")
+            if self.n_boot > 0:
                 bb_df = self.rob_engine.run_bootstrap_test(
-                    px_df, MMF, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+                    px_df, MMF_EXT, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
                     use_atr_stop=use_atr if lbl != "TBSP" else False, 
                     N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if (use_atr and lbl != "TBSP") else None,
                     filter_modes_override=["ma"] if lbl == "TBSP" else None,
@@ -393,7 +371,6 @@ class SweepManager:
 
 
 def print_sweep_report(results_df: pd.DataFrame, common_start):
-    """Outputs a formatted text report to logs."""
     if results_df.empty: return
     sep = "=" * 120
     logging.info(f"\n{sep}\nSWEEP OPTIMIZER REPORT (Common OOS Start: {common_start})\n{sep}")
@@ -413,7 +390,7 @@ def print_sweep_report(results_df: pd.DataFrame, common_start):
 
     regime_cols = [c for c in results_df.columns if "adx_" in c or "vol_" in c]
     if regime_cols:
-        logging.info(f"\n{sep}\n--- 2. REGIME DECOMPOSITION: CAGR in Specific Market Conditions, \n as defined by ADX regime - WIG for PENSION and GLOBAL, specific asset for SINGLE) ---")
+        logging.info(f"\n{sep}\n--- 2. REGIME DECOMPOSITION: CAGR in Specific Market Conditions ---")
         key_regime_cols = [
             "Strategy", "train_years", "test_years", "stop_mode",
             "adx_uptrend_strat_cagr", "adx_uptrend_bh_cagr",
@@ -422,17 +399,8 @@ def print_sweep_report(results_df: pd.DataFrame, common_start):
         ]
         avail_regime_cols = [c for c in key_regime_cols if c in results_df.columns]
         regime_df = results_df[avail_regime_cols].copy()
-        
         for col in avail_regime_cols:
             if "cagr" in col: regime_df[col] = regime_df[col].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "N/A")
-
-        rename_map = {
-            "adx_uptrend_strat_cagr": "UP_Strat", "adx_uptrend_bh_cagr": "UP_B&H",
-            "adx_downtrend_strat_cagr": "DOWN_Strat", "adx_downtrend_bh_cagr": "DOWN_B&H",
-            "adx_sideways_strat_cagr": "RGBOUND_Strat", "adx_sideways_bh_cagr": "RGBOUND_B&H"
-        }
-        regime_df = regime_df.rename(columns=rename_map)
-
         logging.info("\n" + regime_df.to_string(index=False))
     logging.info(sep)
 
@@ -440,77 +408,58 @@ def main():
     parser = argparse.ArgumentParser(description="Professional Multi-Strategy Sweeper")
     parser.add_argument("--mode", choices=["SINGLE", "PENSION", "GLOBAL", "ALL"], required=True)
     parser.add_argument("--assets", nargs="+", help="Dla trybu SINGLE (np. WIG20TR SP500)")
-    parser.add_argument("--n_mc", type=int, default=0, help="Liczba probek MC (0 = pomin)")
-    parser.add_argument("--n_boot", type=int, default=0, help="Liczba probek Bootstrap (0 = pomin)")
+    parser.add_argument("--n_mc", type=int, default=0, help="Liczba probek MC")
+    parser.add_argument("--n_boot", type=int, default=0, help="Liczba probek Bootstrap")
     args = parser.parse_args()
 
-    
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     log_file = OUTPUT_DIR / f"sweep_{args.mode.lower()}_run.log"
-    
     for h in logging.root.handlers[:]: logging.root.removeHandler(h)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s",
                         handlers=[logging.FileHandler(log_file, mode="w", encoding='utf-8'), logging.StreamHandler(sys.stdout)])
     
-    manager = SweepManager(args.n_mc, args.n_boot)
-    results = []
+    # 1. Update data
+    DataUpdater().run_full_update(get_funds=False)
 
-    updater = DataUpdater(); updater.run_full_update(get_funds=False)
-
-# --- PRZYGOTOWANIE DANYCH DO OOS ---
-    logging.info("Preparing extended data series for OOS calculation...")
+    logging.info("Preparing data map for all assets...")
     creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
     folder_id = os.environ.get("GDRIVE_FOLDER_ID")
     
-    # 1. Budujemy/pobieramy serie o długiej historii (Klucze zgodne z ASSET_REGISTRY)
-    tbsp_df = build_and_upload(folder_id, "tbsp_extended_full.csv", "tbsp_extended_combined.csv", "^tbsp", "stooq", creds_path)
-    msciw_df = build_and_upload(folder_id, "msci_world_wsj_raw.csv", "msci_world_combined.csv", "URTH", "yfinance", creds_path, is_msci_world=True)
-    stoxx_df = build_and_upload(folder_id, "stoxx600.csv", "stoxx600_combined.csv", "^STOXX", "yfinance", creds_path)
-
-    # 2. Inicjalizujemy mapę danych - używamy wyłącznie wielkich liter dla bezpieczeństwa porównań
+    # Przechowujemy wszystkie dane w jednej mapie (UPPERCASE)
     data_map = {}
-    if tbsp_df is not None: 
-        data_map["TBSP"] = tbsp_df
-    if msciw_df is not None: 
-        data_map["MSCI_WORLD"] = msciw_df
-    if stoxx_df is not None: 
-        data_map["STOXX600"] = stoxx_df
-
-    # 3. Lista aktywów do doładowania
-    check_list = ["WIG", "SP500", "NIKKEI225", "WIG20TR", "MWIG40TR", "SWIG80TR", "NASDAQ100"]
-    if args.assets: 
-        check_list.extend([a.upper() for a in args.assets])
     
-    unique_assets = set([a.upper() for a in check_list])
-    
-    for asset_key in unique_assets:
-        # Jeśli klucz już jest (np. MSCI_WORLD), pomijamy
-        if asset_key in data_map:
-            continue
-            
-        # Specjalna obsługa nazw plików (ticker musi być mały)
-        ticker_name = asset_key.lower()
-        
-        # Próba ładowania
-        df = load_local_csv(
-            ticker=ticker_name, 
-            label=asset_key, 
-            mandatory=False
-        )
-        
-        if df is not None: 
-            data_map[asset_key] = df
+    # Ładowanie walut dla GLOBAL
+    for c in ["USD", "EUR", "JPY"]:
+        df = load_local_csv(f"{c.lower()}pln", f"{c}PLN")
+        if df is not None: data_map[f"{c}PLN"] = df
 
-    # 5. Debugowanie zawartości przed obliczeniem startu
-    for k, v in data_map.items():
-        logging.info(f"Final Data Map: {k:<12} | Start: {v.index.min().date()} | End: {v.index.max().date()}")
+    # Ładowanie serii przedłużonych
+    data_map["TBSP"] = build_and_upload(folder_id, "tbsp_extended_full.csv", "tbsp_extended_combined.csv", "^tbsp", "stooq", creds_path)
+    data_map["MSCI_WORLD"] = build_and_upload(folder_id, "msci_world_wsj_raw.csv", "msci_world_combined.csv", "URTH", "yfinance", creds_path, is_msci_world=True)
+    data_map["STOXX600"] = build_and_upload(folder_id, "stoxx600.csv", "stoxx600_combined.csv", "^STOXX", "yfinance", creds_path)
 
-    # 6. Obliczenie Common OOS Start
-    common_start = get_common_oos_start(
-        assets_data=data_map, 
-        window_configs=SWEEP_WINDOW_CONFIGS
-    )
+    # Ładowanie reszty
+    check_list = ["WIG", "SP500", "NIKKEI225", "WIG20TR", "MWIG40TR", "SWIG80TR", "NASDAQ100", "PL10Y", "DE10Y"]
+    if args.assets: check_list.extend([a.upper() for a in args.assets])
     
+    for asset_key in set(check_list):
+        if asset_key in data_map: continue
+        df = load_local_csv(asset_key.lower(), asset_key, mandatory=False)
+        if df is not None: data_map[asset_key] = df
+
+    # Przygotowanie przedłużonego MMF (raz dla wszystkich)
+    mmf_raw = load_local_csv("fund_2720", "MMF")
+    wibor = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
+    data_map["MMF_EXT"] = build_mmf_extended(mmf_raw, wibor, floor_date="1995-01-02")
+
+    # 2. Calculate Common OOS Start
+    common_start = get_common_oos_start(data_map, SWEEP_WINDOW_CONFIGS)
+
+    # 3. Init Manager with the map
+    manager = SweepManager(args.n_mc, args.n_boot, data_map)
+    results = []
+
+    # 4. Iteration loops
     if args.mode in ["SINGLE", "ALL"] and args.assets:
         for asset in args.assets:
             for ty, te in SWEEP_WINDOW_CONFIGS:
@@ -534,27 +483,17 @@ def main():
                 res = manager.run_pension_iteration(ty, te, st, common_start)
                 if res: results.append(res)
 
+    # 5. Saving
     if results:
         final_df = pd.DataFrame(results).sort_values("oos_calmar", ascending=False)
         print_sweep_report(final_df, common_start.date())
-        
         ts = dt.datetime.now().strftime("%Y%m%d_%H%M")
-        res_path = OUTPUT_DIR / f"sweep_results_{ts}.csv"
-        res_path_latest = OUTPUT_DIR / f"sweep_results_{ts}.csv"
-      
-        win_path =  OUTPUT_DIR / f"sweep_windows_{ts}.csv"
-        win_path_latest =  OUTPUT_DIR / f"sweep_windows_{ts}.csv"
-        
-        final_df.to_csv(res_path, index=False, sep=";")
-        final_df.to_csv(res_path_latest, index=False, sep=";")
-        
+        final_df.to_csv(OUTPUT_DIR / f"sweep_results_{ts}.csv", index=False, sep=";")
+        final_df.to_csv(OUTPUT_DIR / "sweep_results_latest.csv", index=False, sep=";")
         if manager.all_windows:
             win_df = pd.DataFrame(manager.all_windows)
-            win_df.to_csv(win_path, index=False, sep=";")
-            win_df.to_csv(win_path_latest , index=False, sep=";")
-            logging.info(f"Saved individual windows stats to: {win_path}")
-
-        logging.info(f"Full results saved to: {res_path}")
+            win_df.to_csv(OUTPUT_DIR / f"sweep_windows_{ts}.csv", index=False, sep=";")
+            win_df.to_csv(OUTPUT_DIR / "sweep_windows_latest.csv", index=False, sep=";")
 
 if __name__ == "__main__":
     main()
