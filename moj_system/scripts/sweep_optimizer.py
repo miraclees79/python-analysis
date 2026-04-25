@@ -462,37 +462,38 @@ def main():
     creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
     folder_id = os.environ.get("GDRIVE_FOLDER_ID")
     
-    # 1. Budujemy/pobieramy serie o długiej historii
+    # 1. Budujemy/pobieramy serie o długiej historii (Klucze zgodne z ASSET_REGISTRY)
     tbsp_df = build_and_upload(folder_id, "tbsp_extended_full.csv", "tbsp_extended_combined.csv", "^tbsp", "stooq", creds_path)
     msciw_df = build_and_upload(folder_id, "msci_world_wsj_raw.csv", "msci_world_combined.csv", "URTH", "yfinance", creds_path, is_msci_world=True)
     stoxx_df = build_and_upload(folder_id, "stoxx600.csv", "stoxx600_combined.csv", "^STOXX", "yfinance", creds_path)
 
-    # 2. Inicjalizujemy mapę danych z góry ustalonymi, "dobrymi" wersjami
+    # 2. Inicjalizujemy mapę danych - używamy wyłącznie wielkich liter dla bezpieczeństwa porównań
     data_map = {}
     if tbsp_df is not None: 
         data_map["TBSP"] = tbsp_df
     if msciw_df is not None: 
-        data_map["MSCI_World"] = msciw_df
+        data_map["MSCI_WORLD"] = msciw_df
     if stoxx_df is not None: 
         data_map["STOXX600"] = stoxx_df
 
-    # 3. Lista aktywów, które wystarczy załadować standardowo z lokalnego raw_csv
-    # Usuwamy z niej te, które już mamy w data_map (TBSP, MSCI_World, STOXX600)
-    check_list = ["WIG", "SP500", "Nikkei225", "WIG20TR", "MWIG40TR", "SWIG80TR", "NASDAQ100"]
+    # 3. Lista aktywów do doładowania
+    check_list = ["WIG", "SP500", "NIKKEI225", "WIG20TR", "MWIG40TR", "SWIG80TR", "NASDAQ100"]
     if args.assets: 
-        check_list.extend(args.assets)
+        check_list.extend([a.upper() for a in args.assets])
     
-    # Ujednolicamy listę (usuwamy duplikaty i sprawdzamy co już mamy)
-    unique_assets = set(check_list)
+    unique_assets = set([a.upper() for a in check_list])
     
     for asset_key in unique_assets:
-        # Pancerne sprawdzenie: jeśli klucz (np. "MSCI_World") już jest w mapie, nie ładuj go ponownie z dysku!
+        # Jeśli klucz już jest (np. MSCI_WORLD), pomijamy
         if asset_key in data_map:
             continue
             
-        # Próba ładowania z jawnymi argumentami
+        # Specjalna obsługa nazw plików (ticker musi być mały)
+        ticker_name = asset_key.lower()
+        
+        # Próba ładowania
         df = load_local_csv(
-            ticker=asset_key.lower(), 
+            ticker=ticker_name, 
             label=asset_key, 
             mandatory=False
         )
@@ -500,11 +501,16 @@ def main():
         if df is not None: 
             data_map[asset_key] = df
 
-    # 4. Teraz obliczenie Common OOS Start będzie bazować na poprawnych datach (od 1990)
+    # 5. Debugowanie zawartości przed obliczeniem startu
+    for k, v in data_map.items():
+        logging.info(f"Final Data Map: {k:<12} | Start: {v.index.min().date()} | End: {v.index.max().date()}")
+
+    # 6. Obliczenie Common OOS Start
     common_start = get_common_oos_start(
         assets_data=data_map, 
         window_configs=SWEEP_WINDOW_CONFIGS
     )
+    
     if args.mode in ["SINGLE", "ALL"] and args.assets:
         for asset in args.assets:
             for ty, te in SWEEP_WINDOW_CONFIGS:
