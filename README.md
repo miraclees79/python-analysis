@@ -94,9 +94,7 @@ The following consolidation work was completed. All changes preserve backward-co
 
 **Deployment gate**: configs must pass both MC parameter perturbation and block bootstrap before deployment consideration. MC alone is insufficient.
 
-**MSCI_World note**: shows systematic downtrend protection failures across all tested configurations. Retained in `ASSET_REGISTRY` and monitoring infrastructure for further research, not production deployment.
 
-**SP500 note**: only one survivor config (6+2 fixed). Assessed as a parameter anomaly pending further evidence from the current sweep rerun.
 
 ---
 
