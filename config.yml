@@ -24,6 +24,7 @@ exclude_dirs:
   - ".vscode"
   - "dist"
   - "build"
+  - "outputs"
 
 # Lista konkretnych plików (według nazwy), które mają być zignorowane.
 # WAŻNE: Dodaj tutaj nazwę pliku wyjściowego oraz pliku konfiguracyjnego,
