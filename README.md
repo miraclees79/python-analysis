@@ -1,6 +1,6 @@
 # Pension Strategy — Quantitative Investment System
 
-Automated analysis, optimisation, and monitoring system for trend-following strategies across Polish and global equity markets. Structured around a pension fund context where capital protection in downtrends is a primary evaluation criterion alongside return metrics.
+Automated analysis, optimisation, and monitoring system for trend-following strategies across Polish and global equity markets. Structured around a pension fund context where capital protection in downtrends is a primary evaluation criterion alongside return metrics. None of this code constitutes investment advice or any recommendation to buy, sell or refrain from buying and selling any financial instruments whatsoever.
 
 ---
 
