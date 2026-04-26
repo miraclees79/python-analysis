@@ -7,6 +7,7 @@ moj_system/scripts/validate_robustness.py
 Deep Validation Engine. Performs Level 1 (MC), Level 2 (Bootstrap),
 and optionally Level 3 (Allocation Weight Perturbation) testing for
 chosen configurations of Single, Pension, or Global strategies.
+Includes automated OOS chart generation.
 """
 
 import argparse
@@ -15,17 +16,19 @@ import sys
 import logging
 import pandas as pd
 import tempfile
+import numpy as np
 import matplotlib
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 matplotlib.use('Agg')
 
 # --- PATH SETUP ---
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(script_dir, '..', '..'))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+from moj_system.config import OUTPUT_DIR
 
 # --- CORE ENGINE IMPORTS ---
-from moj_system.core.strategy_engine import get_n_jobs, walk_forward, compute_metrics
+from moj_system.core.strategy_engine import (
+    get_n_jobs, walk_forward, compute_metrics, compute_buy_and_hold
+)
 from moj_system.core.pension_engine import (
     build_signal_series, allocation_walk_forward, build_standard_two_asset_data,
     allocation_weight_robustness, print_allocation_robustness_report
@@ -57,12 +60,52 @@ class ValidationManager:
         self.creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
         self.folder_id = os.environ.get("GDRIVE_FOLDER_ID")
 
+    def _save_validation_chart(self, strategy_equity, bh_equity, title, filename):
+        """Generates a 2-panel OOS validation chart (Equity + Drawdown)."""
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        chart_path = OUTPUT_DIR / filename
+
+        fig = plt.figure(figsize=(14, 10))
+        gs = gridspec.GridSpec(nrows=2, ncols=1, height_ratios=[2, 1], hspace=0.2)
+        
+        ax1 = fig.add_subplot(gs[0])
+        ax2 = fig.add_subplot(gs[1], sharex=ax1)
+
+        # Panel 1: Equity
+        ax1.plot(strategy_equity.index, strategy_equity.values, label="Strategy (OOS)", color="steelblue", linewidth=2)
+        if bh_equity is not None:
+            # Align and normalize BH
+            bh_aligned = bh_equity.reindex(index=strategy_equity.index).ffill()
+            bh_norm = bh_aligned / bh_aligned.iloc[0]
+            ax1.plot(bh_norm.index, bh_norm.values, label="Buy & Hold", color="grey", linestyle="--", alpha=0.7)
+
+        ax1.set_title(label=title, fontsize=14, fontweight="bold")
+        ax1.set_ylabel(ylabel="Normalised Equity")
+        ax1.legend(loc="upper left")
+        ax1.grid(visible=True, alpha=0.3)
+
+        # Panel 2: Drawdown
+        dd_strat = strategy_equity / strategy_equity.cummax() - 1
+        ax2.fill_between(dd_strat.index, dd_strat.values, 0, color="steelblue", alpha=0.3, label="Strategy DD")
+        
+        if bh_equity is not None:
+            dd_bh = bh_norm / bh_norm.cummax() - 1
+            ax2.plot(dd_bh.index, dd_bh.values, color="grey", linestyle="--", alpha=0.5)
+
+        ax2.set_ylabel(ylabel="Drawdown")
+        ax2.grid(visible=True, alpha=0.3)
+        ax2.set_ylim(top=0)
+
+        plt.savefig(fname=chart_path, dpi=72, bbox_inches="tight")
+        plt.close(fig=fig)
+        logging.info(msg=f"Validation chart saved to: {chart_path}")
+
     def validate_single(self, asset_name, train_y, test_y, stop_type, df, cash_df):
         logging.info(f"VALIDATING SINGLE ASSET: {asset_name} | {train_y}+{test_y} | {stop_type}")
         use_atr = (stop_type == "atr")
 
         # 1. Base Walk-Forward
-        wf_eq, wf_res, _ = walk_forward(
+        wf_eq, wf_res, wf_tr = walk_forward(
             df=df, cash_df=cash_df, train_years=train_y, test_years=test_y,
             X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
             fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
@@ -70,92 +113,94 @@ class ValidationManager:
             n_jobs=get_n_jobs(), fast_mode=True
         )
         
+        # Generowanie wykresu
+        bh_eq, bh_m = compute_buy_and_hold(df=df, price_col="Zamkniecie", start=wf_eq.index.min(), end=wf_eq.index.max())
+        self._save_validation_chart(
+            strategy_equity=wf_eq, 
+            bh_equity=bh_eq, 
+            title=f"OOS Validation: {asset_name} ({train_y}+{test_y} {stop_type})",
+            filename=f"validate_{asset_name.lower()}_{train_y}_{test_y}.png"
+        )
+
         # 2. MC Test
         if self.n_mc > 0:
-            mc_results = self.rob_engine.run_mc_test(wf_res, df, cash_df, n_samples=self.n_mc)
-            analyze_robustness(mc_results, compute_metrics(wf_eq), thresholds=EQUITY_THRESHOLDS_MC)
+            mc_results = self.rob_engine.run_mc_test(wf_results=wf_res, df=df, cash_df=cash_df, n_samples=self.n_mc)
+            analyze_robustness(results_df=mc_results, baseline_metrics=compute_metrics(wf_eq), thresholds=EQUITY_THRESHOLDS_MC)
 
         # 3. Bootstrap Test
         if self.n_boot > 0:
             bb_results = self.rob_engine.run_bootstrap_test(
-                df, cash_df, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+                df=df, cash_df=cash_df, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
                 X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
                 fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
                 use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None
             )
-            analyze_bootstrap(bb_results, compute_metrics(wf_eq), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
+            analyze_bootstrap(results_df=bb_results, baseline_metrics=compute_metrics(wf_eq), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
 
     def validate_pension(self, train_y, test_y, stop_type_eq):
         logging.info(f"VALIDATING PENSION PORTFOLIO | EQ Stop: {stop_type_eq}")
         
-        WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
-        MMF = load_local_csv("fund_2720", "MMF")
-        TBSP = build_and_upload(self.folder_id, "tbsp_extended_full.csv", "tbsp_extended_combined.csv", "^tbsp", "stooq", self.creds_path)
-        WIBOR1M = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
-        PL10Y, DE10Y = load_local_csv("pl10y", "PL10Y"), load_local_csv("de10y", "DE10Y")
-        derived = build_standard_two_asset_data(WIG, TBSP, MMF, WIBOR1M, PL10Y, DE10Y, "1995-01-02")
+        WIG = load_local_csv(ticker="wig", label="WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
+        MMF = load_local_csv(ticker="fund_2720", label="MMF")
+        TBSP = build_and_upload(folder_id=self.folder_id, raw_filename="tbsp_extended_full.csv", combined_filename="tbsp_extended_combined.csv", extension_ticker="^tbsp", extension_source="stooq", credentials_path=self.creds_path)
+        WIBOR1M = load_local_csv(ticker="wibor1m", label="WIBOR1M", mandatory=False)
+        PL10Y, DE10Y = load_local_csv(ticker="pl10y", label="PL10Y"), load_local_csv(ticker="de10y", label="DE10Y")
+        derived = build_standard_two_asset_data(wig=WIG, tbsp=TBSP, mmf=MMF, wibor1m=WIBOR1M, pl10y=PL10Y, de10y=DE10Y, mmf_floor="1995-01-02")
         use_atr_eq = (stop_type_eq == 'atr')
         
+        # PENSION składa się z komponentów, ale potrzebujemy też krzywej portfela do wykresu
         logging.info("\n" + "="*60 + "\n--- Component 1: WIG Robustness ---\n" + "="*60)
-        # Przekazujemy WIG już z nałożonym floor'em 1995-01-02 z portfela PENSION
-        self.validate_single("WIG", train_y, test_y, stop_type_eq, WIG, derived["mmf_ext"])
+        self.validate_single(asset_name="WIG", train_y=train_y, test_y=test_y, stop_type=stop_type_eq, df=WIG, cash_df=derived["mmf_ext"])
         
         logging.info("\n" + "="*60 + "\n--- Component 2: TBSP Robustness ---\n" + "="*60)
-        wf_bd_eq, wf_bd_res, _ = walk_forward(
-            TBSP, derived["mmf_ext"], train_y, test_y, filter_modes_override=["ma"], 
+        wf_bd_eq, wf_bd_res, wf_bd_tr = walk_forward(
+            df=TBSP, cash_df=derived["mmf_ext"], train_years=train_y, test_years=test_y, filter_modes_override=["ma"], 
             X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
             fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
             n_jobs=get_n_jobs(), fast_mode=True
         )
-        if self.n_mc > 0:
-            mc_bd = self.rob_engine.run_mc_test(wf_bd_res, TBSP, derived["mmf_ext"], n_samples=self.n_mc)
-            analyze_robustness(mc_bd, compute_metrics(wf_bd_eq), thresholds=BOND_THRESHOLDS_MC)
-        if self.n_boot > 0:
-            bb_bd = self.rob_engine.run_bootstrap_test(
-                TBSP, derived["mmf_ext"], n_samples=self.n_boot, train_years=train_y, test_years=test_y,
-                filter_modes_override=["ma"], 
-                X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
-                fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
-                use_atr_stop=False
-            )
-            analyze_bootstrap(bb_bd, compute_metrics(wf_bd_eq), thresholds=BOND_THRESHOLDS_BOOTSTRAP)
+        
+        # Symulacja portfela bazowego dla wykresu
+        wf_eq, wf_res_eq, wf_tr_eq = walk_forward(
+            df=WIG, cash_df=derived["mmf_ext"], train_years=train_y, test_years=test_y, 
+            X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
+            fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
+            use_atr_stop=use_atr_eq, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr_eq else None,
+            n_jobs=get_n_jobs(), fast_mode=True
+        )
+        
+        sig_eq = build_signal_series(wf_equity=wf_eq, wf_trades=wf_tr_eq)
+        sig_bd = build_signal_series(wf_equity=wf_bd_eq, wf_trades=wf_bd_tr)
+        
+        port_eq, port_wgts, realloc_log, alloc_df = allocation_walk_forward(
+            equity_returns=derived["ret_eq"], bond_returns=derived["ret_bd"], mmf_returns=derived["ret_mmf"], 
+            sig_equity_full=sig_eq, sig_bond_full=sig_bd,
+            sig_equity_oos=sig_eq.loc[wf_eq.index.min():], sig_bond_oos=sig_bd.loc[wf_eq.index.min():], 
+            wf_results_eq=wf_res_eq, wf_results_bd=wf_bd_res
+        )
+
+        bh_wig, _ = compute_buy_and_hold(df=WIG, price_col="Zamkniecie", start=port_eq.index.min(), end=port_eq.index.max())
+        self._save_validation_chart(
+            strategy_equity=port_eq, 
+            bh_equity=bh_wig, 
+            title=f"OOS Validation: PENSION Portfolio ({train_y}+{test_y})",
+            filename=f"validate_pension_{train_y}_{test_y}.png"
+        )
 
         # Level 3 - Perturbacja Wag
         if self.run_weights_perturb:
             logging.info("\n" + "="*80 + "\n--- Level 3: Allocation Weight Perturbation Test (PENSION) ---\n" + "="*80)
-            
-            wf_eq, wf_res_eq, wf_tr_eq = walk_forward(
-                WIG, derived["mmf_ext"], train_y, test_y, 
-                X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
-                fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
-                use_atr_stop=use_atr_eq, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr_eq else None,
-                n_jobs=get_n_jobs(), fast_mode=True
-            )
-            sig_eq_full = build_signal_series(wf_eq, wf_tr_eq)
-            sig_bd_full = build_signal_series(wf_bd_eq, _)
-            
-            oos_start = max(wf_res_eq["TestStart"].min(), wf_bd_res["TestStart"].min())
-            oos_end = min(wf_res_eq["TestEnd"].max(), wf_bd_res["TestEnd"].max())
-            sig_eq_oos = sig_eq_full.loc[oos_start:oos_end]
-            sig_bd_oos = sig_bd_full.loc[oos_start:oos_end]
-
-            port_eq, _, _, alloc_df = allocation_walk_forward(
-                derived["ret_eq"], derived["ret_bd"], derived["ret_mmf"], sig_eq_full, sig_bd_full,
-                sig_eq_oos, sig_bd_oos, wf_res_eq, wf_bd_res
-            )
-            
-            baseline_metrics = compute_metrics(port_eq)
-
+            baseline_metrics = compute_metrics(equity=port_eq)
             robust_df = allocation_weight_robustness(
                 alloc_results_df=alloc_df,
                 equity_returns=derived["ret_eq"],
                 bond_returns=derived["ret_bd"],
                 mmf_returns=derived["ret_mmf"],
-                sig_equity_oos=sig_eq_oos,
-                sig_bond_oos=sig_bd_oos,
+                sig_equity_oos=sig_eq.loc[wf_eq.index.min():],
+                sig_bond_oos=sig_bd.loc[wf_eq.index.min():],
                 baseline_metrics=baseline_metrics
             )
-            print_allocation_robustness_report(robust_df)
+            print_allocation_robustness_report(results_df=robust_df)
 
     def validate_global(self, variant, train_y, test_y, stop_type_eq):
         logging.info(f"VALIDATING GLOBAL {variant} | Train: {train_y} | Stop: {stop_type_eq}")
@@ -164,122 +209,80 @@ class ValidationManager:
         mode, fx_hedged = cfg["mode"], cfg.get("fx_hedged", True)
         use_atr = (stop_type_eq == "atr")
 
-        WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
-        WIBOR1M = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
-        MMF = load_local_csv("fund_2720", "MMF")
-        if WIBOR1M is not None:
-            MMF = build_mmf_extended(MMF, WIBOR1M, floor_date="1995-01-02")
+        WIG = load_local_csv(ticker="wig", label="WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
+        MMF = load_local_csv(ticker="fund_2720", label="MMF")
+        WIBOR1M = load_local_csv(ticker="wibor1m", label="WIBOR1M", mandatory=False)
+        mmf_ext = build_mmf_extended(mmf_df=MMF, wibor1m_df=WIBOR1M, floor_date="1995-01-02")
             
-        TBSP = build_and_upload(self.folder_id, "tbsp_extended_full.csv", "tbsp_extended_combined.csv", "^tbsp", "stooq", self.creds_path)
-        fx_map = {c: load_local_csv(f"{c.lower()}pln", f"{c}PLN")["Zamkniecie"] for c in ["USD", "EUR", "JPY"]}
+        TBSP = build_and_upload(folder_id=self.folder_id, raw_filename="tbsp_extended_full.csv", combined_filename="tbsp_extended_combined.csv", extension_ticker="^tbsp", extension_source="stooq", credentials_path=self.creds_path)
+        fx_map = {c: load_local_csv(ticker=f"{c.lower()}pln", label=f"{c}PLN")["Zamkniecie"] for c in ["USD", "EUR", "JPY"]}
         
         if mode == "global_equity":
-            stoxx = build_and_upload(self.folder_id, "stoxx600.csv", "stoxx600_combined.csv", "^STOXX", "yfinance", self.creds_path)
+            stoxx = build_and_upload(folder_id=self.folder_id, raw_filename="stoxx600.csv", combined_filename="stoxx600_combined.csv", extension_ticker="^STOXX", extension_source="yfinance", credentials_path=self.creds_path)
             assets = {
                 "WIG": (WIG, None), 
-                "SP500": (load_local_csv("sp500", "SP500"), fx_map["USD"]), 
+                "SP500": (load_local_csv(ticker="sp500", label="SP500"), fx_map["USD"]), 
                 "STOXX600": (stoxx, fx_map["EUR"]), 
-                "Nikkei225": (load_local_csv("nikkei225", "Nikkei225"), fx_map["JPY"])
+                "Nikkei225": (load_local_csv(ticker="nikkei225", label="Nikkei225"), fx_map["JPY"])
             }
         else:
-            msciw = build_and_upload(self.folder_id, "msci_world_wsj_raw.csv", "msci_world_combined.csv", "URTH", "yfinance", self.creds_path, is_msci_world=True)
+            msciw = build_and_upload(folder_id=self.folder_id, raw_filename="msci_world_wsj_raw.csv", combined_filename="msci_world_combined.csv", extension_ticker="URTH", extension_source="yfinance", credentials_path=self.creds_path, is_msci_world=True)
             assets = {"WIG": (WIG, None), "MSCI_World": (msciw, fx_map["USD"])}
 
         rets_dict, sigs_full = {}, {}
         
-        # Testy komponentów: MC + Bootstrap na danych syntetycznych (skorygowanych o FX)
         for lbl, (px_df, fx_s) in assets.items():
             logging.info("\n" + "="*60 + f"\n--- Component Robustness: {lbl} ---\n" + "="*60)
-            
-            ret_s = build_return_series(px_df, fx_series=fx_s, hedged=fx_hedged)
+            ret_s = build_return_series(price_df=px_df, fx_series=fx_s, hedged=fx_hedged)
             rets_dict[lbl] = ret_s.dropna()
-            proc_px = px_df if fx_hedged or fx_s is None else build_price_df_from_returns(ret_s, lbl)
+            proc_px = px_df if fx_hedged or fx_s is None else build_price_df_from_returns(ret=ret_s, label=lbl)
             
             wf_e, wf_r, wf_t = walk_forward(
-                proc_px, MMF, train_y, test_y, 
+                df=proc_px, cash_df=mmf_ext, train_years=train_y, test_years=test_y, 
                 X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
                 fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
                 use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None, 
                 n_jobs=get_n_jobs(), fast_mode=True
             )
-            sigs_full[lbl] = build_signal_series(wf_e, wf_t)
+            sigs_full[lbl] = build_signal_series(wf_equity=wf_e, wf_trades=wf_t)
 
             if self.n_mc > 0:
-                mc_res = self.rob_engine.run_mc_test(wf_r, proc_px, MMF, n_samples=self.n_mc)
-                analyze_robustness(mc_res, compute_metrics(wf_e), thresholds=EQUITY_THRESHOLDS_MC)
+                mc_res = self.rob_engine.run_mc_test(wf_results=wf_r, df=proc_px, cash_df=mmf_ext, n_samples=self.n_mc)
+                analyze_robustness(results_df=mc_res, baseline_metrics=compute_metrics(equity=wf_e), thresholds=EQUITY_THRESHOLDS_MC)
 
-            if self.n_boot > 0:
-                bb_res = self.rob_engine.run_bootstrap_test(
-                    proc_px, MMF, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
-                    X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
-                    fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
-                    use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None
-                )
-                analyze_bootstrap(bb_res, compute_metrics(wf_e), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
-
-        # Komponent obligacyjny
-        logging.info("\n" + "="*60 + "\n--- Component Robustness: TBSP ---\n" + "="*60)
         wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
-            TBSP, MMF, train_y, test_y, filter_modes_override=["ma"], 
+            df=TBSP, cash_df=mmf_ext, train_years=train_y, test_years=test_y, filter_modes_override=["ma"], 
             X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
             fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
             n_jobs=get_n_jobs(), fast_mode=True
         )
         rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
-        sigs_full["TBSP"] = build_signal_series(wf_bd, wf_tr_bd)
+        sigs_full["TBSP"] = build_signal_series(wf_equity=wf_bd, wf_trades=wf_tr_bd)
 
-        if self.n_mc > 0:
-            mc_bd = self.rob_engine.run_mc_test(wf_res_bd, TBSP, MMF, n_samples=self.n_mc)
-            analyze_robustness(mc_bd, compute_metrics(wf_bd), thresholds=BOND_THRESHOLDS_MC)
-
-        if self.n_boot > 0:
-            bb_bd = self.rob_engine.run_bootstrap_test(
-                TBSP, MMF, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
-                filter_modes_override=["ma"], 
-                X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
-                fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
-                use_atr_stop=False
-            )
-            analyze_bootstrap(bb_bd, compute_metrics(wf_bd), thresholds=BOND_THRESHOLDS_BOOTSTRAP)
-
-        # 3. Alokacja N-Asset i wyliczenie linii bazowej
-        logging.info("\n" + "-"*60 + "\nRunning N-Asset allocation walk-forward...\n" + "-"*60)
-        asset_keys = list(rets_dict.keys())
-        
+        # Alokacja N-Asset i Wykres
         port_eq, _, _, alloc_df = allocation_walk_forward_n(
-            returns_dict=rets_dict,
-            signals_full_dict=sigs_full,
-            signals_oos_dict=sigs_full, 
-            mmf_returns=MMF["Zamkniecie"].pct_change().dropna(),
-            wf_results_ref=wf_res_bd, 
-            asset_keys=asset_keys,
-            train_years=train_y
+            returns_dict=rets_dict, signals_full_dict=sigs_full, signals_oos_dict=sigs_full, 
+            mmf_returns=mmf_ext["Zamkniecie"].pct_change().dropna(), wf_results_ref=wf_res_bd, 
+            asset_keys=list(rets_dict.keys()), train_years=train_y
         )
         
-        baseline_metrics = compute_metrics(port_eq)
+        bh_wig, _ = compute_buy_and_hold(df=WIG, price_col="Zamkniecie", start=port_eq.index.min(), end=port_eq.index.max())
+        self._save_validation_chart(
+            strategy_equity=port_eq, 
+            bh_equity=bh_wig, 
+            title=f"OOS Validation: GLOBAL {variant} ({train_y}+{test_y})",
+            filename=f"validate_{variant.lower()}_{train_y}_{test_y}.png"
+        )
 
-        # 4. Perturbacja wag (Level 3 - focus: WIG)
         if self.run_weights_perturb:
             logging.info("\n" + "="*80 + "\n--- Level 3: Allocation Weight Perturbation Test (GLOBAL) ---\n" + "="*80)
-            
-            oos_start = wf_res_bd["TestStart"].min()
-            oos_end = wf_res_bd["TestEnd"].max()
-            sigs_oos = {k: v.loc[oos_start:oos_end] for k, v in sigs_full.items()}
-
-            focus_asset = "WIG"
-            logging.info(f"Running Weight Perturbation Test (focus: {focus_asset})...")
-            
+            baseline_metrics = compute_metrics(equity=port_eq)
             robust_df = allocation_weight_robustness_n(
-                alloc_results_df=alloc_df,
-                returns_dict=rets_dict,
-                mmf_returns=MMF["Zamkniecie"].pct_change().dropna(),
-                signals_oos_dict=sigs_oos,
-                asset_keys=asset_keys,
-                baseline_metrics=baseline_metrics,
-                focus_asset=focus_asset
+                alloc_results_df=alloc_df, returns_dict=rets_dict, mmf_returns=mmf_ext["Zamkniecie"].pct_change().dropna(),
+                signals_oos_dict={k: v.loc[port_eq.index.min():] for k, v in sigs_full.items()},
+                asset_keys=list(rets_dict.keys()), baseline_metrics=baseline_metrics, focus_asset="WIG"
             )
-            
-            print_allocation_robustness_report_n(robust_df, focus_asset=focus_asset)
+            print_allocation_robustness_report_n(results_df=robust_df, focus_asset="WIG")
 
 
 def main():
@@ -291,32 +294,29 @@ def main():
     parser.add_argument("--stop", choices=["fixed", "atr"], default="fixed")
     parser.add_argument("--n_mc", type=int, default=1000)
     parser.add_argument("--n_boot", type=int, default=500)
-    parser.add_argument("--weights_perturb", action="store_true", help="Uruchom dodatkowy test perturbacji wag alokacji (PENSION/GLOBAL).")
+    parser.add_argument("--weights_perturb", action="store_true", help="Uruchom dodatkowy test perturbacji wag alokacji.")
     args = parser.parse_args()
     
-    os.chdir(project_root)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
+    # Setup logging
+    log_file = OUTPUT_DIR / f"validate_{args.mode.lower()}.log"
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    for h in logging.root.handlers[:]: logging.root.removeHandler(h)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s",
+                        handlers=[logging.FileHandler(log_file, mode="w", encoding='utf-8'), logging.StreamHandler(sys.stdout)])
     
     creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
-    updater = DataUpdater(credentials_path=creds_path)
-    updater.run_full_update(get_funds=False)    
+    DataUpdater().run_full_update(get_funds=False)    
     
-    validator = ValidationManager(args.n_mc, args.n_boot, args.weights_perturb)
+    validator = ValidationManager(n_mc=args.n_mc, n_boot=args.n_boot, run_weights_perturb=args.weights_perturb)
 
     if args.mode == "SINGLE":
-        if not args.asset:
-            sys.exit("Dla trybu SINGLE wymagany jest argument --asset.")
-        df = load_local_csv(args.asset.lower(), args.asset)
-        cash_df = load_local_csv("fund_2720", "MMF")
-        validator.validate_single(args.asset, args.train, args.test, args.stop, df, cash_df)
-
+        df = load_local_csv(ticker=args.asset.lower(), label=args.asset)
+        cash_df = load_local_csv(ticker="fund_2720", label="MMF")
+        validator.validate_single(asset_name=args.asset, train_y=args.train, test_y=args.test, stop_type=args.stop, df=df, cash_df=cash_df)
     elif args.mode == "PENSION":
-        validator.validate_pension(args.train, args.test, args.stop)
-
+        validator.validate_pension(train_y=args.train, test_y=args.test, stop_type_eq=args.stop)
     elif args.mode == "GLOBAL":
-        if not args.asset or args.asset not in ["GLOBAL_A", "GLOBAL_B"]:
-            sys.exit("Dla trybu GLOBAL wymagany jest --asset GLOBAL_A lub GLOBAL_B.")
-        validator.validate_global(args.asset, args.train, args.test, args.stop)
+        validator.validate_global(variant=args.asset, train_y=args.train, test_y=args.test, stop_type_eq=args.stop)
 
 if __name__ == "__main__":
     main()

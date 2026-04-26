@@ -11,7 +11,7 @@ import logging
 import pandas as pd
 
 # Target data path: moj_system/data/raw_csv/
-from moj_system.config import OUTPUT_DIR, DATA_DIR as DATA_ROOT
+from moj_system.config import DATA_DIR as DATA_ROOT
 
 DATA_DIR = DATA_ROOT / "raw_csv"
 

@@ -1323,11 +1323,14 @@ def build_standard_two_asset_data(
     else:
         mmf_ext = mmf
         logging.warning(
-            "WIBOR1M unavailable — using standard MMF (starts ~1999). "
+            "WIBOR1M not passed as argument — using MMF passed in argument (starts %s). "
             "IS windows before %s will use ret_mmf=0 for cash returns.",
             mmf.index.min().date(),
         )
-
+    # Matching WIG to available mmf_ext
+    wig = wig.loc[wig.index >= pd.Timestamp(mmf_ext.index.min().date())]
+    
+    
     # ── Bond entry gate (spread + yield pre-filter AND-ed together) ────────
     spread_pf = build_spread_prefilter(
         pl10y,
