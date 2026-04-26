@@ -133,7 +133,7 @@ class ValidationManager:
             analyze_bootstrap(results_df=bb_results, baseline_metrics=compute_metrics(wf_eq), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
 
     def validate_pension(self, train_y, test_y, stop_type_eq):
-        logging.info(f"VALIDATING PENSION PORTFOLIO | EQ Stop: {stop_type_eq}")
+        logging.info(f"VALIDATING PENSION PORTFOLIO | Train: {train_y} | Test: {test_y} | EQ Stop: {stop_type_eq}")
         
         WIG = load_local_csv(ticker="wig", label="WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
         MMF = load_local_csv(ticker="fund_2720", label="MMF")
@@ -202,7 +202,7 @@ class ValidationManager:
             print_allocation_robustness_report(results_df=robust_df)
 
     def validate_global(self, variant, train_y, test_y, stop_type_eq):
-        logging.info(f"VALIDATING GLOBAL {variant} | Train: {train_y} | Stop: {stop_type_eq}")
+        logging.info(f"VALIDATING GLOBAL - {variant} | Train: {train_y} | Test: {test_y} | Stop: {stop_type_eq}")
         
         cfg = ASSET_REGISTRY[variant]
         mode, fx_hedged = cfg["mode"], cfg.get("fx_hedged", True)
