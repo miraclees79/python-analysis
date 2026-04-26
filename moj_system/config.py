@@ -99,7 +99,7 @@ ASSET_REGISTRY = {
     "MSCI_World":{"type": "single", "source": "drive", "ticker": "URTH", "yf_ticker": "URTH", "train": 9, "test": 1, "default_stop": "atr"},
     "STOXX600": {"type": "single", "source": "drive", "ticker": "^STOXX", "yf_ticker": "^STOXX", "train": 7, "test": 1, "default_stop": "atr"},
     # Portfolio Templates
-    "PENSION":  {"type": "portfolio_pension", "train": 7, "test": 2, "default_stop_eq": "atr"},
+    "PENSION":  {"type": "portfolio_pension", "train": 7, "test": 1, "default_stop_eq": "atr"},
     "GLOBAL_A": {"type": "portfolio_global", "mode": "global_equity", "train": 7, "test": 2, "fx_hedged": True},
     "GLOBAL_B": {"type": "portfolio_global", "mode": "msci_world", "train": 7, "test": 2, "fx_hedged": True}
 }

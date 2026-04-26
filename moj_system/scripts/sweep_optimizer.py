@@ -53,30 +53,35 @@ from moj_system.core.utils import build_mmf_extended
 # ==============================================================================
 
 def _extract_window_rows(
-    asset_name:  str, train_years: int, test_years:  int,
-    wf_results:  pd.DataFrame, stop_mode:   str,
+    asset_name: str, 
+    train_years: int, 
+    test_years: int,
+    wf_results: pd.DataFrame, 
+    stop_mode: str,
+    alloc_df: pd.DataFrame = None,    # Optymalne wagi (IS)
+    weights_series: pd.Series = None  # Faktyczne wagi (OOS)
 ) -> list[dict]:
-    """Extracts parameters and performance metrics for individual walk-forward windows."""
     rows = []
     prev_params = None
-    use_atr = stop_mode == "atr"
+    use_atr = (stop_mode == "atr")
     stop_col = "N_atr" if use_atr else "X"
 
     for idx, row in wf_results.iterrows():
+        # Podstawowe parametry
         cur_params = {
             "filter_mode": str(row.get("filter_mode", "")),
-            "stop_param":  float(row.get(stop_col, pd.NA)),
-            "Y":           float(row.get("Y", pd.NA)),
+            "stop_param":  float(row.get(stop_col, np.nan)),
+            "Y":           float(row.get("Y", np.nan)),
             "fast":        int(row.get("fast", 0)),
             "slow":        int(row.get("slow", 0)),
-            "stop_loss":   float(row.get("stop_loss", pd.NA)),
+            "stop_loss":   float(row.get("stop_loss", np.nan)),
         }
 
         param_changed = False
         if prev_params is not None:
             param_changed = any(cur_params[k] != prev_params[k] for k in cur_params)
 
-        rows.append({
+        window_data = {
             "Strategy":      asset_name,
             "train_years":   train_years,
             "test_years":    test_years,
@@ -85,18 +90,41 @@ def _extract_window_rows(
             "train_start":   str(pd.Timestamp(row["TrainStart"]).date()),
             "test_start":    str(pd.Timestamp(row["TestStart"]).date()),
             "test_end":      str(pd.Timestamp(row["TestEnd"]).date()),
-            "win_cagr":      round(float(row.get("CAGR", pd.NA)) * 100, 2),
-            "win_sharpe":    round(float(row.get("Sharpe", pd.NA)), 3),
-            "win_maxdd":     round(float(row.get("MaxDD", pd.NA)) * 100, 2),
-            "win_calmar":    round(float(row.get("CalMAR", pd.NA)), 3),
-            "filter_mode":   cur_params["filter_mode"],
-            "stop_param":    cur_params["stop_param"],
-            "Y":             cur_params["Y"],
-            "fast":          cur_params["fast"],
-            "slow":          cur_params["slow"],
-            "stop_loss":     cur_params["stop_loss"],
+            "win_cagr":      round(float(row.get("CAGR", np.nan)) * 100, 2),
+            "win_sharpe":    round(float(row.get("Sharpe", np.nan)), 3),
+            "win_maxdd":     round(float(row.get("MaxDD", np.nan)) * 100, 2),
+            "win_calmar":    round(float(row.get("CalMAR", np.nan)), 3),
+            **cur_params,
             "param_changed": param_changed,
-        })
+        }
+
+        # --- DODAWANIE WAG OPTYMALNYCH (IS) ---
+        if alloc_df is not None:
+            # Szukamy wiersza w alloc_df pasującego do daty testowej okienka
+            match = alloc_df[alloc_df["TestStart"] == row["TestStart"]]
+            if not match.empty:
+                alloc_row = match.iloc[0]
+                # Pobieramy wszystkie kolumny zaczynające się od 'w_'
+                for col in alloc_df.columns:
+                    if col.startswith("w_"):
+                        window_data[f"opt_{col}"] = round(float(alloc_row[col]), 3)
+
+        # --- DODAWANIE ŚREDNICH FAKTYCZNYCH WAG (OOS) ---
+        if weights_series is not None:
+            # Wycinamy faktyczne wagi dzienne dla zakresu dat tego okienka
+            ts = pd.Timestamp(row["TestStart"])
+            te = pd.Timestamp(row["TestEnd"])
+            mask = (weights_series.index >= ts) & (weights_series.index <= te)
+            win_weights = weights_series.loc[mask]
+            
+            if not win_weights.empty:
+                # win_weights to seria słowników, zamieniamy na DataFrame do średniej
+                weights_df = pd.DataFrame(data=list(win_weights.values))
+                for asset_col in weights_df.columns:
+                    mean_w = weights_df[asset_col].mean()
+                    window_data[f"actual_avg_w_{asset_col}"] = round(float(mean_w), 3)
+
+        rows.append(window_data)
         prev_params = cur_params
     return rows
 
@@ -134,17 +162,57 @@ class SweepManager:
     def __init__(self, n_mc, n_boot, data_map):
         self.n_mc = n_mc
         self.n_boot = n_boot
-        self.data_map = data_map # <--- Dane wczytane raz w main()
+        self.data_map = data_map
         self.rob_engine = RobustnessEngine(n_jobs=get_n_jobs())
         self.creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
         self.folder_id = os.environ.get("GDRIVE_FOLDER_ID")
         self.all_windows = [] 
+        self.wf_cache = {} 
+
+    def get_cached_wf(self, asset_name, df, train_y, test_y, stop_type, grid_type="EQUITY", entry_gate=None):
+        """Pobiera wynik z cache lub liczy Walk-Forward."""
+        gate_id = "GATED" if entry_gate is not None else "RAW"
+        cache_key = (asset_name, train_y, test_y, stop_type, gate_id)
+        
+        if cache_key in self.wf_cache:
+            logging.info(f"  [CACHE HIT] {asset_name} train: {train_y}, test: {test_y}, stop type: {stop_type}, bond gate: {gate_id}")
+            return self.wf_cache[cache_key]
+
+        logging.info(f"  [CACHE MISS] Calculating: {asset_name} train: {train_y}, test: {test_y}, stop type: {stop_type}, bond gate: {gate_id}")
+        cash_df = self.data_map.get("MMF_EXT")
+        use_atr = (stop_type == "atr")
+        grids = BOND_GRIDS if grid_type == "BOND" else BASE_GRIDS
+        
+        wf_equity, wf_results, wf_trades = walk_forward(
+            df=df, cash_df=cash_df, train_years=train_y, test_years=test_y,
+            X_grid=grids["X_GRID"], Y_grid=grids["Y_GRID"],
+            fast_grid=grids["FAST_GRID"], slow_grid=grids["SLOW_GRID"],
+            use_atr_stop=use_atr, N_atr_grid=grids["N_ATR_GRID"] if use_atr else None,
+            entry_gate_series=entry_gate, 
+            n_jobs=get_n_jobs(), fast_mode=True
+        )
+        self.wf_cache[cache_key] = (wf_equity, wf_results, wf_trades)
+        return wf_equity, wf_results, wf_trades
+
+    def _prepare_pension_data(self):
+        """Pomocnicza funkcja do budowy gate'a dla TBSP (reużywalna)."""
+        return build_standard_two_asset_data(
+            wig=self.data_map["WIG"], tbsp=self.data_map["TBSP"], mmf=self.data_map["MMF_EXT"],
+            wibor1m=self.data_map["WIBOR1M"], pl10y=self.data_map["PL10Y"], de10y=self.data_map["DE10Y"], mmf_floor="1995-01-02"
+        )
+        
 
     def _compile_full_result(self, strat_name, train_y, test_y, stop_type, common_start, 
                              wf_results, wf_equity_trimmed, m_trimmed, bh_metrics, 
-                             regime_metrics, mc_verdicts_dict, bb_verdicts_dict):
-        """Unified result compiler for all 3 modes."""
-        window_rows = _extract_window_rows(strat_name, train_y, test_y, wf_results, stop_type)
+                             regime_metrics, mc_verdicts_dict, bb_verdicts_dict,
+                             alloc_df=None, weights_series=None): # <--- DODANO
+        
+        # Przekazujemy wagi do ekstrakcji
+        window_rows = _extract_window_rows(
+            asset_name=strat_name, train_years=train_y, test_years=test_y, 
+            wf_results=wf_results, stop_mode=stop_type,
+            alloc_df=alloc_df, weights_series=weights_series # <--- DODANO
+        )
         self.all_windows.extend(window_rows)
         win_stats = _compile_window_stats(window_rows)
 
@@ -184,14 +252,14 @@ class SweepManager:
             logging.error(f"Missing pre-loaded data for {asset_name}")
             return None
 
-        use_atr = (stop_type == "atr")
-        wf_equity, wf_results, _ = walk_forward(
-            df=df, cash_df=cash_df, train_years=train_y, test_years=test_y,
-            X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
-            fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
-            use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
-            n_jobs=get_n_jobs(), fast_mode=True
-        )
+        
+        wf_equity, wf_results, wf_trades = self.get_cached_wf(
+                    asset_name=asset_name, 
+                    df=df, 
+                    train_y=train_y, 
+                    test_y=test_y, 
+                    stop_type=stop_type
+                    )   
         if wf_equity.empty: return None
 
         trimmed = wf_equity.loc[wf_equity.index >= common_start]
@@ -229,16 +297,16 @@ class SweepManager:
         WIG = self.data_map.get("WIG")
         TBSP = self.data_map.get("TBSP")
         MMF_EXT = self.data_map.get("MMF_EXT")
-        PL10Y = self.data_map.get("PL10Y")
-        DE10Y = self.data_map.get("DE10Y")
         
-        derived = build_standard_two_asset_data(WIG, TBSP, MMF_EXT, None, PL10Y, DE10Y, "1995-01-02")
         
         use_atr = (stop_type_eq == "atr")
-        wf_eq, wf_res_eq, wf_tr_eq = walk_forward(WIG, MMF_EXT, train_y, test_y, use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None, n_jobs=get_n_jobs(), fast_mode=True)
-        wf_bd, wf_res_bd, wf_tr_bd = walk_forward(TBSP, MMF_EXT, train_y, test_y, filter_modes_override=["ma"], X_grid=BOND_GRIDS["X_GRID"], n_jobs=get_n_jobs(), entry_gate_series=derived["bond_gate"], fast_mode=True)
+        derived = self._prepare_pension_data()
         
-        sig_eq, sig_bd = build_signal_series(wf_eq, wf_tr_eq), build_signal_series(wf_bd, wf_tr_bd)
+        wf_eq, wf_res_eq, wf_tr_eq = self.get_cached_wf("WIG", self.data_map["WIG"], train_y, test_y, stop_type_eq)
+        # TBSP: GATED
+        wf_bd, wf_res_bd, wf_tr_bd = self.get_cached_wf("TBSP", self.data_map["TBSP"], train_y, test_y, "fixed", grid_type="BOND", entry_gate=derived["bond_gate"])
+        
+        sig_eq, sig_bd = build_signal_series(wf_equity=wf_eq, wf_trades=wf_tr_eq), build_signal_series(wf_equity=wf_bd, wf_trades=wf_tr_bd)
         port_eq, port_wgts, realloc_log, alloc_df = allocation_walk_forward(derived["ret_eq"], derived["ret_bd"], derived["ret_mmf"], sig_eq, sig_bd, sig_eq, sig_bd, wf_res_eq, wf_res_bd)
         
         trimmed = port_eq.loc[port_eq.index >= common_start]
@@ -274,8 +342,14 @@ class SweepManager:
                                                           fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"])
             bb_res["TBSP"] = analyze_bootstrap(bb_df_bd, compute_metrics(wf_bd), thresholds=BOND_THRESHOLDS_BOOTSTRAP)
 
-        return self._compile_full_result("PENSION", train_y, test_y, stop_type_eq, common_start, 
-                                         wf_res_eq, trimmed, m, bh_metrics, regime_metrics, mc_res, bb_res)
+        
+        return self._compile_full_result(
+            strat_name="PENSION", train_y=train_y, test_y=test_y, stop_type=stop_type_eq, 
+            common_start=common_start, wf_results=wf_res_eq, wf_equity_trimmed=trimmed, 
+            m_trimmed=m, bh_metrics=bh_metrics, regime_metrics=regime_metrics, 
+            mc_verdicts_dict=mc_res, bb_verdicts_dict=bb_res,
+            alloc_df=alloc_df, weights_series=port_wgts # <--- DODANO
+        )
 
     def run_global_iteration(self, variant_key, train_y, test_y, stop_type_eq, common_start):
         cfg = ASSET_REGISTRY[variant_key]
@@ -284,7 +358,7 @@ class SweepManager:
         WIG = self.data_map.get("WIG")
         MMF_EXT = self.data_map.get("MMF_EXT")
         TBSP = self.data_map.get("TBSP")
-        
+        derived = self._prepare_pension_data()
         fx_map = {c: self.data_map.get(f"{c}PLN")["Zamkniecie"] for c in ["USD", "EUR", "JPY"]}
         
         if mode == "global_equity":
@@ -306,27 +380,27 @@ class SweepManager:
         wig_wf_res = None
         
         for lbl, (px_df, fx_s) in assets.items():
-            ret_s = build_return_series(px_df, fx_series=fx_s, hedged=fx_hedged)
+            ret_s = build_return_series(price_df=px_df, fx_series=fx_s, hedged=fx_hedged)
             rets_dict[lbl] = ret_s.dropna()
-            proc_px = px_df if fx_hedged or fx_s is None else build_price_df_from_returns(ret_s, lbl)
+            proc_px = px_df if fx_hedged or fx_s is None else build_price_df_from_returns(ret=ret_s, label=lbl)
             
-            wf_e, wf_r, wf_t = walk_forward(
-                proc_px, MMF_EXT, train_y, test_y, 
-                X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
-                fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
-                use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None, 
-                n_jobs=get_n_jobs(), fast_mode=True
+            # POPRAWKA: Dodano df=proc_px i jawne nazewnictwo
+            wf_e, wf_r, wf_t = self.get_cached_wf(
+                asset_name=lbl, 
+                df=proc_px, 
+                train_y=train_y, 
+                test_y=test_y, 
+                stop_type=stop_type_eq
             )
-            sigs_full[lbl] = build_signal_series(wf_e, wf_t)
+            
+            
+            sigs_full[lbl] = build_signal_series(wf_equity=wf_e, wf_trades=wf_t)
+            
             mc_data_queue[lbl] = (wf_r, proc_px, wf_e, EQUITY_THRESHOLDS_MC, EQUITY_THRESHOLDS_BOOTSTRAP)
-            if lbl == "WIG": wig_wf_res = wf_r
+            if lbl == "WIG": 
+                wig_wf_res = wf_r
 
-        wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
-            TBSP, MMF_EXT, train_y, test_y, filter_modes_override=["ma"], 
-            X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
-            fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
-            n_jobs=get_n_jobs(), fast_mode=True
-        )
+        wf_bd, wf_res_bd, wf_tr_bd = self.get_cached_wf("TBSP", self.data_map["TBSP"], train_y, test_y, "fixed", grid_type="BOND", entry_gate=derived["bond_gate"])
         rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
         sigs_full["TBSP"] = build_signal_series(wf_bd, wf_tr_bd)
         mc_data_queue["TBSP"] = (wf_res_bd, TBSP, wf_bd, BOND_THRESHOLDS_MC, BOND_THRESHOLDS_BOOTSTRAP)
@@ -366,8 +440,13 @@ class SweepManager:
                 )
                 bb_res[lbl] = analyze_bootstrap(bb_df, compute_metrics(base_eq), thresholds=bb_thr)
 
-        return self._compile_full_result(variant_key, train_y, test_y, stop_type_eq, common_start, 
-                                         wig_wf_res, trimmed, m, bh_metrics, regime_metrics, mc_res, bb_res)
+        return self._compile_full_result(
+            strat_name=variant_key, train_y=train_y, test_y=test_y, stop_type=stop_type_eq, 
+            common_start=common_start, wf_results=wig_wf_res, wf_equity_trimmed=trimmed, 
+            m_trimmed=m, bh_metrics=bh_metrics, regime_metrics=regime_metrics, 
+            mc_verdicts_dict=mc_res, bb_verdicts_dict=bb_res,
+            alloc_df=alloc_df, weights_series=port_wgts # <--- DODANO
+        )
 
 
 def print_sweep_report(results_df: pd.DataFrame, common_start):
@@ -439,7 +518,7 @@ def main():
     data_map["STOXX600"] = build_and_upload(folder_id, "stoxx600.csv", "stoxx600_combined.csv", "^STOXX", "yfinance", creds_path)
 
     # Ładowanie reszty
-    check_list = ["WIG", "SP500", "NIKKEI225", "WIG20TR", "NASDAQ100", "PL10Y", "DE10Y"]
+    check_list = ["WIG", "SP500", "NIKKEI225", "WIG20TR", "NASDAQ100", "PL10Y", "DE10Y", "WIBOR1M"]
     if args.assets: check_list.extend([a.upper() for a in args.assets])
     
     for asset_key in set(check_list):

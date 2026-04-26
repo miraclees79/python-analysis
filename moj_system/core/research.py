@@ -341,3 +341,62 @@ def get_current_adx_regime(df: pd.DataFrame) -> str:
     except Exception as e:
         logging.error(f"Błąd podczas obliczania reżimu ADX: {e}")
         return "N/A"
+    
+def analyze_production_candidates(results_df: pd.DataFrame, require_bootstrap: bool = False) -> pd.DataFrame:
+    """
+    Filters sweep results based on mandatory production gates and 
+    calculates a weighted Ranking Score.
+    """
+    if results_df.empty:
+        return results_df
+
+    df = results_df.copy()
+
+    # --- 1. MANDATORY GATES (Boolean Filters) ---
+    
+    # Używamy tyldy (~) jako operatora negacji bitowej dla Series w Pandas.
+    # na=True w str.contains sprawia, że puste wartości (NaN) zostaną potraktowane 
+    # jako zawierające 'FRA' (czyli zostaną odrzucone po negacji), co jest bezpieczne.
+    mask_robust_MC = ~df['MC_Verdict'].str.contains(pat='FRA', case=False, na=True)
+    mask_robust_BB = ~df['BB_Verdict'].str.contains(pat='FRA', case=False, na=True)
+    
+    if require_bootstrap:
+        mask_robust = mask_robust_MC & mask_robust_BB
+    else:
+        # Jeśli nie wymagamy Bootstrapa, sprawdzamy tylko MC
+        mask_robust = mask_robust_MC 
+    
+    # OOS CalMAR > B&H CalMAR
+    mask_calmar = df['oos_calmar'] > df['bh_calmar']
+    
+    # Sideways Alpha > 0
+    mask_sideways = (df['adx_sideways_strat_cagr'] - df['adx_sideways_bh_cagr']) > 0
+    
+    # MaxDD >= -20% (Zwróć uwagę, czy dane są w % (np -15.0) czy frakcjach (np -0.15))
+    # Zakładając format z sweep_optimizer (-15.0):
+    mask_maxdd = df['oos_maxdd'] >= -0.2
+
+    # Combine Mandatory Gates
+    df['is_candidate'] = mask_robust & mask_calmar & mask_sideways & mask_maxdd
+
+    # --- 2. RANKING SCORE CALCULATION ---
+    # Używamy .replace(0, np.nan) aby uniknąć ZeroDivisionError
+    
+    # A. Protection Score: 1 - (strat_down / bh_down)
+    df['score_protection'] = 1 - (df['adx_downtrend_strat_cagr'] / df['adx_downtrend_bh_cagr'].replace(to_replace=0, value=np.nan))
+    
+    # B. Uptrend Capture: (strat_up / bh_up)
+    df['score_uptrend'] = df['adx_uptrend_strat_cagr'] / df['adx_uptrend_bh_cagr'].replace(to_replace=0, value=np.nan)
+    
+    # C. CAGR Excess Ratio: (strat_cagr - bh_cagr) / bh_cagr
+    df['score_excess'] = (df['oos_cagr'] - df['bh_cagr']) / df['bh_cagr'].replace(to_replace=0, value=np.nan)
+
+    # Weighted Ranking Score (40/35/25)
+    df['ranking_score'] = (
+        0.40 * df['score_protection'] + 
+        0.35 * df['score_uptrend'] + 
+        0.25 * df['score_excess']
+    )
+
+    # Zwracamy tylko kandydatów, posortowanych od najlepszego wyniku
+    return df[df['is_candidate'] == True].sort_values(by='ranking_score', ascending=False)
