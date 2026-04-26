@@ -7,7 +7,7 @@ moj_system/scripts/validate_robustness.py
 Deep Validation Engine. Performs Level 1 (MC), Level 2 (Bootstrap),
 and optionally Level 3 (Allocation Weight Perturbation) testing for
 chosen configurations of Single, Pension, or Global strategies.
-Includes automated OOS chart generation.
+Includes automated OOS chart generation and full component-level validation.
 """
 
 import argparse
@@ -74,7 +74,6 @@ class ValidationManager:
         # Panel 1: Equity
         ax1.plot(strategy_equity.index, strategy_equity.values, label="Strategy (OOS)", color="steelblue", linewidth=2)
         if bh_equity is not None:
-            # Align and normalize BH
             bh_aligned = bh_equity.reindex(index=strategy_equity.index).ffill()
             bh_norm = bh_aligned / bh_aligned.iloc[0]
             ax1.plot(bh_norm.index, bh_norm.values, label="Buy & Hold", color="grey", linestyle="--", alpha=0.7)
@@ -104,7 +103,6 @@ class ValidationManager:
         logging.info(f"VALIDATING SINGLE ASSET: {asset_name} | {train_y}+{test_y} | {stop_type}")
         use_atr = (stop_type == "atr")
 
-        # 1. Base Walk-Forward
         wf_eq, wf_res, wf_tr = walk_forward(
             df=df, cash_df=cash_df, train_years=train_y, test_years=test_y,
             X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
@@ -113,7 +111,6 @@ class ValidationManager:
             n_jobs=get_n_jobs(), fast_mode=True
         )
         
-        # Generowanie wykresu
         bh_eq, bh_m = compute_buy_and_hold(df=df, price_col="Zamkniecie", start=wf_eq.index.min(), end=wf_eq.index.max())
         self._save_validation_chart(
             strategy_equity=wf_eq, 
@@ -122,12 +119,10 @@ class ValidationManager:
             filename=f"validate_{asset_name.lower()}_{train_y}_{test_y}.png"
         )
 
-        # 2. MC Test
         if self.n_mc > 0:
             mc_results = self.rob_engine.run_mc_test(wf_results=wf_res, df=df, cash_df=cash_df, n_samples=self.n_mc)
             analyze_robustness(results_df=mc_results, baseline_metrics=compute_metrics(wf_eq), thresholds=EQUITY_THRESHOLDS_MC)
 
-        # 3. Bootstrap Test
         if self.n_boot > 0:
             bb_results = self.rob_engine.run_bootstrap_test(
                 df=df, cash_df=cash_df, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
@@ -148,7 +143,6 @@ class ValidationManager:
         derived = build_standard_two_asset_data(wig=WIG, tbsp=TBSP, mmf=MMF, wibor1m=WIBOR1M, pl10y=PL10Y, de10y=DE10Y, mmf_floor="1995-01-02")
         use_atr_eq = (stop_type_eq == 'atr')
         
-        # PENSION składa się z komponentów, ale potrzebujemy też krzywej portfela do wykresu
         logging.info("\n" + "="*60 + "\n--- Component 1: WIG Robustness ---\n" + "="*60)
         self.validate_single(asset_name="WIG", train_y=train_y, test_y=test_y, stop_type=stop_type_eq, df=WIG, cash_df=derived["mmf_ext"])
         
@@ -159,8 +153,21 @@ class ValidationManager:
             fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
             n_jobs=get_n_jobs(), fast_mode=True
         )
+        if self.n_mc > 0:
+            mc_bd = self.rob_engine.run_mc_test(wf_results=wf_bd_res, df=TBSP, cash_df=derived["mmf_ext"], n_samples=self.n_mc)
+            analyze_robustness(results_df=mc_bd, baseline_metrics=compute_metrics(equity=wf_bd_eq), thresholds=BOND_THRESHOLDS_MC)
         
-        # Symulacja portfela bazowego dla wykresu
+        if self.n_boot > 0:
+            bb_bd = self.rob_engine.run_bootstrap_test(
+                df=TBSP, cash_df=derived["mmf_ext"], n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+                filter_modes_override=["ma"], 
+                X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
+                fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
+                use_atr_stop=False
+            )
+            analyze_bootstrap(results_df=bb_bd, baseline_metrics=compute_metrics(equity=wf_bd_eq), thresholds=BOND_THRESHOLDS_BOOTSTRAP)
+
+        # Symulacja portfela dla wykresu zbiorczego
         wf_eq, wf_res_eq, wf_tr_eq = walk_forward(
             df=WIG, cash_df=derived["mmf_ext"], train_years=train_y, test_years=test_y, 
             X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
@@ -168,11 +175,10 @@ class ValidationManager:
             use_atr_stop=use_atr_eq, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr_eq else None,
             n_jobs=get_n_jobs(), fast_mode=True
         )
-        
         sig_eq = build_signal_series(wf_equity=wf_eq, wf_trades=wf_tr_eq)
         sig_bd = build_signal_series(wf_equity=wf_bd_eq, wf_trades=wf_bd_tr)
         
-        port_eq, port_wgts, realloc_log, alloc_df = allocation_walk_forward(
+        port_eq, _, _, alloc_df = allocation_walk_forward(
             equity_returns=derived["ret_eq"], bond_returns=derived["ret_bd"], mmf_returns=derived["ret_mmf"], 
             sig_equity_full=sig_eq, sig_bond_full=sig_bd,
             sig_equity_oos=sig_eq.loc[wf_eq.index.min():], sig_bond_oos=sig_bd.loc[wf_eq.index.min():], 
@@ -181,24 +187,17 @@ class ValidationManager:
 
         bh_wig, _ = compute_buy_and_hold(df=WIG, price_col="Zamkniecie", start=port_eq.index.min(), end=port_eq.index.max())
         self._save_validation_chart(
-            strategy_equity=port_eq, 
-            bh_equity=bh_wig, 
+            strategy_equity=port_eq, bh_equity=bh_wig, 
             title=f"OOS Validation: PENSION Portfolio ({train_y}+{test_y})",
             filename=f"validate_pension_{train_y}_{test_y}.png"
         )
 
-        # Level 3 - Perturbacja Wag
         if self.run_weights_perturb:
             logging.info("\n" + "="*80 + "\n--- Level 3: Allocation Weight Perturbation Test (PENSION) ---\n" + "="*80)
-            baseline_metrics = compute_metrics(equity=port_eq)
             robust_df = allocation_weight_robustness(
-                alloc_results_df=alloc_df,
-                equity_returns=derived["ret_eq"],
-                bond_returns=derived["ret_bd"],
-                mmf_returns=derived["ret_mmf"],
-                sig_equity_oos=sig_eq.loc[wf_eq.index.min():],
-                sig_bond_oos=sig_bd.loc[wf_eq.index.min():],
-                baseline_metrics=baseline_metrics
+                alloc_results_df=alloc_df, equity_returns=derived["ret_eq"], bond_returns=derived["ret_bd"], mmf_returns=derived["ret_mmf"],
+                sig_equity_oos=sig_eq.loc[wf_eq.index.min():], sig_bond_oos=sig_bd.loc[wf_eq.index.min():],
+                baseline_metrics=compute_metrics(equity=port_eq)
             )
             print_allocation_robustness_report(results_df=robust_df)
 
@@ -213,7 +212,6 @@ class ValidationManager:
         MMF = load_local_csv(ticker="fund_2720", label="MMF")
         WIBOR1M = load_local_csv(ticker="wibor1m", label="WIBOR1M", mandatory=False)
         mmf_ext = build_mmf_extended(mmf_df=MMF, wibor1m_df=WIBOR1M, floor_date="1995-01-02")
-            
         TBSP = build_and_upload(folder_id=self.folder_id, raw_filename="tbsp_extended_full.csv", combined_filename="tbsp_extended_combined.csv", extension_ticker="^tbsp", extension_source="stooq", credentials_path=self.creds_path)
         fx_map = {c: load_local_csv(ticker=f"{c.lower()}pln", label=f"{c}PLN")["Zamkniecie"] for c in ["USD", "EUR", "JPY"]}
         
@@ -231,12 +229,15 @@ class ValidationManager:
 
         rets_dict, sigs_full = {}, {}
         
+        # 1. Equity Components Robustness (MC + Bootstrap)
         for lbl, (px_df, fx_s) in assets.items():
             logging.info("\n" + "="*60 + f"\n--- Component Robustness: {lbl} ---\n" + "="*60)
+            
             ret_s = build_return_series(price_df=px_df, fx_series=fx_s, hedged=fx_hedged)
             rets_dict[lbl] = ret_s.dropna()
             proc_px = px_df if fx_hedged or fx_s is None else build_price_df_from_returns(ret=ret_s, label=lbl)
             
+            # Base WF
             wf_e, wf_r, wf_t = walk_forward(
                 df=proc_px, cash_df=mmf_ext, train_years=train_y, test_years=test_y, 
                 X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
@@ -250,6 +251,17 @@ class ValidationManager:
                 mc_res = self.rob_engine.run_mc_test(wf_results=wf_r, df=proc_px, cash_df=mmf_ext, n_samples=self.n_mc)
                 analyze_robustness(results_df=mc_res, baseline_metrics=compute_metrics(equity=wf_e), thresholds=EQUITY_THRESHOLDS_MC)
 
+            if self.n_boot > 0:
+                bb_res = self.rob_engine.run_bootstrap_test(
+                    df=proc_px, cash_df=mmf_ext, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+                    X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
+                    fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
+                    use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None
+                )
+                analyze_bootstrap(results_df=bb_res, baseline_metrics=compute_metrics(equity=wf_e), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
+
+        # 2. Bond Component Robustness (MC + Bootstrap)
+        logging.info("\n" + "="*60 + "\n--- Component Robustness: TBSP ---\n" + "="*60)
         wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
             df=TBSP, cash_df=mmf_ext, train_years=train_y, test_years=test_y, filter_modes_override=["ma"], 
             X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
@@ -259,7 +271,22 @@ class ValidationManager:
         rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
         sigs_full["TBSP"] = build_signal_series(wf_equity=wf_bd, wf_trades=wf_tr_bd)
 
-        # Alokacja N-Asset i Wykres
+        if self.n_mc > 0:
+            mc_bd = self.rob_engine.run_mc_test(wf_results=wf_res_bd, df=TBSP, cash_df=mmf_ext, n_samples=self.n_mc)
+            analyze_robustness(results_df=mc_bd, baseline_metrics=compute_metrics(equity=wf_bd), thresholds=BOND_THRESHOLDS_MC)
+
+        if self.n_boot > 0:
+            bb_bd = self.rob_engine.run_bootstrap_test(
+                df=TBSP, cash_df=mmf_ext, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
+                filter_modes_override=["ma"], 
+                X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
+                fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
+                use_atr_stop=False
+            )
+            analyze_bootstrap(results_df=bb_bd, baseline_metrics=compute_metrics(equity=wf_bd), thresholds=BOND_THRESHOLDS_BOOTSTRAP)
+
+        # 3. Portfolio Allocation & Chart
+        logging.info("\n" + "-"*60 + "\nRunning N-Asset allocation walk-forward...\n" + "-"*60)
         port_eq, _, _, alloc_df = allocation_walk_forward_n(
             returns_dict=rets_dict, signals_full_dict=sigs_full, signals_oos_dict=sigs_full, 
             mmf_returns=mmf_ext["Zamkniecie"].pct_change().dropna(), wf_results_ref=wf_res_bd, 
@@ -268,19 +295,18 @@ class ValidationManager:
         
         bh_wig, _ = compute_buy_and_hold(df=WIG, price_col="Zamkniecie", start=port_eq.index.min(), end=port_eq.index.max())
         self._save_validation_chart(
-            strategy_equity=port_eq, 
-            bh_equity=bh_wig, 
+            strategy_equity=port_eq, bh_equity=bh_wig, 
             title=f"OOS Validation: GLOBAL {variant} ({train_y}+{test_y})",
             filename=f"validate_{variant.lower()}_{train_y}_{test_y}.png"
         )
 
+        # 4. Weight Perturbation
         if self.run_weights_perturb:
             logging.info("\n" + "="*80 + "\n--- Level 3: Allocation Weight Perturbation Test (GLOBAL) ---\n" + "="*80)
-            baseline_metrics = compute_metrics(equity=port_eq)
             robust_df = allocation_weight_robustness_n(
                 alloc_results_df=alloc_df, returns_dict=rets_dict, mmf_returns=mmf_ext["Zamkniecie"].pct_change().dropna(),
                 signals_oos_dict={k: v.loc[port_eq.index.min():] for k, v in sigs_full.items()},
-                asset_keys=list(rets_dict.keys()), baseline_metrics=baseline_metrics, focus_asset="WIG"
+                asset_keys=list(rets_dict.keys()), baseline_metrics=compute_metrics(equity=port_eq), focus_asset="WIG"
             )
             print_allocation_robustness_report_n(results_df=robust_df, focus_asset="WIG")
 
@@ -297,16 +323,13 @@ def main():
     parser.add_argument("--weights_perturb", action="store_true", help="Uruchom dodatkowy test perturbacji wag alokacji.")
     args = parser.parse_args()
     
-    # Setup logging
     log_file = OUTPUT_DIR / f"validate_{args.mode.lower()}.log"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     for h in logging.root.handlers[:]: logging.root.removeHandler(h)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s",
                         handlers=[logging.FileHandler(log_file, mode="w", encoding='utf-8'), logging.StreamHandler(sys.stdout)])
     
-    creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
     DataUpdater().run_full_update(get_funds=False)    
-    
     validator = ValidationManager(n_mc=args.n_mc, n_boot=args.n_boot, run_weights_perturb=args.weights_perturb)
 
     if args.mode == "SINGLE":
