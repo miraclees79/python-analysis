@@ -14,30 +14,70 @@ DATA_START = "1990-01-01"
 CLOSE_COL = "Zamkniecie"
 
 def _parse_wsj_csv(raw_bytes: bytes) -> pd.DataFrame | None:
-    """Parses WSJ export format."""
+    """Parses WSJ export format using multiple encoding attempts."""
     raw = None
-    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+    encodings_to_try = ("utf-8-sig", "utf-8", "latin-1")
+    
+    for current_encoding in encodings_to_try:
         try:
-            raw = pd.read_csv(filepath_or_buffer=io.BytesIO(initial_bytes=raw_bytes), 
-                              encoding=encoding, thousands=",", skipinitialspace=True)
+            # Tworzymy bufor z jawnym przekazaniem bajtów
+            bytes_buffer = io.BytesIO(initial_bytes=raw_bytes)
+            
+            # Pełne wywołanie z jawnymi argumentami
+            raw = pd.read_csv(
+                filepath_or_buffer=bytes_buffer, 
+                encoding=current_encoding, 
+                thousands=",", 
+                skipinitialspace=True
+            )
+            logging.info(msg=f"Successfully parsed WSJ CSV with encoding: {current_encoding}")
             break
-        except Exception: continue
-    if raw is None: return None
+        except Exception as exc:
+            # Bandit B112 fix: logujemy powód pominięcia kodowania
+            logging.debug(msg=f"Encoding {current_encoding} failed for WSJ CSV: {exc}")
+            continue
+            
+    if raw is None:
+        logging.error(msg="Critical: Failed to parse WSJ CSV with all attempted encodings.")
+        return None
 
-    col_map = {c: c.strip().capitalize() for c in raw.columns}
-    for c in raw.columns:
-        low = c.strip().lower()
-        if low in ("close", "price", "last", "adj close"): col_map[c] = "Close"
-        elif low in ("date", "data"): col_map[c] = "Date"
+    # Normalizacja nazw kolumn z jawnym nazywaniem zmiennych w pętli (zamiast _)
+    col_map = {column_name: column_name.strip().capitalize() for column_name in raw.columns}
+    for column_raw_name in raw.columns:
+        clean_name = column_raw_name.strip().lower()
+        if clean_name in ("close", "price", "last", "adj close"):
+            col_map[column_raw_name] = "Close"
+        elif clean_name in ("date", "data"):
+            col_map[column_raw_name] = "Date"
+            
     raw = raw.rename(columns=col_map)
-    raw["Date"] = pd.to_datetime(arg=raw["Date"], format="mixed", errors="coerce")
+
+    # Konwersja daty z jawnym argumentem arg=
+    raw["Date"] = pd.to_datetime(
+        arg=raw["Date"], 
+        format="mixed", 
+        errors="coerce"
+    )
     raw = raw.dropna(subset=["Date"])
     
+    # Budowa wynikowej ramki danych
     out = pd.DataFrame(index=raw["Date"].dt.tz_localize(tz=None))
     out.index.name = "Data"
-    out[CLOSE_COL] = pd.to_numeric(arg=raw["Close"], errors="coerce")
-    out["Najwyzszy"] = pd.to_numeric(arg=raw.get("High", raw["Close"]), errors="coerce")
-    out["Najnizszy"] = pd.to_numeric(arg=raw.get("Low", raw["Close"]), errors="coerce")
+    
+    # Konwersje numeryczne z jawnym argumentem arg=
+    out[CLOSE_COL] = pd.to_numeric(
+        arg=raw["Close"], 
+        errors="coerce"
+    )
+    out["Najwyzszy"] = pd.to_numeric(
+        arg=raw.get("High", raw["Close"]), 
+        errors="coerce"
+    )
+    out["Najnizszy"] = pd.to_numeric(
+        arg=raw.get("Low", raw["Close"]), 
+        errors="coerce"
+    )
+    
     return out.sort_index().dropna()
 
 def _extend_series(base_df: pd.DataFrame, ext_df: pd.DataFrame) -> pd.DataFrame:

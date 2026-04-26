@@ -128,7 +128,7 @@ class ValidationManager:
                 df=df, cash_df=cash_df, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
                 X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
                 fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
-                use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None
+                use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None, fast_mode=True
             )
             analyze_bootstrap(results_df=bb_results, baseline_metrics=compute_metrics(wf_eq), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
 
@@ -163,7 +163,7 @@ class ValidationManager:
                 filter_modes_override=["ma"], 
                 X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
                 fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
-                use_atr_stop=False
+                use_atr_stop=False, fast_mode=True
             )
             analyze_bootstrap(results_df=bb_bd, baseline_metrics=compute_metrics(equity=wf_bd_eq), thresholds=BOND_THRESHOLDS_BOOTSTRAP)
 
@@ -256,7 +256,7 @@ class ValidationManager:
                     df=proc_px, cash_df=mmf_ext, n_samples=self.n_boot, train_years=train_y, test_years=test_y,
                     X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
                     fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
-                    use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None
+                    use_atr_stop=use_atr, N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None, fast_mode=True
                 )
                 analyze_bootstrap(results_df=bb_res, baseline_metrics=compute_metrics(equity=wf_e), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP)
 
