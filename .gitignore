@@ -55,3 +55,4 @@ repo_collect.py
 ai_studio_code.py
 moj_system_do_przegladu.txt
 *.xlsx
+/analiza wynikow
