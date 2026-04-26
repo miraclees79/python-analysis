@@ -17,23 +17,49 @@ import pandas as pd
 import numpy as np
 from typing import List, Tuple
 
-def get_common_oos_start(assets_data: dict, window_configs: List[Tuple[int, int]]) -> pd.Timestamp:
+def get_common_oos_start(assets_data: dict, window_configs: list) -> pd.Timestamp:
     """
     Calculates the latest possible start date for Out-Of-Sample period
     to ensure all tested configurations cover the exact same time range.
+    Logs a detailed matrix of data coverage for transparency.
     """
+    # Znajdujemy najdłuższe okno treningowe w konfiguracji sweepa
+    # Używamy config_tuple zamiast _
+    max_train_y = max(config_tuple[0] for config_tuple in window_configs)
+    
+    logging.info(msg="--- OOS START CALCULATION MATRIX ---")
+    # Nagłówek tabeli
+    header = f"{'Asset':<15} | {'Data Start':<12} | {'Max Train':<9} | {'Required OOS':<12}"
+    logging.info(msg=header)
+    logging.info(msg="-" * len(header))
+    
     latest_starts = []
     
-    for df in assets_data.values():
+    # Sortujemy klucze, aby tabela w logu była zawsze w tej samej kolejności
+    for asset_name in sorted(assets_data.keys()):
+        df = assets_data[asset_name]
         data_start = df.index.min()
-        for train_y, _ in window_configs:
-            # Each config needs at least 'train_y' of history
-            potential_start = data_start + pd.DateOffset(years=train_y)
-            latest_starts.append(potential_start)
+        
+        # Obliczamy wymaganą datę startu OOS dla tego aktywa (Start + najdłuższy trening)
+        potential_start = data_start + pd.DateOffset(years=max_train_y)
+        latest_starts.append(potential_start)
+        
+        # Logowanie wiersza danych
+        log_row = (
+            f"{asset_name:<15} | "
+            f"{str(data_start.date()):<12} | "
+            f"{max_train_y:<3} years | "
+            f"{str(potential_start.date()):<12}"
+        )
+        logging.info(msg=log_row)
             
-    # The common start is the latest of all required starts
+    # Wspólny start to najpóźniejsza z dat "Required OOS"
     common_start = max(latest_starts)
-    logging.info(f"Calculated Common OOS Start Date: {common_start.date()}")
+    
+    logging.info(msg="-" * len(header))
+    logging.info(msg=f"FINAL Calculated Common OOS Start Date: {common_start.date()}")
+    logging.info(msg="-------------------------------------")
+    
     return common_start
 
 def rank_research_results(results_df: pd.DataFrame, objective: str = "CalMAR") -> pd.DataFrame:

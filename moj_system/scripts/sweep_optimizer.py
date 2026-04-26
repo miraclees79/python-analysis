@@ -100,14 +100,27 @@ def _extract_window_rows(
 
         # --- DODAWANIE WAG OPTYMALNYCH (IS) ---
         if alloc_df is not None:
-            # Szukamy wiersza w alloc_df pasującego do daty testowej okienka
-            match = alloc_df[alloc_df["TestStart"] == row["TestStart"]]
+            # Konwertujemy datę z wiersza na Timestamp do porównania
+            current_test_start = pd.Timestamp(row["TestStart"]).normalize()
+    
+            # Konwertujemy kolumnę w alloc_df na Timestamp, aby dopasowanie zadziałało
+            # (normalize() usuwa ewentualne godziny)
+            alloc_df_ts = pd.to_datetime(arg=alloc_df["TestStart"]).dt.normalize()
+    
+            # Szukamy dopasowania
+            match = alloc_df[alloc_df_ts == current_test_start]
+    
             if not match.empty:
                 alloc_row = match.iloc[0]
                 # Pobieramy wszystkie kolumny zaczynające się od 'w_'
-                for col in alloc_df.columns:
-                    if col.startswith("w_"):
-                        window_data[f"opt_{col}"] = round(float(alloc_row[col]), 3)
+                for col_name in alloc_df.columns:
+                    if col_name.startswith("w_"):
+                        # Zapisujemy w formacie opt_w_WIG itd.
+                        window_data[f"opt_{col_name}"] = round(float(alloc_row[col_name]), 3)
+            else:
+                # Debugowanie w razie dalszych problemów (można odkomentować)
+                logging.debug(msg=f"No match for {current_test_start} in alloc_df dates")
+                pass
 
         # --- DODAWANIE ŚREDNICH FAKTYCZNYCH WAG (OOS) ---
         if weights_series is not None:
@@ -175,10 +188,10 @@ class SweepManager:
         gate_id = "GATED" if entry_gate is not None else "RAW"
         cache_key = (asset_name, train_y, test_y, stop_type, gate_id)
         if cache_key in self.wf_cache:
-            logging.info(f"  [WF CACHE HIT] {asset_name} ")
+            logging.info(f"  [WF CACHE HIT] {asset_name} train: {train_y} test: {test_y}, stop type: {stop_type}")
             return self.wf_cache[cache_key]
 
-        logging.info(f"  [WF CACHE MISS] Calculating WF: {asset_name} ...")
+        logging.info(f"  [WF CACHE MISS] Calculating WF: {asset_name} train: {train_y} test: {test_y}, stop type: {stop_type} ...")
         cash_df = self.data_map.get("MMF_EXT")
         grids = BOND_GRIDS if grid_type == "BOND" else BASE_GRIDS
         use_atr = (stop_type == "atr")
@@ -196,10 +209,10 @@ class SweepManager:
     def get_cached_mc(self, asset_name, wf_results, df, cash_df, n_samples, thresholds, train_y, test_y, stop_type, gate_id, base_equity):
         cache_key = (asset_name, train_y, test_y, stop_type, gate_id, n_samples)
         if cache_key in self.mc_cache:
-            logging.info(f"  [MC CACHE HIT] {asset_name}")
+            logging.info(f"  [MC CACHE HIT] {asset_name} train: {train_y} test: {test_y}, stop type: {stop_type}")
             return self.mc_cache[cache_key]
 
-        logging.info(f"  [MC CACHE MISS] Running MC: {asset_name}...")
+        logging.info(f"  [MC CACHE MISS] Running MC: {asset_name} train: {train_y} test: {test_y}, stop type: {stop_type}")
         mc_df = self.rob_engine.run_mc_test(wf_results=wf_results, df=df, cash_df=cash_df, n_samples=n_samples)
         # POPRAWKA: baseline_metrics liczone z krzywej kapitału, nie z wyników okienek
         result = analyze_robustness(results_df=mc_df, baseline_metrics=compute_metrics(base_equity), thresholds=thresholds)
@@ -210,10 +223,10 @@ class SweepManager:
         gate_id = "GATED" if entry_gate is not None else "RAW"
         cache_key = (asset_name, train_y, test_y, stop_type, gate_id, n_samples)
         if cache_key in self.boot_cache:
-            logging.info(f"  [BOOT CACHE HIT] {asset_name}")
+            logging.info(f"  [BOOT CACHE HIT] {asset_name} train: {train_y} test: {test_y}, stop type: {stop_type}")
             return self.boot_cache[cache_key]
 
-        logging.info(f"  [BOOT CACHE MISS] Running Boot: {asset_name}...")
+        logging.info(f"  [BOOT CACHE MISS] Running Boot: {asset_name} train: {train_y} test: {test_y}, stop type: {stop_type}")
         use_atr = (stop_type == "atr")
         grids = BOND_GRIDS if grid_type == "BOND" else BASE_GRIDS
         bb_df = self.rob_engine.run_bootstrap_test(
@@ -671,14 +684,15 @@ def main():
     data_map["STOXX600"] = build_and_upload(folder_id, "stoxx600.csv", "stoxx600_combined.csv", "^STOXX", "yfinance", creds_path)
 
     # Ładowanie reszty
-    check_list = ["WIG", "SP500", "NIKKEI225", "WIG20TR", "NASDAQ100", "PL10Y", "DE10Y", "WIBOR1M"]
+    check_list = ["SP500", "NIKKEI225", "WIG20TR", "NASDAQ100", "PL10Y", "DE10Y", "WIBOR1M"]
     if args.assets: check_list.extend([a.upper() for a in args.assets])
     
     for asset_key in set(check_list):
         if asset_key in data_map: continue
         df = load_local_csv(asset_key.lower(), asset_key, mandatory=False)
         if df is not None: data_map[asset_key] = df
-
+    
+    data_map["WIG"] = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
     # Przygotowanie przedłużonego MMF (raz dla wszystkich)
     mmf_raw = load_local_csv("fund_2720", "MMF")
     wibor = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
