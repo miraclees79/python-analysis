@@ -773,7 +773,7 @@ def run_block_bootstrap_robustness(
 
         except Exception as e:
             logging.warning(
-                "Bootstrap backend '%s' failed: %s — trying next option.",
+                "Bootstrap backend '%s' failed: %s - trying next option.",
                 label, e
             )
             valid   = []
