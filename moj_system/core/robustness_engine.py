@@ -760,7 +760,7 @@ def run_block_bootstrap_robustness(
                     pct = completed / n_samples * 100
                     bar = ("=" * (completed * 20 // n_samples)).ljust(20, "-")
                     logging.info(
-                        "Bootstrap progress: [%s] %d/%d (%.0f%%) — %d valid, %d failed",
+                        "Bootstrap progress: [%s] %d/%d (%.0f%%) - %d valid, %d failed",
                         bar, completed, n_samples, pct, len(valid), failed
                     )
 
