@@ -90,14 +90,14 @@ BOND_THRESHOLDS_BOOTSTRAP = {
 # moj_system/config.py (dodaj do istniejącej treści)
 
 ASSET_REGISTRY = {
-    "WIG20TR":  {"type": "single", "source": "stooq", "ticker": "wig20tr", "yf_ticker": "WIG20TR.WA", "train": 6, "test": 2, "default_stop": "fixed", "grids": {"MOM_LB_GRID": [252]}},
-    "MWIG40TR": {"type": "single", "source": "stooq", "ticker": "mwig40tr", "yf_ticker": "MWIG40TR.WA", "train": 8, "test": 2, "default_stop": "fixed", "grids": {"MOM_LB_GRID": [252]}},
-    "SWIG80TR": {"type": "single", "source": "stooq", "ticker": "swig80tr", "yf_ticker": "SWIG80TR.WA", "train": 9, "test": 2, "default_stop": "atr"},
+    "WIG20TR":  {"type": "single", "source": "stooq", "ticker": "wig20tr", "yf_ticker": "WIG20TR.WA", "train": 6, "test": 2, "default_stop": "fixed" },
+    #"MWIG40TR": {"type": "single", "source": "stooq", "ticker": "mwig40tr", "yf_ticker": "MWIG40TR.WA", "train": 8, "test": 2, "default_stop": "fixed", "grids": {"MOM_LB_GRID": [252]}},
+    #"SWIG80TR": {"type": "single", "source": "stooq", "ticker": "swig80tr", "yf_ticker": "SWIG80TR.WA", "train": 9, "test": 2, "default_stop": "atr"},
     #"SP500":    {"type": "single", "source": "stooq", "ticker": "^spx", "yf_ticker": "^GSPC", "train": 6, "test": 2, "default_stop": "fixed"},
     #"NASDAQ100":{"type": "single", "source": "stooq", "ticker": "^ndq", "yf_ticker": "^NDX", "train": 6, "test": 2, "default_stop": "fixed"},
     #"Nikkei225":{"type": "single", "source": "stooq", "ticker": "^nkx", "yf_ticker": "^N225", "train": 6, "test": 2, "default_stop": "fixed"},
     #"MSCI_World":{"type": "single", "source": "drive", "ticker": "URTH", "yf_ticker": "URTH", "train": 9, "test": 1, "default_stop": "atr"},
-    "STOXX600": {"type": "single", "source": "drive", "ticker": "^STOXX", "yf_ticker": "^STOXX", "train": 7, "test": 1, "default_stop": "atr"},
+    #"STOXX600": {"type": "single", "source": "drive", "ticker": "^STOXX", "yf_ticker": "^STOXX", "train": 7, "test": 1, "default_stop": "atr"},
     # Portfolio Templates
     "PENSION":  {"type": "portfolio_pension", "train": 7, "test": 1, "default_stop_eq": "atr"},
     #"GLOBAL_A": {"type": "portfolio_global", "mode": "global_equity", "train": 7, "test": 2, "fx_hedged": True},
