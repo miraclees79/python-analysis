@@ -16,8 +16,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        asset: [WIG20TR, MWIG40TR, SWIG80TR, SP500, STOXX600, PENSION, GLOBAL_A, GLOBAL_B]
-    
+        asset: [WIG20TR, PENSION, GLOBAL_B]
+        # all possible assets: [WIG20TR, MWIG40TR, SWIG80TR, SP500, STOXX600, PENSION, GLOBAL_A, GLOBAL_B]
     steps:
       - uses: actions/checkout@v4
 
