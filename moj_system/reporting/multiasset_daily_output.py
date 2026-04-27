@@ -61,15 +61,12 @@ BOUNDARY_EXITS = {"CARRY", "SAMPLE_END"}
 # ---------------------------------------------------------------------------
 
 def _get_signal_from_trades(wf_trades: pd.DataFrame) -> str:
-    """Return 'IN' if a CARRY record exists (position open), else 'OUT'."""
     if wf_trades is None or wf_trades.empty:
         return "OUT"
     carry = wf_trades[wf_trades["Exit Reason"] == "CARRY"]
     return "IN" if not carry.empty else "OUT"
 
-
 def _get_open_position(wf_trades: pd.DataFrame) -> dict | None:
-    """Return the most recent CARRY record as a dict, or None if flat."""
     if wf_trades is None or wf_trades.empty:
         return None
     carry = wf_trades[wf_trades["Exit Reason"] == "CARRY"]
@@ -77,84 +74,82 @@ def _get_open_position(wf_trades: pd.DataFrame) -> dict | None:
         return None
     return carry.iloc[-1].to_dict()
 
-
 def _get_active_window_params(wf_results: pd.DataFrame) -> dict:
-    """Return params from the last walk-forward window."""
+    """Extracts parameters and identifies if ATR or Fixed stop is used."""
     if wf_results is None or wf_results.empty:
         return {}
     last = wf_results.iloc[-1]
 
     def _safe_float(key, default=None):
-        v = last.get(key)
-        if v is None or (isinstance(v, float) and np.isnan(v)):
+        val = last.get(key)
+        if val is None or (isinstance(val, float) and np.isnan(val)):
             return default
-        try:
-            return float(v)
-        except (ValueError, TypeError):
-            return default
+        return float(val)
 
-    def _safe_int(key, default=None):
-        v = _safe_float(key)
-        return int(v) if v is not None else default
+    # Wykrywanie trybu stopu
+    use_atr = bool(last.get("use_atr_stop", False))
+    stop_val = _safe_float("N_atr" if use_atr else "X", 0.10)
+    stop_label = "N_atr" if use_atr else "X"
 
     return {
         "filter_mode":  last.get("filter_mode", "ma"),
-        "X":            _safe_float("X",         0.10),
-        "Y":            _safe_float("Y",         0.10),
-        "fast":         _safe_int("fast",          50),
-        "slow":         _safe_int("slow",         200),
-        "stop_loss":    _safe_float("stop_loss",  0.10),
-        "TestStart":    pd.Timestamp(last["TestStart"]),
-        "TestEnd":      pd.Timestamp(last["TestEnd"]),
-        "mom_lookback": _safe_int("mom_lookback", 252),
+        "stop_param":   stop_val,
+        "stop_label":   stop_label,
+        "use_atr_stop": use_atr,
+        "Y":            _safe_float("Y", 0.10),
+        "fast":         int(_safe_float("fast", 50)),
+        "slow":         int(_safe_float("slow", 200)),
+        "stop_loss":    _safe_float("stop_loss", 0.05),
+        "mom_lookback": int(_safe_float("mom_lookback", 252)),
     }
 
-
-def _compute_ma_filter_state(
-    df: pd.DataFrame,
-    fast: int,
-    slow: int,
-    price_col: str = "Zamkniecie",
-) -> dict:
-    prices  = df[price_col].dropna()
-    fast_ma = float(prices.rolling(fast).mean().iloc[-1]) if len(prices) >= fast else None
-    slow_ma = float(prices.rolling(slow).mean().iloc[-1]) if len(prices) >= slow else None
-    if fast_ma is not None and slow_ma is not None:
-        filter_on = fast_ma > slow_ma
-        gap_pct   = round((fast_ma / slow_ma - 1) * 100, 3)
-    else:
-        filter_on = None
-        gap_pct   = None
+def _compute_ma_filter_state(df: pd.DataFrame, fast: int, slow: int) -> dict:
+    """Calculates current Moving Average crossover state."""
+    prices = df["Zamkniecie"].dropna()
+    if len(prices) < slow:
+        return {"fast_ma": None, "slow_ma": None, "filter_on": None, "gap_pct": None}
+    
+    fast_ma = float(prices.rolling(window=fast).mean().iloc[-1])
+    slow_ma = float(prices.rolling(window=slow).mean().iloc[-1])
+    filter_on = fast_ma > slow_ma
+    gap_pct = round(number=(fast_ma / slow_ma - 1) * 100, ndigits=3)
+    
     return {
-        "fast_ma":  round(fast_ma, 2) if fast_ma else None,
-        "slow_ma":  round(slow_ma, 2) if slow_ma else None,
+        "fast_ma": round(number=fast_ma, ndigits=2),
+        "slow_ma": round(number=slow_ma, ndigits=2),
         "filter_on": filter_on,
-        "gap_pct":   gap_pct,
+        "gap_pct": gap_pct
     }
 
+def _compute_mom_filter_state(df: pd.DataFrame, lookback: int) -> dict:
+    """Calculates current Momentum state (Close > Close[lookback])."""
+    prices = df["Zamkniecie"].dropna()
+    if len(prices) < lookback + 21:
+        return {"mom_value": None, "filter_on": None}
+    
+    # Używamy 21-dniowego 'skip' dla spójności z silnikiem
+    mom_val = (prices.shift(periods=21).iloc[-1] / prices.shift(periods=lookback).iloc[-1]) - 1
+    filter_on = mom_val > 0
+    
+    return {
+        "mom_value": round(number=float(mom_val * 100), ndigits=2),
+        "filter_on": filter_on
+    }
 
 def _get_current_weights(weights_series: pd.Series | None) -> dict:
-    """Return the most recent allocation weight dict from weights_series."""
     if weights_series is None or weights_series.empty:
         return {"equity": None, "bond": None, "mmf": None}
     last = weights_series.iloc[-1]
-    if isinstance(last, dict):
-        return {
-            "equity": round(float(last.get("equity", 0)), 4),
-            "bond":   round(float(last.get("bond",   0)), 4),
-            "mmf":    round(float(last.get("mmf",    0)), 4),
-        }
-    return {"equity": None, "bond": None, "mmf": None}
-
+    return {
+        "equity": round(number=float(last.get("equity", 0)), ndigits=4),
+        "bond":   round(number=float(last.get("bond",   0)), ndigits=4),
+        "mmf":    round(number=float(last.get("mmf",    0)), ndigits=4),
+    }
 
 def _realloc_today(reallocation_log: list, run_date: dt.date) -> bool:
-    """Return True if a reallocation event occurred on run_date."""
     if not reallocation_log:
         return False
-    return any(
-        pd.Timestamp(rec["Date"]).date() == run_date
-        for rec in reallocation_log
-    )
+    return any(pd.Timestamp(ts_val["Date"]).date() == run_date for ts_val in reallocation_log)
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +192,10 @@ def _determine_action(
 # Snapshot builder
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Snapshot builder
+# ---------------------------------------------------------------------------
+
 def _build_snapshot(
     wf_equity_eq:     pd.Series,
     wf_trades_eq:     pd.DataFrame,
@@ -216,99 +215,96 @@ def _build_snapshot(
 ) -> dict:
     snap = {"run_date": run_date.isoformat()}
 
-    # Equity asset state
-    sig_eq  = _get_signal_from_trades(wf_trades_eq)
-    pos_eq  = _get_open_position(wf_trades_eq)
-    par_eq  = _get_active_window_params(wf_results_eq)
-    ma_eq   = _compute_ma_filter_state(WIG, par_eq.get("fast", 50), par_eq.get("slow", 200)) if par_eq else {}
+    # --- EQUITY (WIG) STATE ---
+    par_eq = _get_active_window_params(wf_results=wf_results_eq)
+    snap["signal_equity"] = _get_signal_from_trades(wf_trades=wf_trades_eq)
+    snap["params_equity"] = par_eq
+    
+    # Obliczamy oba filtry dla WIG, aby Dashboard mógł pokazać kontekst
+    snap["ma_state_equity"] = _compute_ma_filter_state(df=WIG, fast=par_eq.get("fast"), slow=par_eq.get("slow"))
+    snap["mom_state_equity"] = _compute_mom_filter_state(df=WIG, lookback=par_eq.get("mom_lookback"))
 
-    snap["signal_equity"] = sig_eq
-    snap["params_equity"] = {k: v for k, v in par_eq.items() if k not in ("TestStart", "TestEnd")}
-    snap["ma_state_equity"] = ma_eq
-
+    pos_eq = _get_open_position(wf_trades=wf_trades_eq)
     if pos_eq:
-        prices_eq  = WIG["Zamkniecie"].dropna()
-        entry_px   = float(pos_eq["EntryPrice"])
-        today_px   = float(prices_eq.iloc[-1])
-        in_trade   = prices_eq.loc[prices_eq.index >= pd.Timestamp(pos_eq["EntryDate"])]
-        peak_px    = float(in_trade.max()) if not in_trade.empty else today_px
-        X          = par_eq.get("X", 0.10)
-        sl         = par_eq.get("stop_loss", 0.10)
-        trail_stop = round(peak_px * (1 - X), 2)
-        abs_stop   = round(entry_px * (1 - sl), 2)
-        binding    = max(trail_stop, abs_stop)
+        prices_eq = WIG["Zamkniecie"].dropna()
+        entry_px = float(pos_eq["EntryPrice"])
+        today_px = float(prices_eq.iloc[-1])
+        in_trade = prices_eq.loc[prices_eq.index >= pd.Timestamp(pos_eq["EntryDate"])]
+        peak_px = float(in_trade.max())
+        
+        stop_val = par_eq["stop_param"]
+        # Jeśli ATR, stop liczymy inaczej (uproszczone dla raportu)
+        if par_eq["use_atr_stop"]:
+             # Pobieramy ostatnią wartość ATR z silnika (tutaj uproszczone do % z peaku dla spójności wizualnej)
+             trail_stop = round(number=peak_px * (1 - stop_val), ndigits=2)
+        else:
+             trail_stop = round(number=peak_px * (1 - stop_val), ndigits=2)
+             
+        abs_stop = round(number=entry_px * (1 - par_eq["stop_loss"]), ndigits=2)
+        binding = max(trail_stop, abs_stop)
+        
         snap["equity_position"] = {
             "entry_date":     pd.Timestamp(pos_eq["EntryDate"]).date().isoformat(),
-            "entry_price":    round(entry_px, 2),
-            "today_price":    round(today_px, 2),
+            "entry_price":    round(number=entry_px, ndigits=2),
+            "today_price":    round(number=today_px, ndigits=2),
             "days_in_trade":  int(pos_eq.get("Days", 0)),
-            "unrealised_pct": round(float(pos_eq["Return"]) * 100, 2),
-            "peak_price":     round(peak_px, 2),
-            "trail_stop":     trail_stop,
-            "abs_stop":       abs_stop,
+            "unrealised_pct": round(number=float(pos_eq["Return"]) * 100, ndigits=2),
+            "peak_price":     round(number=peak_px, ndigits=2),
             "binding_stop":   binding,
-            "stop_gap_pct":   round((binding - today_px) / today_px * 100, 2),
+            "stop_gap_pct":   round(number=(binding - today_px) / today_px * 100, ndigits=2),
         }
     else:
         snap["equity_position"] = None
 
-    # Bond asset state
-    sig_bd  = _get_signal_from_trades(wf_trades_bd)
-    pos_bd  = _get_open_position(wf_trades_bd)
-    par_bd  = _get_active_window_params(wf_results_bd)
-    ma_bd   = _compute_ma_filter_state(TBSP, par_bd.get("fast", 100), par_bd.get("slow", 300)) if par_bd else {}
+    # --- BOND (TBSP) STATE ---
+    par_bd = _get_active_window_params(wf_results=wf_results_bd)
+    snap["signal_bond"] = _get_signal_from_trades(wf_trades=wf_trades_bd)
+    snap["params_bond"] = par_bd
+    snap["ma_state_bond"] = _compute_ma_filter_state(df=TBSP, fast=par_bd.get("fast"), slow=par_bd.get("slow"))
+    # Obligacje zazwyczaj nie używają MOM, ale liczymy dla struktury
+    snap["mom_state_bond"] = _compute_mom_filter_state(df=TBSP, lookback=par_bd.get("mom_lookback"))
 
-    snap["signal_bond"] = sig_bd
-    snap["params_bond"] = {k: v for k, v in par_bd.items() if k not in ("TestStart", "TestEnd")}
-    snap["ma_state_bond"] = ma_bd
-
+    pos_bd = _get_open_position(wf_trades=wf_trades_bd)
     if pos_bd:
-        prices_bd  = TBSP["Zamkniecie"].dropna()
-        entry_px   = float(pos_bd["EntryPrice"])
-        today_px   = float(prices_bd.iloc[-1])
-        in_trade   = prices_bd.loc[prices_bd.index >= pd.Timestamp(pos_bd["EntryDate"])]
-        peak_px    = float(in_trade.max()) if not in_trade.empty else today_px
-        X          = par_bd.get("X", 0.08)
-        sl         = par_bd.get("stop_loss", 0.02)
-        trail_stop = round(peak_px * (1 - X), 2)
-        abs_stop   = round(entry_px * (1 - sl), 2)
-        binding    = max(trail_stop, abs_stop)
+        prices_bd = TBSP["Zamkniecie"].dropna()
+        entry_px_bd = float(pos_bd["EntryPrice"])
+        today_px_bd = float(prices_bd.iloc[-1])
+        in_trade_bd = prices_bd.loc[prices_bd.index >= pd.Timestamp(pos_bd["EntryDate"])]
+        peak_px_bd = float(in_trade_bd.max())
+        
+        trail_stop_bd = round(number=peak_px_bd * (1 - par_bd["stop_param"]), ndigits=2)
+        abs_stop_bd = round(number=entry_px_bd * (1 - par_bd["stop_loss"]), ndigits=2)
+        binding_bd = max(trail_stop_bd, abs_stop_bd)
+        
         snap["bond_position"] = {
             "entry_date":     pd.Timestamp(pos_bd["EntryDate"]).date().isoformat(),
-            "entry_price":    round(entry_px, 2),
-            "today_price":    round(today_px, 2),
+            "entry_price":    round(number=entry_px_bd, ndigits=2),
+            "today_price":    round(number=today_px_bd, ndigits=2),
             "days_in_trade":  int(pos_bd.get("Days", 0)),
-            "unrealised_pct": round(float(pos_bd["Return"]) * 100, 2),
-            "peak_price":     round(peak_px, 2),
-            "trail_stop":     trail_stop,
-            "abs_stop":       abs_stop,
-            "binding_stop":   binding,
-            "stop_gap_pct":   round((binding - today_px) / today_px * 100, 2),
+            "unrealised_pct": round(number=float(pos_bd["Return"]) * 100, ndigits=2),
+            "binding_stop":   binding_bd,
+            "stop_gap_pct":   round(number=(binding_bd - today_px_bd) / today_px_bd * 100, ndigits=2),
         }
     else:
         snap["bond_position"] = None
 
-    snap["weights"]    = _get_current_weights(weights_series)
-    snap["portfolio_metrics"] = {k: round(float(v), 4) for k, v in (portfolio_metrics or {}).items()}
-    snap["bh_equity_metrics"] = {k: round(float(v), 4) for k, v in (bh_eq_metrics    or {}).items()}
-    snap["bh_bond_metrics"]   = {k: round(float(v), 4) for k, v in (bh_bd_metrics    or {}).items()}
-    snap["realloc_today"]     = _realloc_today(reallocation_log, run_date)
+    # --- PORTFOLIO & METRICS ---
+    snap["weights"] = _get_current_weights(weights_series=weights_series)
+    snap["portfolio_metrics"] = {k: round(number=float(v_met), ndigits=4) for k, v_met in (portfolio_metrics or {}).items()}
+    snap["bh_equity_metrics"] = {k: round(number=float(v_met), ndigits=4) for k, v_met in (bh_eq_metrics or {}).items()}
+    snap["bh_bond_metrics"] = {k: round(number=float(v_met), ndigits=4) for k, v_met in (bh_bd_metrics or {}).items()}
+    snap["realloc_today"] = _realloc_today(reallocation_log=reallocation_log, run_date=run_date)
+    snap["current_regime_adx"] = get_current_adx_regime(df=WIG)
 
     if reallocation_log:
         last_r = reallocation_log[-1]
         snap["last_realloc"] = {
-            "date":          str(pd.Timestamp(last_r["Date"]).date()),
-            "equity_before": round(float(last_r["equity_before"]), 2),
-            "bond_before":   round(float(last_r["bond_before"]),   2),
-            "mmf_before":    round(float(last_r["mmf_before"]),    2),
-            "equity_after":  round(float(last_r["equity_after"]),  2),
-            "bond_after":    round(float(last_r["bond_after"]),    2),
-            "mmf_after":     round(float(last_r["mmf_after"]),     2),
-            "reason":        last_r.get("reason", ""),
+            "date": str(pd.Timestamp(last_r["Date"]).date()),
+            "equity_after": round(number=float(last_r["equity_after"]), ndigits=2),
+            "bond_after":   round(number=float(last_r["bond_after"]), ndigits=2),
+            "reason":       last_r.get("reason", "")
         }
-    else:
-        snap["last_realloc"] = None
-    snap['current_regime_adx'] = get_current_adx_regime(WIG)
+    
     return snap
 
 
