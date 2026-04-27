@@ -84,12 +84,8 @@ The following consolidation work was completed. All changes preserve backward-co
 
 | Asset | Config | Stop Mode | Robustness Status |
 |---|---|---|---|
-| WIG20TR | 8+2 | ATR | Double ROBUST (MC + Bootstrap) |
-| SWIG80TR | 8+2 | Fixed | Double ROBUST (MC + Bootstrap) |
-| SWIG80TR | 9+2 | ATR | Double ROBUST (MC + Bootstrap) |
-| MWIG40TR | 8+2 | Fixed | Double ROBUST (MC + Bootstrap) |
-| SP500 | 6+2 | Fixed | Single survivor — monitoring only |
-| MSCI_World | — | — | Systematic downtrend failures — research only |
+| WIG20TR | 6+2 | fixed | Pending verification |
+| GLOBAL_B | 7+1 | atr | Pending verification |
 | Multiasset (WIG+TBSP+MMF) | — | — | Production |
 
 **Deployment gate**: configs must pass both MC parameter perturbation and block bootstrap before deployment consideration. MC alone is insufficient.
