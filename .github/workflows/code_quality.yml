@@ -1,0 +1,49 @@
+name: Code Quality & Safety
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  lint-and-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install ruff mypy pandas-stubs types-requests
+          pip install -r requirements.txt
+
+      # 1. RUFF - błyskawiczny linter i formatter
+      - name: Run Ruff
+        run: |
+          # Sprawdzenie błędów (Linter)
+          ruff check .
+          # Sprawdzenie czy kod jest sformatowany linia po linii (Formatter)
+          ruff format --check .
+
+      # 2. MYPY - sprawdza czy typy danych są poprawne
+      - name: Run Mypy
+        run: |
+          # --ignore-missing-imports pomaga przy bibliotekach bez typowania
+          mypy moj_system --ignore-missing-imports
+
+  # 3. GITLEAKS - sprawdza czy nie wypchnąłeś haseł/kluczy
+  leaks-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Gitleaks potrzebuje pełnej historii
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
