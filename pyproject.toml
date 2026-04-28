@@ -18,10 +18,7 @@ select = [
     "PTH",  # flake8-use-pathlib (pathlib zamiast os.path)
 ]
 
-ignore = [
-    "ANN101", # Brak typu dla 'self' (Ruff uważa to za oczywiste)
-    "ANN102", # Brak typu dla 'cls'
-]
+
 
 # TWOJA ZASADA: Zakaz używania "_" jako zmiennej "śmieciowej"
 # Domyślnie Ruff ignoruje nieużywane zmienne o nazwie "_". 
