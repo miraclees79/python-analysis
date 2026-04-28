@@ -193,40 +193,59 @@ def _determine_action(
 # ---------------------------------------------------------------------------
 
 def _build_snapshot(
-    wf_equity_eq:     pd.Series,
-    wf_trades_eq:     pd.DataFrame,
-    wf_results_eq:    pd.DataFrame,
-    wf_equity_bd:     pd.Series,
-    wf_trades_bd:     pd.DataFrame,
-    wf_results_bd:    pd.DataFrame,
-    portfolio_equity: pd.Series,
+    wf_equity_eq:      pd.Series,
+    wf_trades_eq:      pd.DataFrame,
+    wf_results_eq:     pd.DataFrame,
+    wf_equity_bd:      pd.Series,
+    wf_trades_bd:      pd.DataFrame,
+    wf_results_bd:     pd.DataFrame,
+    portfolio_equity:  pd.Series,
     portfolio_metrics: dict,
-    weights_series:   pd.Series,
-    reallocation_log: list,
-    bh_eq_metrics:    dict,
-    bh_bd_metrics:    dict,
-    WIG:              pd.DataFrame,
-    TBSP:             pd.DataFrame,
-    run_date:         dt.date,
-    ) -> dict:
+    weights_series:    pd.Series,
+    reallocation_log:  list,
+    bh_eq_metrics:     dict,
+    bh_bd_metrics:     dict,
+    WIG:               pd.DataFrame,
+    TBSP:              pd.DataFrame,
+    run_date:          dt.date,
+) -> dict:
+    """
+    Buduje pełny słownik stanu strategii, zawierający wszystkie dane widoczne w raporcie tekstowym.
+    """
     snap = {"run_date": run_date.isoformat()}
 
-    # --- EQUITY (WIG) STATE ---
+    # --- 1. Świeżość danych ---
+    snap["data_freshness"] = {
+        "WIG":  str(WIG.index.max().date()),
+        "TBSP": str(TBSP.index.max().date()),
+        "Portfolio": str(portfolio_equity.index.max().date())
+    }
+
+    # --- 2. Parametry i Filtry (WIG) ---
     par_eq = _get_active_window_params(wf_results=wf_results_eq)
     snap["signal_equity"] = _get_signal_from_trades(wf_trades=wf_trades_eq)
     snap["params_equity"] = par_eq
-    snap["ma_state_equity"] = _compute_ma_filter_state(df=WIG, fast=par_eq.get("fast"), slow=par_eq.get("slow"))
-    snap["mom_state_equity"] = _compute_mom_filter_state(df=WIG, lookback=par_eq.get("mom_lookback"))
+    snap["ma_state_equity"] = _compute_ma_filter_state(
+        df=WIG, 
+        fast=par_eq.get("fast"), 
+        slow=par_eq.get("slow")
+    )
+    snap["mom_state_equity"] = _compute_mom_filter_state(
+        df=WIG, 
+        lookback=par_eq.get("mom_lookback")
+    )
 
+    # --- 3. Pozycja Equity (WIG) ---
     pos_eq = _get_open_position(wf_trades=wf_trades_eq)
     if pos_eq:
         prices_eq = WIG["Zamkniecie"].dropna()
         entry_px = float(pos_eq["EntryPrice"])
         today_px = float(prices_eq.iloc[-1])
+        # Obliczanie ceny szczytowej od daty wejścia
         in_trade = prices_eq.loc[prices_eq.index >= pd.Timestamp(pos_eq["EntryDate"])]
         peak_px = float(in_trade.max())
         
-        # Obliczenia stopów
+        # Obliczenia stopów (identyczne jak w tekście)
         trail_stop = round(number=peak_px * (1 - par_eq["stop_param"]), ndigits=2)
         abs_stop = round(number=entry_px * (1 - par_eq["stop_loss"]), ndigits=2)
         binding = max(trail_stop, abs_stop)
@@ -238,21 +257,25 @@ def _build_snapshot(
             "days_in_trade":  int(pos_eq.get("Days", 0)),
             "unrealised_pct": round(number=float(pos_eq["Return"]) * 100, ndigits=2),
             "peak_price":     round(number=peak_px, ndigits=2),
-            "trail_stop":     trail_stop, # DODANO
-            "abs_stop":       abs_stop,   # DODANO
+            "trail_stop":     trail_stop,
+            "abs_stop":       abs_stop,
             "binding_stop":   binding,
             "stop_gap_pct":   round(number=(binding - today_px) / today_px * 100, ndigits=2),
         }
     else:
         snap["equity_position"] = None
 
-    # --- BOND (TBSP) STATE ---
+    # --- 4. Parametry i Filtry (TBSP) ---
     par_bd = _get_active_window_params(wf_results=wf_results_bd)
     snap["signal_bond"] = _get_signal_from_trades(wf_trades=wf_trades_bd)
     snap["params_bond"] = par_bd
-    snap["ma_state_bond"] = _compute_ma_filter_state(df=TBSP, fast=par_bd.get("fast"), slow=par_bd.get("slow"))
-    snap["mom_state_bond"] = _compute_mom_filter_state(df=TBSP, lookback=par_bd.get("mom_lookback"))
+    snap["ma_state_bond"] = _compute_ma_filter_state(
+        df=TBSP, 
+        fast=par_bd.get("fast"), 
+        slow=par_bd.get("slow")
+    )
 
+    # --- 5. Pozycja Bond (TBSP) ---
     pos_bd = _get_open_position(wf_trades=wf_trades_bd)
     if pos_bd:
         prices_bd = TBSP["Zamkniecie"].dropna()
@@ -271,38 +294,45 @@ def _build_snapshot(
             "today_price":    round(number=today_px_bd, ndigits=2),
             "days_in_trade":  int(pos_bd.get("Days", 0)),
             "unrealised_pct": round(number=float(pos_bd["Return"]) * 100, ndigits=2),
-            "trail_stop":     trail_stop_bd, # DODANO
-            "abs_stop":       abs_stop_bd,   # DODANO
             "peak_price":     round(number=peak_px_bd, ndigits=2),
+            "trail_stop":     trail_stop_bd,
+            "abs_stop":       abs_stop_bd,
             "binding_stop":   binding_bd,
             "stop_gap_pct":   round(number=(binding_bd - today_px_bd) / today_px_bd * 100, ndigits=2),
         }
     else:
         snap["bond_position"] = None
 
-    # --- PORTFOLIO & METRICS ---
+    # --- 6. Alokacja i Metryki Portfela ---
     snap["weights"] = _get_current_weights(weights_series=weights_series)
-    snap["portfolio_metrics"] = {k: round(number=float(v_met), ndigits=4) for k, v_met in (portfolio_metrics or {}).items()}
-    snap["bh_equity_metrics"] = {k: round(number=float(v_met), ndigits=4) for k, v_met in (bh_eq_metrics or {}).items()}
-    snap["bh_bond_metrics"] = {k: round(number=float(v_met), ndigits=4) for k, v_met in (bh_bd_metrics or {}).items()}
-    snap["realloc_today"] = _realloc_today(reallocation_log=reallocation_log, run_date=run_date)
+    snap["portfolio_metrics"] = {
+        k: round(number=float(v), ndigits=4) for k, v in (portfolio_metrics or {}).items()
+    }
+    snap["bh_equity_metrics"] = {
+        k: round(number=float(v), ndigits=4) for k, v in (bh_eq_metrics or {}).items()
+    }
+    snap["bh_bond_metrics"] = {
+        k: round(number=float(v), ndigits=4) for k, v in (bh_bd_metrics or {}).items()
+    }
     snap["current_regime_adx"] = get_current_adx_regime(df=WIG)
+    snap["action"] = _determine_action(
+        prev_log=None, # Ta funkcja zostanie wywołana w build_daily_outputs po załadowaniu logu
+        sig_eq_today=snap["signal_equity"],
+        sig_bd_today=snap["signal_bond"],
+        realloc_today=_realloc_today(reallocation_log=reallocation_log, run_date=run_date)
+    )
 
     if reallocation_log:
         last_r = reallocation_log[-1]
         snap["last_realloc"] = {
             "date": str(pd.Timestamp(last_r["Date"]).date()),
-            "equity_before": round(number=float(last_r["equity_before"]), ndigits=2),
-            "bond_before":   round(number=float(last_r["bond_before"]),   ndigits=2), # POPRAWIONE
-            "mmf_before":    round(number=float(last_r["mmf_before"]),    ndigits=2), # POPRAWIONE
-            "equity_after":  round(number=float(last_r["equity_after"]),  ndigits=2), # POPRAWIONE
-            "bond_after":    round(number=float(last_r["bond_after"]),    ndigits=2), # POPRAWIONE
-            "mmf_after":     round(number=float(last_r["mmf_after"]),     ndigits=2), # POPRAWIONE
-            "reason":        last_r.get("reason", "")
+            "equity_after": round(number=float(last_r["equity_after"]), ndigits=2),
+            "bond_after":   round(number=float(last_r["bond_after"]),   ndigits=2),
+            "mmf_after":    round(number=float(last_r["mmf_after"]),    ndigits=2),
+            "reason":       last_r.get("reason", "")
         }
     
     return snap
-
 
 # ---------------------------------------------------------------------------
 # Status text
