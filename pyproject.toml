@@ -4,42 +4,40 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-# Wybrane grupy reguł
+# Główne grupy reguł
 select = [
+    "F",    # Pyflakes (w tym F841 - nieużywane zmienne)
     "E",    # pycodestyle (błędy)
     "W",    # pycodestyle (ostrzeżenia)
-    "F",    # Pyflakes (nieużywane zmienne/importy)
     "I",    # isort (sortowanie importów)
     "N",    # pep8-naming (konwencje nazw)
-    "ANN",  # flake8-annotations (wymóg typowania)
+    "ANN",  # flake8-annotations (wymóg typowania - TWOJA ZASADA)
     "B",    # flake8-bugbear (najlepsze praktyki)
-    "COM",  # flake8-commas (wymóg przecinków - wymusza formatowanie linia po linii)
+    "COM",  # flake8-commas (wymóg przecinków - TWOJA ZASADA)
     "ARG",  # flake8-unused-arguments (nieużywane argumenty)
-    "PTH",  # flake8-use-pathlib (wymóg pathlib)
-    "PL",   # Pylint (dodatkowe rygory)
+    "PTH",  # flake8-use-pathlib (pathlib zamiast os.path)
 ]
 
 ignore = [
-    "ANN101", # Ignoruj brak typu dla 'self' (starsze wersje Ruff)
-    "ANN102", # Ignoruj brak typu dla 'cls'
-    "COM812", # Czasami koliduje z formaterem, ale zostawiamy jeśli chcesz wymuszać przecinki
+    "ANN101", # Brak typu dla 'self' (Ruff uważa to za oczywiste)
+    "ANN102", # Brak typu dla 'cls'
 ]
 
+# TWOJA ZASADA: Zakaz używania "_" jako zmiennej "śmieciowej"
+# Domyślnie Ruff ignoruje nieużywane zmienne o nazwie "_". 
+# Ustawienie tego regexa na pusty ciąg (lub coś co nigdy nie wystąpi)
+# sprawi, że każde "_" zostanie uznane za błąd F841 (Unused variable).
+dummy-variable-rgx = "^$"
+
 [tool.ruff.lint.flake8-annotations]
-# Wymuszaj typowanie dla wszystkich funkcji
+# Typowanie musi być wszędzie
 allow-star-arg-any = false
 suppress-none-returning = false
 
-[tool.ruff.lint.pep8-naming]
-# Poprawione z flake8-naming na pep8-naming
-ignore-names = []
-
-[tool.ruff.lint.pyflakes]
-# Zakaz używania "_" jako nazwy zmiennej - Ruff zgłosi F841 przy przypisaniu do "_"
-extend-variable-rgx = "^$" 
-
 [tool.ruff.format]
+# TWOJA ZASADA: Wypisywanie argumentów linia po linii
+# Formater Ruff automatycznie rozbije linie, jeśli wykryje "magic comma" 
+# (przecinek po ostatnim argumencie).
 quote-style = "double"
 indent-style = "space"
-# To ustawienie w połączeniu z przecinkiem na końcu wymusza formatowanie linia po linii
 skip-magic-trailing-comma = false
