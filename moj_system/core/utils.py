@@ -11,17 +11,19 @@ moj_system/core/utils.py
 ========================
 Neutral module for shared functions to break circular imports.
 """
-import pandas as pd
-import numpy as np
 import logging
-CLOSE_COL = "Zamkniecie"   # stooq close column name used throughout
+
+import pandas as pd
+
+CLOSE_COL = "Zamkniecie"  # stooq close column name used throughout
+
 
 def signals_to_target_weights(
     sig_equity: int,
-    sig_bond:   int,
+    sig_bond: int,
     weights_both_on: dict,
-    w_equity_only:   float = 1.0,
-    w_bond_only:     float = 1.0,
+    w_equity_only: float = 1.0,
+    w_bond_only: float = 1.0,
 ) -> dict:
     """
     Map binary asset signals to a target allocation vector.
@@ -53,15 +55,15 @@ def signals_to_target_weights(
     if sig_equity and not sig_bond:
         return {
             "equity": w_equity_only,
-            "bond":   0.0,
-            "mmf":    1.0 - w_equity_only,
+            "bond": 0.0,
+            "mmf": 1.0 - w_equity_only,
         }
 
     if sig_bond and not sig_equity:
         return {
             "equity": 0.0,
-            "bond":   w_bond_only,
-            "mmf":    1.0 - w_bond_only,
+            "bond": w_bond_only,
+            "mmf": 1.0 - w_bond_only,
         }
 
     # Both off
@@ -72,15 +74,16 @@ def signals_to_target_weights(
 # LAYER 3 — REALLOCATION GATE
 # ============================================================
 
+
 def reallocation_gate(
     current_weights: dict,
-    target_weights:  dict,
+    target_weights: dict,
     last_change_date,
     current_date,
-    cooldown_days:   int   = 10,
-    min_delta:       float = 0.10,
-    annual_cap:      int   = 12,
-    annual_counter:  dict  = None,
+    cooldown_days: int = 10,
+    min_delta: float = 0.10,
+    annual_cap: int = 12,
+    annual_counter: dict = None,
 ) -> tuple:
     """
     Decide whether to apply a target reallocation or hold current weights.
@@ -129,20 +132,19 @@ def reallocation_gate(
         if days_since < cooldown_days:
             logging.debug(
                 "Gate BLOCKED (cooldown): %d days since last change (need %d)",
-                days_since, cooldown_days
+                days_since,
+                cooldown_days,
             )
             return current_weights, False, annual_counter
 
     # --- Guard 2: minimum delta ---
     assets = set(current_weights) | set(target_weights)
-    max_delta = max(
-        abs(target_weights.get(a, 0.0) - current_weights.get(a, 0.0))
-        for a in assets
-    )
+    max_delta = max(abs(target_weights.get(a, 0.0) - current_weights.get(a, 0.0)) for a in assets)
     if max_delta < min_delta:
         logging.debug(
             "Gate BLOCKED (min_delta): max weight change %.1f%% < %.1f%%",
-            max_delta * 100, min_delta * 100
+            max_delta * 100,
+            min_delta * 100,
         )
         return current_weights, False, annual_counter
 
@@ -151,7 +153,8 @@ def reallocation_gate(
     if count_this_year >= annual_cap:
         logging.warning(
             "Gate BLOCKED (annual cap): %d reallocations already in %d",
-            count_this_year, year
+            count_this_year,
+            year,
         )
         return current_weights, False, annual_counter
 
@@ -166,7 +169,8 @@ def reallocation_gate(
         target_weights.get("bond", 0) * 100,
         current_weights.get("mmf", 0) * 100,
         target_weights.get("mmf", 0) * 100,
-        annual_counter[year], year,
+        annual_counter[year],
+        year,
     )
     return target_weights, True, annual_counter
 
@@ -175,10 +179,11 @@ def reallocation_gate(
 # MMF BACKWARD EXTENSION  (WIBOR1M chain-link)
 # ============================================================
 
+
 def build_mmf_extended(
-    mmf_df:      pd.DataFrame,
-    wibor1m_df:  pd.DataFrame,
-    floor_date:  str = "1995-01-02",
+    mmf_df: pd.DataFrame,
+    wibor1m_df: pd.DataFrame,
+    floor_date: str = "1995-01-02",
 ) -> pd.DataFrame:
     """
     Extend the MMF (2720.n) price series backwards using WIBOR 1M.
@@ -243,15 +248,16 @@ def build_mmf_extended(
     - If WIBOR data does not cover the requested floor_date, the extension
       starts from the earliest available WIBOR date.
     """
-    floor_ts  = pd.Timestamp(floor_date)
+    floor_ts = pd.Timestamp(floor_date)
     mmf_close = mmf_df[CLOSE_COL].sort_index().dropna()
     mmf_start = mmf_close.index.min()
 
     # If MMF already covers the floor, no extension needed
     if mmf_start <= floor_ts:
         logging.info(
-            "build_mmf_extended: MMF starts %s, at or before floor %s — "
-            "no extension needed.", mmf_start.date(), floor_ts.date(),
+            "build_mmf_extended: MMF starts %s, at or before floor %s — no extension needed.",
+            mmf_start.date(),
+            floor_ts.date(),
         )
         out = mmf_df.copy()
         out = out.loc[out.index >= floor_ts]
@@ -260,15 +266,14 @@ def build_mmf_extended(
     # ── Prepare WIBOR series ───────────────────────────────────────────────
     wibor_close = wibor1m_df[CLOSE_COL].sort_index().dropna()
     # Clip WIBOR to the extension window [floor_date, mmf_start)
-    wibor_ext = wibor_close.loc[
-        (wibor_close.index >= floor_ts) & (wibor_close.index < mmf_start)
-    ]
+    wibor_ext = wibor_close.loc[(wibor_close.index >= floor_ts) & (wibor_close.index < mmf_start)]
 
     if wibor_ext.empty:
         logging.warning(
             "build_mmf_extended: WIBOR 1M has no data between %s and %s — "
             "cannot extend. Returning original MMF from its start date.",
-            floor_ts.date(), mmf_start.date(),
+            floor_ts.date(),
+            mmf_start.date(),
         )
         return mmf_df.loc[mmf_df.index >= floor_ts]
 
@@ -279,14 +284,14 @@ def build_mmf_extended(
 
     # ── Compute daily accrual factors ─────────────────────────────────────
     # WIBOR is expressed as annual % (e.g. 25.0 = 25% per annum)
-    annual_rate   = wibor_ext_full / 100.0
+    annual_rate = wibor_ext_full / 100.0
     daily_factors = (1.0 + annual_rate) ** (1.0 / 252)
 
     # ── Chain-link backwards from first MMF observation ───────────────────
     # cumulative product going FORWARD from floor → mmf_start gives the
     # total growth factor over the extension window.
     # To chain-link backwards: divide mmf_start price by the forward cumprod.
-    anchor_price = mmf_close.iloc[0]   # price on mmf_start date
+    anchor_price = mmf_close.iloc[0]  # price on mmf_start date
 
     # daily_factors is indexed floor → (mmf_start - 1 bday)
     # cumprod going forward: at day t, cumprod(t) = product of factors[floor..t]
@@ -295,7 +300,7 @@ def build_mmf_extended(
     # Scale so that cumprod(mmf_start - 1 bday) × next_factor = anchor_price
     # i.e. synthetic[mmf_start] would equal anchor_price
     # synthetic[t] = anchor_price / (total_forward_cumprod / forward_cumprod[t])
-    total_forward   = forward_cumprod.iloc[-1] * daily_factors.iloc[-1]
+    total_forward = forward_cumprod.iloc[-1] * daily_factors.iloc[-1]
     # Actually simpler: work in returns space, then build price backwards
     # Returns during extension: r_t = daily_factor_t - 1
     ext_returns = daily_factors - 1.0
@@ -304,16 +309,16 @@ def build_mmf_extended(
     # price[mmf_start] = anchor_price (known)
     # price[t-1] = price[t] / daily_factor[t]
     # We have factors indexed [floor_date .. mmf_start-1], so reverse:
-    factors_reverse = daily_factors.iloc[::-1]          # mmf_start-1 down to floor
-    price_reverse   = pd.Series(index=factors_reverse.index, dtype=float)
-    prev_price      = anchor_price
+    factors_reverse = daily_factors.iloc[::-1]  # mmf_start-1 down to floor
+    price_reverse = pd.Series(index=factors_reverse.index, dtype=float)
+    prev_price = anchor_price
     for date in factors_reverse.index:
-        prev_price           = prev_price / daily_factors.loc[date]
+        prev_price = prev_price / daily_factors.loc[date]
         price_reverse.loc[date] = prev_price
 
-    synthetic_prices = price_reverse.iloc[::-1]          # back to chronological
+    synthetic_prices = price_reverse.iloc[::-1]  # back to chronological
 
-# ── Combine synthetic extension + real MMF ────────────────────────────
+    # ── Combine synthetic extension + real MMF ────────────────────────────
     # Jawne przekazanie obiektów do połączenia
     combined = pd.concat(objs=[synthetic_prices, mmf_close], axis=0)
     combined = combined.sort_index()
@@ -329,13 +334,13 @@ def build_mmf_extended(
 
     # Build stooq-format output z jawnym przekazaniem indeksu
     out = pd.DataFrame(index=combined.index)
-    out[CLOSE_COL]   = combined
+    out[CLOSE_COL] = combined
     out["Najwyzszy"] = combined
     out["Najnizszy"] = combined
-    out.index.name   = "Data"
+    out.index.name = "Data"
 
     # Verify the seam: return at mmf_start should match the actual first MMF return
-    ext_rows  = out.loc[out.index < mmf_start]
+    ext_rows = out.loc[out.index < mmf_start]
     real_rows = out.loc[out.index >= mmf_start]
 
     logging.info(
@@ -352,4 +357,3 @@ def build_mmf_extended(
         out[CLOSE_COL].iloc[0],
     )
     return out
-

@@ -70,29 +70,25 @@ PORTFOLIO MODES
 
 import itertools
 import logging
-import os
-import time
-import random
 
 import numpy as np
 import pandas as pd
 
 try:
     import yfinance as yf
+
     _YFINANCE_AVAILABLE = True
 except ImportError:
     _YFINANCE_AVAILABLE = False
 
 
 from moj_system.core.strategy_engine import compute_metrics
-from moj_system.core.utils import build_mmf_extended, signals_to_target_weights, reallocation_gate
-
 
 # ============================================================
 # CONSTANTS
 # ============================================================
 
-CLOSE_COL = "Zamkniecie"   # stooq close column name used throughout
+CLOSE_COL = "Zamkniecie"  # stooq close column name used throughout
 DATA_START = "1990-01-01"  # hard floor for all series
 
 # Stooq FX tickers (rate expressed as units of foreign per 1 PLN, inverted below)
@@ -105,18 +101,19 @@ FX_TICKERS = {
 
 # yfinance tickers for non-stooq indices
 YFINANCE_TICKERS = {
-    "EU":    "^STOXX",        # STOXX Europe 600
-    "WORLD": "URTH",          # iShares MSCI World ETF (USD, from 2012)
-                              # Note: for longer history back to 1990, consider
-                              # sourcing MSCI World from stooq if available
-                              # (check ^msciw or similar during data validation).
-                              # MSCI_WORLD_SOURCE setting in runfile controls this.
+    "EU": "^STOXX",  # STOXX Europe 600
+    "WORLD": "URTH",  # iShares MSCI World ETF (USD, from 2012)
+    # Note: for longer history back to 1990, consider
+    # sourcing MSCI World from stooq if available
+    # (check ^msciw or similar during data validation).
+    # MSCI_WORLD_SOURCE setting in runfile controls this.
 }
 
 
 # ============================================================
 # DATA ACQUISITION — yfinance
 # ============================================================
+
 
 def download_yfinance(ticker: str, start: str = DATA_START) -> pd.DataFrame | None:
     """
@@ -162,7 +159,10 @@ def download_yfinance(ticker: str, start: str = DATA_START) -> pd.DataFrame | No
 
     logging.info(
         "%s loaded from yfinance: %d rows  (%s to %s)",
-        ticker, len(df), df.index.min().date(), df.index.max().date(),
+        ticker,
+        len(df),
+        df.index.min().date(),
+        df.index.max().date(),
     )
     return df
 
@@ -201,8 +201,9 @@ def yfinance_to_stooq(df: pd.DataFrame, ticker: str) -> pd.DataFrame | None:
     close_candidates = [c for c in df.columns if c.lower() == "close"]
     if not close_candidates:
         logging.error(
-            "yfinance_to_stooq: no 'Close' column found for %s. "
-            "Available columns: %s", ticker, list(df.columns)
+            "yfinance_to_stooq: no 'Close' column found for %s. Available columns: %s",
+            ticker,
+            list(df.columns),
         )
         return None
 
@@ -215,16 +216,16 @@ def yfinance_to_stooq(df: pd.DataFrame, ticker: str) -> pd.DataFrame | None:
     # Also carry Najwyzszy (high) and Najnizszy (low) if present — walk_forward
     # uses these for the breakout signal. Map yfinance column names.
     high_candidates = [c for c in df.columns if c.lower() == "high"]
-    low_candidates  = [c for c in df.columns if c.lower() == "low"]
+    low_candidates = [c for c in df.columns if c.lower() == "low"]
     if high_candidates:
         out["Najwyzszy"] = df[high_candidates[0]]
     else:
-        out["Najwyzszy"] = out[CLOSE_COL]   # fallback: use close as high proxy
+        out["Najwyzszy"] = out[CLOSE_COL]  # fallback: use close as high proxy
 
     if low_candidates:
         out["Najnizszy"] = df[low_candidates[0]]
     else:
-        out["Najnizszy"] = out[CLOSE_COL]   # fallback: use close as low proxy
+        out["Najnizszy"] = out[CLOSE_COL]  # fallback: use close as low proxy
 
     # Ensure DatetimeIndex, timezone-naive, named 'Data'
     out.index = pd.to_datetime(out.index).tz_localize(None)
@@ -242,6 +243,7 @@ def yfinance_to_stooq(df: pd.DataFrame, ticker: str) -> pd.DataFrame | None:
 # ============================================================
 # FX DATA — stooq
 # ============================================================
+
 
 def load_fx_series(currency: str, stooq_df_map: dict) -> pd.Series | None:
     """
@@ -274,6 +276,7 @@ def load_fx_series(currency: str, stooq_df_map: dict) -> pd.Series | None:
 # ============================================================
 # RETURN CONSTRUCTION
 # ============================================================
+
 
 def build_return_series(
     price_df: pd.DataFrame,
@@ -371,7 +374,9 @@ def build_blend(
     if abs(w_a + w_b - 1.0) > 1e-9:
         logging.warning(
             "build_blend(%s): weights %.2f + %.2f != 1.0. Proceeding anyway.",
-            label, w_a, w_b,
+            label,
+            w_a,
+            w_b,
         )
 
     # Align both series to union calendar via ffill
@@ -393,16 +398,20 @@ def build_blend(
 
     # Build stooq-format DataFrame
     out = pd.DataFrame(index=blend_price.index)
-    out[CLOSE_COL]  = blend_price
-    out["Najwyzszy"] = blend_price   # no intraday data — use close
+    out[CLOSE_COL] = blend_price
+    out["Najwyzszy"] = blend_price  # no intraday data — use close
     out["Najnizszy"] = blend_price
 
     out.index.name = "Data"
 
     logging.info(
         "Blend '%s' (%.0f%% + %.0f%%): %d rows  (%s to %s)",
-        label, w_a * 100, w_b * 100,
-        len(out), out.index.min().date(), out.index.max().date(),
+        label,
+        w_a * 100,
+        w_b * 100,
+        len(out),
+        out.index.min().date(),
+        out.index.max().date(),
     )
     return out
 
@@ -435,25 +444,27 @@ def build_price_df_from_returns(
     price = 100.0 * (1 + ret_clean).cumprod()
 
     out = pd.DataFrame(index=price.index)
-    out[CLOSE_COL]  = price
+    out[CLOSE_COL] = price
     out["Najwyzszy"] = price
     out["Najnizszy"] = price
     out.index.name = "Data"
 
     logging.info(
-        "Price series '%s': %d rows  (%s to %s)  "
-        "start=%.2f  end=%.2f",
-        label, len(out),
-        out.index.min().date(), out.index.max().date(),
-        out[CLOSE_COL].iloc[0], out[CLOSE_COL].iloc[-1],
+        "Price series '%s': %d rows  (%s to %s)  start=%.2f  end=%.2f",
+        label,
+        len(out),
+        out.index.min().date(),
+        out.index.max().date(),
+        out[CLOSE_COL].iloc[0],
+        out[CLOSE_COL].iloc[-1],
     )
     return out
-
 
 
 # ============================================================
 # CALENDAR ALIGNMENT
 # ============================================================
+
 
 def align_to_reference(
     series_dict: dict,
@@ -512,6 +523,7 @@ def align_to_reference(
 # N-ASSET ALLOCATION — WEIGHT GRID
 # ============================================================
 
+
 def generate_weight_grid(n_assets: int, step: float = 0.10) -> list[tuple]:
     """
     Enumerate all weight tuples (w1, ..., wN) at the given step size
@@ -530,13 +542,12 @@ def generate_weight_grid(n_assets: int, step: float = 0.10) -> list[tuple]:
     list[tuple]  — list of weight tuples, length = C(N + 1/step, N) roughly
     """
     levels = [round(i * step, 10) for i in range(int(round(1.0 / step)) + 1)]
-    combos = [
-        c for c in itertools.product(levels, repeat=n_assets)
-        if sum(c) <= 1.0 + 1e-9
-    ]
+    combos = [c for c in itertools.product(levels, repeat=n_assets) if sum(c) <= 1.0 + 1e-9]
     logging.info(
         "Weight grid: %d assets at step=%.2f → %d combinations",
-        n_assets, step, len(combos),
+        n_assets,
+        step,
+        len(combos),
     )
     return combos
 
@@ -545,12 +556,13 @@ def generate_weight_grid(n_assets: int, step: float = 0.10) -> list[tuple]:
 # N-ASSET ALLOCATION — OPTIMISER
 # ============================================================
 
+
 def optimise_asset_weights(
-    returns_dict:   dict,
-    signals_dict:   dict,
-    mmf_returns:    pd.Series,
-    step:           float = 0.10,
-    objective:      str   = "calmar",
+    returns_dict: dict,
+    signals_dict: dict,
+    mmf_returns: pd.Series,
+    step: float = 0.10,
+    objective: str = "calmar",
 ) -> tuple[dict, float]:
     """
     Grid-search the best N-asset allocation weights on in-sample data.
@@ -592,8 +604,7 @@ def optimise_asset_weights(
     #  including them in the intersection cuts 4 years of IS history including
     #  the 2008-2009 crisis, which changes which assets appear favourable.)
     keys_with_signal = [
-        k for k in asset_keys
-        if signals_dict.get(k) is not None and len(signals_dict[k]) > 0
+        k for k in asset_keys if signals_dict.get(k) is not None and len(signals_dict[k]) > 0
     ]
     keys_no_signal = [k for k in asset_keys if k not in keys_with_signal]
 
@@ -609,8 +620,8 @@ def optimise_asset_weights(
 
     if len(common_idx) < 252:
         logging.warning(
-            "optimise_asset_weights: common index only %d days (< 252) — "
-            "returning equal weights.", len(common_idx),
+            "optimise_asset_weights: common index only %d days (< 252) — returning equal weights.",
+            len(common_idx),
         )
         equal_w = round(1.0 / (n + 1), 2)
         return {k: equal_w for k in asset_keys}, -np.inf
@@ -619,7 +630,7 @@ def optimise_asset_weights(
     # so those days earn MMF automatically — matching multiasset_library behaviour.
     # Reindex ALL assets (including no-signal ones) to common_idx;
     # no-signal assets will have signal=0 everywhere so their returns don't matter.
-    r     = {k: returns_dict[k].reindex(common_idx).fillna(0.0) for k in asset_keys}
+    r = {k: returns_dict[k].reindex(common_idx).fillna(0.0) for k in asset_keys}
     mmf_r = mmf_returns.reindex(common_idx).fillna(0.0)
 
     # Per-asset binary signal.  Default to 0 (flat/out) before signal era starts,
@@ -648,10 +659,10 @@ def optimise_asset_weights(
     # fairly against risky combos without the CalMAR infinity problem.
     #
     # Pre-compute per-day signal count and "fixed" returns (identical across combos):
-    sig_mat  = np.column_stack([s[k].values for k in asset_keys])  # (T, N)
-    ret_mat  = np.column_stack([r[k].values for k in asset_keys])  # (T, N)
-    mmf_arr  = mmf_r.values                                         # (T,)
-    n_on_arr = sig_mat.sum(axis=1)                                  # (T,)
+    sig_mat = np.column_stack([s[k].values for k in asset_keys])  # (T, N)
+    ret_mat = np.column_stack([r[k].values for k in asset_keys])  # (T, N)
+    mmf_arr = mmf_r.values  # (T,)
+    n_on_arr = sig_mat.sum(axis=1)  # (T,)
 
     # Fixed return: 0-on -> MMF; 1-on -> that asset; 2+-on -> handled per combo
     fixed_r = np.where(n_on_arr == 0, mmf_arr, 0.0)
@@ -659,13 +670,13 @@ def optimise_asset_weights(
         only_this = (sig_mat[:, i] == 1) & (n_on_arr == 1)
         fixed_r = np.where(only_this, ret_mat[:, i], fixed_r)
 
-    multi_on_mask = n_on_arr >= 2   # days where combo matters
+    multi_on_mask = n_on_arr >= 2  # days where combo matters
 
     best_weights = {k: 0.0 for k in asset_keys}
-    best_obj     = -np.inf
+    best_obj = -np.inf
 
     for combo in combos:
-        w     = np.array(combo, dtype=float)        # (N,)
+        w = np.array(combo, dtype=float)  # (N,)
         w_mmf = max(0.0, 1.0 - w.sum())
 
         # On multi-signal-on days: weighted blend (combo determines the split)
@@ -696,12 +707,13 @@ def optimise_asset_weights(
             obj_val = metrics.get("CalMAR", -np.inf)
 
         if np.isfinite(obj_val) and obj_val > best_obj:
-            best_obj     = obj_val
+            best_obj = obj_val
             best_weights = dict(zip(asset_keys, combo))
 
     logging.info(
         "optimise_asset_weights: best %s=%.4f  weights=%s",
-        objective, best_obj,
+        objective,
+        best_obj,
         {k: f"{v:.1%}" for k, v in best_weights.items()},
     )
     return best_weights, best_obj
@@ -711,15 +723,16 @@ def optimise_asset_weights(
 # N-ASSET ALLOCATION — REALLOCATION GATE (generalised)
 # ============================================================
 
+
 def reallocation_gate_n(
-    current_weights:  dict,
-    target_weights:   dict,
+    current_weights: dict,
+    target_weights: dict,
     last_change_date,
     current_date,
-    cooldown_days:    int   = 10,
-    min_delta:        float = 0.10,
-    annual_cap:       int   = 999,
-    annual_counter:   dict  = None,
+    cooldown_days: int = 10,
+    min_delta: float = 0.10,
+    annual_cap: int = 999,
+    annual_counter: dict = None,
 ) -> tuple[dict, bool]:
     """
     Decide whether to apply a target N-asset reallocation or hold.
@@ -779,10 +792,11 @@ def reallocation_gate_n(
 # N-ASSET ALLOCATION — SIGNALS TO TARGET WEIGHTS
 # ============================================================
 
+
 def signals_to_target_weights_n(
-    signals:      dict,
+    signals: dict,
     best_weights: dict,
-    mmf_key:      str = "mmf",
+    mmf_key: str = "mmf",
 ) -> dict:
     """
     Map per-asset binary signals + optimised weights to a target weight dict.
@@ -810,8 +824,8 @@ def signals_to_target_weights_n(
     dict  — {asset_key: weight, ..., mmf_key: mmf_weight}
     """
     asset_keys = list(signals.keys())
-    on_keys    = [k for k in asset_keys if signals.get(k, 0)]
-    n_on       = len(on_keys)
+    on_keys = [k for k in asset_keys if signals.get(k, 0)]
+    n_on = len(on_keys)
 
     target = {k: 0.0 for k in asset_keys}
 
@@ -822,7 +836,7 @@ def signals_to_target_weights_n(
     elif n_on == 1:
         # Exactly one signal on — 100% that asset, consistent with IS optimiser
         target[on_keys[0]] = 1.0
-        target[mmf_key]    = 0.0
+        target[mmf_key] = 0.0
 
     else:
         # Multiple signals on — apply optimised weight split
@@ -831,7 +845,7 @@ def signals_to_target_weights_n(
         total_risky = 0.0
         for key in on_keys:
             w = best_weights.get(key, 0.0)
-            target[key]  = w
+            target[key] = w
             total_risky += w
         target[mmf_key] = max(0.0, 1.0 - total_risky)
 
@@ -842,18 +856,19 @@ def signals_to_target_weights_n(
 # N-ASSET ALLOCATION WALK-FORWARD
 # ============================================================
 
+
 def allocation_walk_forward_n(
-    returns_dict:      dict,
+    returns_dict: dict,
     signals_full_dict: dict,
-    signals_oos_dict:  dict,
-    mmf_returns:       pd.Series,
-    wf_results_ref:    pd.DataFrame,
-    asset_keys:        list,
-    step:              float = 0.10,
-    objective:         str   = "calmar",
-    cooldown_days:     int   = 10,
-    annual_cap:        int   = 999,
-    train_years:       int   = 9,
+    signals_oos_dict: dict,
+    mmf_returns: pd.Series,
+    wf_results_ref: pd.DataFrame,
+    asset_keys: list,
+    step: float = 0.10,
+    objective: str = "calmar",
+    cooldown_days: int = 10,
+    annual_cap: int = 999,
+    train_years: int = 9,
 ) -> tuple:
     """
     Walk-forward allocation optimisation for N risky assets + MMF residual.
@@ -895,33 +910,33 @@ def allocation_walk_forward_n(
       alloc_results_df   : pd.DataFrame     — per-window optimised weights
     """
     oos_equity_slices = []
-    alloc_results     = []
-    all_weights       = {}
-    all_realloc_log   = []
-    annual_counter    = {}
+    alloc_results = []
+    all_weights = {}
+    all_realloc_log = []
+    annual_counter = {}
 
     # Determine OOS period from reference walk-forward results
     oos_start = wf_results_ref["TestStart"].min()
-    oos_end   = wf_results_ref["TestEnd"].max()
+    oos_end = wf_results_ref["TestEnd"].max()
 
     # Initialise gate state
     last_change_date = None
-    current_weights  = {k: 0.0 for k in asset_keys}
+    current_weights = {k: 0.0 for k in asset_keys}
     current_weights["mmf"] = 1.0
 
     prev_best_weights = {k: 0.0 for k in asset_keys}  # all-zero = no carry-forward
 
     for _, row in wf_results_ref.iterrows():
-        train_end  = pd.Timestamp(row["TestStart"])
+        train_end = pd.Timestamp(row["TestStart"])
         test_start = pd.Timestamp(row["TestStart"])
-        test_end   = pd.Timestamp(row["TestEnd"])
+        test_end = pd.Timestamp(row["TestEnd"])
 
         # ── In-sample slices ──────────────────────────────────────────────
         def _is(series, end):
             return series.loc[series.index < end]
 
         is_returns = {k: _is(returns_dict[k], train_end) for k in asset_keys}
-        is_mmf     = _is(mmf_returns, train_end)
+        is_mmf = _is(mmf_returns, train_end)
         # Slice per-asset signals up to train_end.
         # signals_full_dict contains walk-forward OOS signals starting from
         # each asset's first OOS date.  For IS dates before that start,
@@ -935,17 +950,19 @@ def allocation_walk_forward_n(
         if min_is_len < 252:
             logging.warning(
                 "Skipping window %s–%s: insufficient in-sample data (%d days)",
-                train_end.date(), test_end.date(), min_is_len,
+                train_end.date(),
+                test_end.date(),
+                min_is_len,
             )
             continue
 
         # ── Optimise weights ──────────────────────────────────────────────
         best_weights, best_obj = optimise_asset_weights(
-            returns_dict  = is_returns,
-            signals_dict  = is_signals,
-            mmf_returns   = is_mmf,
-            step          = step,
-            objective     = objective,
+            returns_dict=is_returns,
+            signals_dict=is_signals,
+            mmf_returns=is_mmf,
+            step=step,
+            objective=objective,
         )
 
         # If all combos were identical in IS (indiscriminate), best_weights will
@@ -964,14 +981,16 @@ def allocation_walk_forward_n(
 
         prev_best_weights = dict(best_weights)
 
-        alloc_results.append({
-            "TrainEnd":   train_end.date(),
-            "TestStart":  test_start.date(),
-            "TestEnd":    test_end.date(),
-            **{f"w_{k}": best_weights.get(k, 0.0) for k in asset_keys},
-            "w_mmf":      max(0.0, 1.0 - sum(best_weights.values())),
-            f"{objective}": best_obj,
-        })
+        alloc_results.append(
+            {
+                "TrainEnd": train_end.date(),
+                "TestStart": test_start.date(),
+                "TestEnd": test_end.date(),
+                **{f"w_{k}": best_weights.get(k, 0.0) for k in asset_keys},
+                "w_mmf": max(0.0, 1.0 - sum(best_weights.values())),
+                f"{objective}": best_obj,
+            },
+        )
 
         # ── OOS simulation ────────────────────────────────────────────────
         # OOS signals trimmed to this window's test period.
@@ -979,7 +998,7 @@ def allocation_walk_forward_n(
         def _oos(series, ts=test_start, te=test_end):
             return series.loc[(series.index >= ts) & (series.index <= te)]
 
-        oos_sigs    = {k: _oos(signals_oos_dict[k]) for k in asset_keys}
+        oos_sigs = {k: _oos(signals_oos_dict[k]) for k in asset_keys}
 
         # Reference calendar: union of all asset signal calendars.
         # Different markets (PL, US, EU, JP) have different holidays.
@@ -993,20 +1012,19 @@ def allocation_walk_forward_n(
         if ref_oos_idx.empty:
             logging.warning(
                 "Skipping OOS window %s-%s: no signal data for any asset.",
-                test_start.date(), test_end.date(),
+                test_start.date(),
+                test_end.date(),
             )
             continue
 
         # Align signals: ffill for non-trading days, default 0 at start
         oos_sigs_aligned = {
-            k: oos_sigs[k].reindex(ref_oos_idx, method="ffill").fillna(0.0)
-            for k in asset_keys
+            k: oos_sigs[k].reindex(ref_oos_idx, method="ffill").fillna(0.0) for k in asset_keys
         }
         # Align returns: ffill for non-trading days (no return = carry last price)
         # then fill any remaining NaN at the start with 0
         oos_returns = {
-            k: returns_dict[k].reindex(ref_oos_idx, method="ffill").fillna(0.0)
-            for k in asset_keys
+            k: returns_dict[k].reindex(ref_oos_idx, method="ffill").fillna(0.0) for k in asset_keys
         }
         oos_mmf = mmf_returns.reindex(ref_oos_idx, method="ffill").fillna(0.0)
 
@@ -1018,29 +1036,31 @@ def allocation_walk_forward_n(
 
             # Target weights from signals + optimised allocation
             target = signals_to_target_weights_n(
-                signals      = sigs_today,
-                best_weights = best_weights,
+                signals=sigs_today,
+                best_weights=best_weights,
             )
 
             # Apply reallocation gate
             accepted, did_reallocate = reallocation_gate_n(
-                current_weights  = current_weights,
-                target_weights   = target,
-                last_change_date = last_change_date,
-                current_date     = date,
-                cooldown_days    = cooldown_days,
-                min_delta        = 0.10,
-                annual_cap       = annual_cap,
-                annual_counter   = annual_counter,
+                current_weights=current_weights,
+                target_weights=target,
+                last_change_date=last_change_date,
+                current_date=date,
+                cooldown_days=cooldown_days,
+                min_delta=0.10,
+                annual_cap=annual_cap,
+                annual_counter=annual_counter,
             )
 
             if did_reallocate:
-                all_realloc_log.append({
-                    "Date":         date,
-                    "weights_before": dict(current_weights),
-                    "weights_after":  dict(accepted),
-                })
-                current_weights  = accepted
+                all_realloc_log.append(
+                    {
+                        "Date": date,
+                        "weights_before": dict(current_weights),
+                        "weights_after": dict(accepted),
+                    },
+                )
+                current_weights = accepted
                 last_change_date = date
 
             all_weights[date] = dict(current_weights)
@@ -1048,7 +1068,7 @@ def allocation_walk_forward_n(
             # Compute daily portfolio return using current (gated) weights.
             # Each asset contributes: weight * return (on trading days)
             # MMF accrues on all days including non-trading days for that market.
-            w   = current_weights
+            w = current_weights
             mmf_r_today = float(oos_mmf.get(date, 0.0))
             port_r = w.get("mmf", 1.0) * mmf_r_today
             for k in asset_keys:
@@ -1074,12 +1094,11 @@ def allocation_walk_forward_n(
         return pd.Series(dtype=float), pd.Series(dtype=object), [], pd.DataFrame()
 
     portfolio_equity = pd.concat(oos_equity_slices).sort_index()
-    weights_series   = pd.Series(all_weights).sort_index()
+    weights_series = pd.Series(all_weights).sort_index()
     alloc_results_df = pd.DataFrame(alloc_results)
 
     logging.info(
-        "allocation_walk_forward_n complete: %d OOS days  "
-        "(%s to %s)  %d reallocations",
+        "allocation_walk_forward_n complete: %d OOS days  (%s to %s)  %d reallocations",
         len(portfolio_equity),
         portfolio_equity.index.min().date(),
         portfolio_equity.index.max().date(),
@@ -1092,16 +1111,17 @@ def allocation_walk_forward_n(
 # REPORTING
 # ============================================================
 
+
 def print_global_equity_report(
-    portfolio_metrics:  dict,
-    bh_metrics_dict:    dict,
-    alloc_results_df:   pd.DataFrame,
-    reallocation_log:   list,
-    signals_oos_dict:   dict,
+    portfolio_metrics: dict,
+    bh_metrics_dict: dict,
+    alloc_results_df: pd.DataFrame,
+    reallocation_log: list,
+    signals_oos_dict: dict,
     oos_start,
     oos_end,
-    portfolio_mode:     str,
-    fx_hedged:          bool,
+    portfolio_mode: str,
+    fx_hedged: bool,
 ) -> None:
     """
     Log a structured OOS report for the N-asset global equity portfolio.
@@ -1123,10 +1143,14 @@ def print_global_equity_report(
     logging.info(sep)
     logging.info(
         "GLOBAL EQUITY PORTFOLIO  OOS REPORT  (%s to %s)",
-        pd.Timestamp(oos_start).date(), pd.Timestamp(oos_end).date(),
+        pd.Timestamp(oos_start).date(),
+        pd.Timestamp(oos_end).date(),
     )
-    logging.info("Mode: %s  |  FX treatment: %s",
-                 portfolio_mode, "hedged (no FX adjustment)" if fx_hedged else "unhedged (FX-adjusted)")
+    logging.info(
+        "Mode: %s  |  FX treatment: %s",
+        portfolio_mode,
+        "hedged (no FX adjustment)" if fx_hedged else "unhedged (FX-adjusted)",
+    )
     logging.info(sep)
 
     # Per-window allocation weights
@@ -1140,10 +1164,10 @@ def print_global_equity_report(
         if not m:
             return "N/A"
         return (
-            f"CAGR={m.get('CAGR', 0)*100:.2f}%  "
-            f"Vol={m.get('Vol', 0)*100:.2f}%  "
+            f"CAGR={m.get('CAGR', 0) * 100:.2f}%  "
+            f"Vol={m.get('Vol', 0) * 100:.2f}%  "
             f"Sharpe={m.get('Sharpe', 0):.2f}  "
-            f"MaxDD={m.get('MaxDD', 0)*100:.2f}%  "
+            f"MaxDD={m.get('MaxDD', 0) * 100:.2f}%  "
             f"CalMAR={m.get('CalMAR', 0):.2f}"
         )
 
@@ -1176,19 +1200,20 @@ def print_global_equity_report(
 # LEVEL 2 ROBUSTNESS — N-ASSET ALLOCATION WEIGHT PERTURBATION
 # ============================================================
 
+
 def allocation_weight_robustness_n(
-    alloc_results_df:  pd.DataFrame,
-    returns_dict:      dict,
-    mmf_returns:       pd.Series,
-    signals_oos_dict:  dict,
-    asset_keys:        list,
-    baseline_metrics:  dict,
-    perturb_steps:     list  = [-0.2, -0.1, 0.0, 0.1, 0.2],
-    focus_asset:       str   = None,
-    min_weight:        float = 0.0,
-    max_weight:        float = 1.0,
-    cooldown_days:     int   = 10,
-    annual_cap:        int   = 999,
+    alloc_results_df: pd.DataFrame,
+    returns_dict: dict,
+    mmf_returns: pd.Series,
+    signals_oos_dict: dict,
+    asset_keys: list,
+    baseline_metrics: dict,
+    perturb_steps: list = [-0.2, -0.1, 0.0, 0.1, 0.2],
+    focus_asset: str = None,
+    min_weight: float = 0.0,
+    max_weight: float = 1.0,
+    cooldown_days: int = 10,
+    annual_cap: int = 999,
 ) -> pd.DataFrame:
     """
     Level 2 robustness check: perturb one asset's optimised weight by fixed
@@ -1249,7 +1274,8 @@ def allocation_weight_robustness_n(
     if focus_asset not in asset_keys:
         logging.error(
             "allocation_weight_robustness_n: focus_asset '%s' not in asset_keys %s",
-            focus_asset, asset_keys,
+            focus_asset,
+            asset_keys,
         )
         return pd.DataFrame()
 
@@ -1260,18 +1286,23 @@ def allocation_weight_robustness_n(
     for k in asset_keys:
         sig = signals_oos_dict.get(k)
         if sig is not None and not sig.empty:
-            all_signal_idx = sig.index if all_signal_idx is None else all_signal_idx.union(sig.index)
+            all_signal_idx = (
+                sig.index if all_signal_idx is None else all_signal_idx.union(sig.index)
+            )
 
     if all_signal_idx is None:
         logging.error("allocation_weight_robustness_n: no OOS signal data found.")
         return pd.DataFrame()
 
     # Reindex all returns and signals to the common OOS index
-    ret_aligned  = {k: returns_dict[k].reindex(all_signal_idx, method="ffill").fillna(0.0)
-                    for k in asset_keys}
-    mmf_aligned  = mmf_returns.reindex(all_signal_idx, method="ffill").fillna(0.0)
-    sig_aligned  = {k: signals_oos_dict[k].reindex(all_signal_idx, method="ffill").fillna(0.0)
-                    for k in asset_keys}
+    ret_aligned = {
+        k: returns_dict[k].reindex(all_signal_idx, method="ffill").fillna(0.0) for k in asset_keys
+    }
+    mmf_aligned = mmf_returns.reindex(all_signal_idx, method="ffill").fillna(0.0)
+    sig_aligned = {
+        k: signals_oos_dict[k].reindex(all_signal_idx, method="ffill").fillna(0.0)
+        for k in asset_keys
+    }
 
     results = []
 
@@ -1279,7 +1310,7 @@ def allocation_weight_robustness_n(
         # ── Build per-window perturbed weight dicts ───────────────────────
         perturbed_windows = []
         n_floor_clamped = 0
-        n_ceil_clamped  = 0
+        n_ceil_clamped = 0
 
         for _, row in alloc_results_df.iterrows():
             # Current optimised weights
@@ -1288,7 +1319,7 @@ def allocation_weight_robustness_n(
 
             # Shift focus asset
             raw_focus = w[focus_asset] + step
-            clamped   = False
+            clamped = False
 
             if raw_focus < min_weight:
                 raw_focus = min_weight
@@ -1304,43 +1335,48 @@ def allocation_weight_robustness_n(
             # Scale other risky-asset weights proportionally so their
             # relative ratios are preserved; total risky <= 1.0
             other_total_orig = sum(w[k] for k in other_keys)
-            risky_budget     = min(1.0 - w_focus_new, 1.0)
+            risky_budget = min(1.0 - w_focus_new, 1.0)
 
             if other_total_orig > 1e-9:
                 scale = min(risky_budget, other_total_orig) / other_total_orig
-                w_others = {k: max(min_weight, round(w[k] * scale, 10))
-                            for k in other_keys}
+                w_others = {k: max(min_weight, round(w[k] * scale, 10)) for k in other_keys}
             else:
                 w_others = {k: 0.0 for k in other_keys}
 
-            w_new          = {focus_asset: w_focus_new, **w_others}
-            w_mmf_new      = max(0.0, round(1.0 - sum(w_new.values()), 10))
+            w_new = {focus_asset: w_focus_new, **w_others}
+            w_mmf_new = max(0.0, round(1.0 - sum(w_new.values()), 10))
 
-            perturbed_windows.append({
-                "TestStart": pd.Timestamp(row["TestStart"]),
-                "TestEnd":   pd.Timestamp(row["TestEnd"]),
-                **{k: w_new[k] for k in asset_keys},
-                "w_mmf":     w_mmf_new,
-            })
+            perturbed_windows.append(
+                {
+                    "TestStart": pd.Timestamp(row["TestStart"]),
+                    "TestEnd": pd.Timestamp(row["TestEnd"]),
+                    **{k: w_new[k] for k in asset_keys},
+                    "w_mmf": w_mmf_new,
+                },
+            )
 
         if n_floor_clamped or n_ceil_clamped:
             logging.info(
                 "step=%+.2f: %d windows clamped at floor (min=%.2f), "
                 "%d clamped at ceiling (max=%.2f).",
-                step, n_floor_clamped, min_weight, n_ceil_clamped, max_weight,
+                step,
+                n_floor_clamped,
+                min_weight,
+                n_ceil_clamped,
+                max_weight,
             )
 
         # ── Simulate OOS with perturbed weights ───────────────────────────
         oos_equity_slices = []
-        n_reallocations   = 0
-        current_weights   = {k: 0.0 for k in asset_keys}
+        n_reallocations = 0
+        current_weights = {k: 0.0 for k in asset_keys}
         current_weights["mmf"] = 1.0
-        last_change_date  = None
-        annual_counter    = {}
+        last_change_date = None
+        annual_counter = {}
 
         for pw in perturbed_windows:
             window_start = pw["TestStart"]
-            window_end   = pw["TestEnd"]
+            window_end = pw["TestEnd"]
 
             # Target weights from the perturbed window
             target = {k: pw[k] for k in asset_keys}
@@ -1382,23 +1418,24 @@ def allocation_weight_robustness_n(
 
                 # Gate
                 accepted, did_reallocate = reallocation_gate_n(
-                    current_weights  = current_weights,
-                    target_weights   = effective,
-                    last_change_date = last_change_date,
-                    current_date     = date,
-                    cooldown_days    = cooldown_days,
-                    min_delta        = 0.10,
-                    annual_cap       = annual_cap,
-                    annual_counter   = annual_counter,
+                    current_weights=current_weights,
+                    target_weights=effective,
+                    last_change_date=last_change_date,
+                    current_date=date,
+                    cooldown_days=cooldown_days,
+                    min_delta=0.10,
+                    annual_cap=annual_cap,
+                    annual_counter=annual_counter,
                 )
                 if did_reallocate:
-                    current_weights  = accepted
+                    current_weights = accepted
                     last_change_date = date
                     n_reallocations += 1
 
                 # Daily portfolio return
-                r = sum(current_weights[k] * float(ret_aligned[k].get(date, 0.0))
-                        for k in asset_keys)
+                r = sum(
+                    current_weights[k] * float(ret_aligned[k].get(date, 0.0)) for k in asset_keys
+                )
                 r += current_weights["mmf"] * float(mmf_aligned.get(date, 0.0))
                 window_ret_vals.append((date, r))
 
@@ -1421,20 +1458,22 @@ def allocation_weight_robustness_n(
         m = compute_metrics(portfolio_equity)
         focus_mean = np.mean([pw[focus_asset] for pw in perturbed_windows])
 
-        results.append({
-            "focus_asset":       focus_asset,
-            "weight_shift":      step,
-            "focus_weight_mean": round(focus_mean, 3),
-            "n_floor_clamped":   n_floor_clamped,
-            "n_ceil_clamped":    n_ceil_clamped,
-            "CAGR":              m.get("CAGR",    np.nan),
-            "Vol":               m.get("Vol",     np.nan),
-            "Sharpe":            m.get("Sharpe",  np.nan),
-            "MaxDD":             m.get("MaxDD",   np.nan),
-            "CalMAR":            m.get("CalMAR",  np.nan),
-            "Sortino":           m.get("Sortino", np.nan),
-            "n_reallocations":   n_reallocations,
-        })
+        results.append(
+            {
+                "focus_asset": focus_asset,
+                "weight_shift": step,
+                "focus_weight_mean": round(focus_mean, 3),
+                "n_floor_clamped": n_floor_clamped,
+                "n_ceil_clamped": n_ceil_clamped,
+                "CAGR": m.get("CAGR", np.nan),
+                "Vol": m.get("Vol", np.nan),
+                "Sharpe": m.get("Sharpe", np.nan),
+                "MaxDD": m.get("MaxDD", np.nan),
+                "CalMAR": m.get("CalMAR", np.nan),
+                "Sortino": m.get("Sortino", np.nan),
+                "n_reallocations": n_reallocations,
+            },
+        )
 
     if not results:
         logging.warning("allocation_weight_robustness_n: no results produced.")
@@ -1445,20 +1484,19 @@ def allocation_weight_robustness_n(
     # Add vs-baseline comparison columns (step=0.0 row is the reference)
     base_row = df.loc[df["weight_shift"].abs() < 1e-9]
     if not base_row.empty:
-        base_cagr   = base_row["CAGR"].iloc[0]
-        base_maxdd  = base_row["MaxDD"].iloc[0]
+        base_cagr = base_row["CAGR"].iloc[0]
+        base_maxdd = base_row["MaxDD"].iloc[0]
         base_calmar = base_row["CalMAR"].iloc[0]
-        df["CAGR_vs_base"]   = (df["CAGR"]  - base_cagr)  * 100
-        df["MaxDD_vs_base"]  = (df["MaxDD"] - base_maxdd) * 100
-        df["CalMAR_vs_base"] = (df["CalMAR"] / base_calmar
-                                if base_calmar != 0 else np.nan)
+        df["CAGR_vs_base"] = (df["CAGR"] - base_cagr) * 100
+        df["MaxDD_vs_base"] = (df["MaxDD"] - base_maxdd) * 100
+        df["CalMAR_vs_base"] = df["CalMAR"] / base_calmar if base_calmar != 0 else np.nan
     else:
         logging.warning(
             "allocation_weight_robustness_n: step=0.0 not in perturb_steps — "
-            "vs_base columns will be NaN.  Add 0.0 to perturb_steps."
+            "vs_base columns will be NaN.  Add 0.0 to perturb_steps.",
         )
-        df["CAGR_vs_base"]   = np.nan
-        df["MaxDD_vs_base"]  = np.nan
+        df["CAGR_vs_base"] = np.nan
+        df["MaxDD_vs_base"] = np.nan
         df["CalMAR_vs_base"] = np.nan
 
     return df
@@ -1482,7 +1520,8 @@ def print_allocation_robustness_report_n(
     label = f"  (focus: {focus_asset})" if focus_asset else ""
     logging.info(sep)
     logging.info(
-        "ALLOCATION WEIGHT ROBUSTNESS  (N-asset, Level 2%s)", label
+        "ALLOCATION WEIGHT ROBUSTNESS  (N-asset, Level 2%s)",
+        label,
     )
     logging.info(sep)
 
@@ -1491,23 +1530,33 @@ def print_allocation_robustness_report_n(
         return
 
     display = results_df.copy()
-    display["CAGR"]             = (display["CAGR"]  * 100).round(2).astype(str) + "%"
-    display["Vol"]              = (display["Vol"]   * 100).round(2).astype(str) + "%"
-    display["MaxDD"]            = (display["MaxDD"] * 100).round(2).astype(str) + "%"
-    display["Sharpe"]           = display["Sharpe"].round(3)
-    display["CalMAR"]           = display["CalMAR"].round(3)
-    display["Sortino"]          = display["Sortino"].round(3)
-    display["CAGR_vs_base"]     = display["CAGR_vs_base"].round(2).astype(str) + "pp"
-    display["MaxDD_vs_base"]    = display["MaxDD_vs_base"].round(2).astype(str) + "pp"
-    display["CalMAR_vs_base"]   = display["CalMAR_vs_base"].round(3)
-    display["weight_shift"]     = display["weight_shift"].apply(lambda x: f"{x:+.0%}")
-    display["focus_weight_mean"]= display["focus_weight_mean"].apply(lambda x: f"{x:.0%}")
+    display["CAGR"] = (display["CAGR"] * 100).round(2).astype(str) + "%"
+    display["Vol"] = (display["Vol"] * 100).round(2).astype(str) + "%"
+    display["MaxDD"] = (display["MaxDD"] * 100).round(2).astype(str) + "%"
+    display["Sharpe"] = display["Sharpe"].round(3)
+    display["CalMAR"] = display["CalMAR"].round(3)
+    display["Sortino"] = display["Sortino"].round(3)
+    display["CAGR_vs_base"] = display["CAGR_vs_base"].round(2).astype(str) + "pp"
+    display["MaxDD_vs_base"] = display["MaxDD_vs_base"].round(2).astype(str) + "pp"
+    display["CalMAR_vs_base"] = display["CalMAR_vs_base"].round(3)
+    display["weight_shift"] = display["weight_shift"].apply(lambda x: f"{x:+.0%}")
+    display["focus_weight_mean"] = display["focus_weight_mean"].apply(lambda x: f"{x:.0%}")
 
     cols = [
-        "weight_shift", "focus_weight_mean",
-        "n_floor_clamped", "n_ceil_clamped",
-        "CAGR", "Vol", "Sharpe", "MaxDD", "CalMAR", "Sortino",
-        "n_reallocations", "CAGR_vs_base", "MaxDD_vs_base", "CalMAR_vs_base",
+        "weight_shift",
+        "focus_weight_mean",
+        "n_floor_clamped",
+        "n_ceil_clamped",
+        "CAGR",
+        "Vol",
+        "Sharpe",
+        "MaxDD",
+        "CalMAR",
+        "Sortino",
+        "n_reallocations",
+        "CAGR_vs_base",
+        "MaxDD_vs_base",
+        "CalMAR_vs_base",
     ]
     # Only show columns that exist
     cols = [c for c in cols if c in display.columns]
@@ -1518,7 +1567,7 @@ def print_allocation_robustness_report_n(
     inner = results_df.loc[results_df["weight_shift"].abs().between(0.09, 0.11)]
     if inner.empty:
         logging.info(
-            "Verdict: ±10pp steps not present — add ±0.10 to perturb_steps."
+            "Verdict: ±10pp steps not present — add ±0.10 to perturb_steps.",
         )
         return
 
@@ -1529,16 +1578,18 @@ def print_allocation_robustness_report_n(
 
     if min_ratio >= 0.80:
         verdict = "PLATEAU"
-        interp  = "robust — weight is on a broad performance plateau"
+        interp = "robust — weight is on a broad performance plateau"
     elif min_ratio >= 0.60:
         verdict = "MODERATE"
-        interp  = "somewhat sensitive — treat allocation with moderate confidence"
+        interp = "somewhat sensitive — treat allocation with moderate confidence"
     else:
         verdict = "SPIKE"
-        interp  = "fragile — performance depends critically on this weight level"
+        interp = "fragile — performance depends critically on this weight level"
 
     logging.info(
         "Verdict: %s  (min CalMAR ratio at ±10pp = %.3f)  %s",
-        verdict, min_ratio, interp,
+        verdict,
+        min_ratio,
+        interp,
     )
     logging.info(sep)

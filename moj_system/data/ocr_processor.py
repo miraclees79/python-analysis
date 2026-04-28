@@ -1,5 +1,3 @@
-
-
 # -*- coding: utf-8 -*-
 """
 Created on Thu Apr 16 19:50:13 2026
@@ -15,25 +13,27 @@ Moduł do pobierania zaszyfrowanych plików ZIP, ekstrakcji i przetwarzania OCR 
 Zastępuje stary skrypt `Download-ppe-data-v3.py`.
 """
 
-import os
+import gc  # Garbage Collector
 import io
+import logging
+import os
 import re
 import sys
 import tempfile
-import logging
-import requests
-import pyzipper
+from pathlib import Path
+
 import cv2
-import pytesseract
 import numpy as np
 import pandas as pd
-import gc  # Garbage Collector
+import pytesseract
+import pyzipper
+import requests
 from pdf2image import convert_from_path, pdfinfo_from_path
-from pathlib import Path
 
 # Import naszego nowego klienta GDrive
 try:
     from moj_system.data.gdrive import GDriveClient
+
     _GDRIVE_AVAILABLE = True
 except ImportError as e:
     logging.warning(f"Brak modułu GDriveClient: {e}.")
@@ -41,7 +41,9 @@ except ImportError as e:
 
 
 # --- Konfiguracja (przeniesiona z globalnego zasięgu) ---
-ROW_PATTERN = re.compile(r"(\d{2}\.\d{2}\.\d{4})\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)")
+ROW_PATTERN = re.compile(
+    r"(\d{2}\.\d{2}\.\d{4})\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)",
+)
 
 
 def setup_logging():
@@ -49,7 +51,7 @@ def setup_logging():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=[logging.FileHandler(log_file, mode='w'), logging.StreamHandler(sys.stdout)]
+        handlers=[logging.FileHandler(log_file, mode="w"), logging.StreamHandler(sys.stdout)],
     )
 
 
@@ -57,21 +59,23 @@ def fix_ocr_number(value: str) -> tuple[str, bool]:
     """Ulepszona funkcja czyszcząca liczby w polskim formacie dziesiętnym."""
     if not value or not isinstance(value, str):
         return value, False
-    
+
     original = value.strip()
     clean = re.sub(r"[^\d,.]", "", original)
-    fixed = clean.replace('.', ',')
-    
-    if ',' not in fixed and len(fixed) in [3, 4]:
+    fixed = clean.replace(".", ",")
+
+    if "," not in fixed and len(fixed) in [3, 4]:
         fixed = f"{fixed[:-2]},{fixed[-2:]}" if len(fixed) == 4 else f"{fixed[0]},{fixed[1:]}"
-            
+
     return fixed, (fixed != original)
+
 
 # W pliku moj_system/data/ocr_processor.py
 
 # W pliku moj_system/data/ocr_processor.py
 
 import calendar
+
 
 def sanitize_date_sequence(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -83,22 +87,22 @@ def sanitize_date_sequence(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     # Kolumna robocza z obiektami Datetime
-    df['Date_dt'] = pd.to_datetime(df['Date'], format='%d.%m.%Y', errors='coerce')
-    
+    df["Date_dt"] = pd.to_datetime(df["Date"], format="%d.%m.%Y", errors="coerce")
+
     corrections_made = 0
-    
+
     # Inicjalizacja kotwicy: ufamy pierwszej poprawnej dacie w dokumencie
     anchor_idx = 0
-    while anchor_idx < len(df) and pd.isna(df.loc[anchor_idx, 'Date_dt']):
+    while anchor_idx < len(df) and pd.isna(df.loc[anchor_idx, "Date_dt"]):
         anchor_idx += 1
-        
+
     if anchor_idx >= len(df):
-        return df.drop(columns=['Date_dt']) # Brak poprawnych dat
-        
-    anchor_date = df.loc[anchor_idx, 'Date_dt']
+        return df.drop(columns=["Date_dt"])  # Brak poprawnych dat
+
+    anchor_date = df.loc[anchor_idx, "Date_dt"]
 
     for i in range(anchor_idx + 1, len(df)):
-        curr_date = df.loc[i, 'Date_dt']
+        curr_date = df.loc[i, "Date_dt"]
 
         if pd.isna(curr_date):
             continue
@@ -119,33 +123,33 @@ def sanitize_date_sequence(df: pd.DataFrame) -> pd.DataFrame:
                 # Próbujemy wymusić poprzedni miesiąc
                 new_month = curr_date.month - 1
                 new_year = curr_date.year
-                
+
                 if new_month == 0:
                     new_month = 12
                     new_year -= 1
-                
+
                 # Zabezpieczenie np. dla '31 kwietnia -> 31 marca'
                 _, last_day_of_new_month = calendar.monthrange(new_year, new_month)
                 new_day = min(curr_date.day, last_day_of_new_month)
 
                 candidate_date = curr_date.replace(year=new_year, month=new_month, day=new_day)
-                
+
                 # Kluczowe sprawdzenie:
                 # Jeśli po COFNIĘCIU miesiąca data jest logicznym (0-20 dni) następcą naszej
                 # ostatniej pewnej daty, uznajemy to za dowód na literówkę ludzką w źródle.
                 diff_candidate_to_anchor = (candidate_date - anchor_date).days
-                
+
                 if 0 < diff_candidate_to_anchor <= 20:
                     logging.info(
                         f"KOREKTA ŁAŃCUCHA OCR (wiersz {i}): "
                         f"{curr_date.strftime('%d.%m.%Y')} -> {candidate_date.strftime('%d.%m.%Y')} "
-                        f"(Kotwica: {anchor_date.strftime('%d.%m.%Y')})"
+                        f"(Kotwica: {anchor_date.strftime('%d.%m.%Y')})",
                     )
                     # Aplikujemy poprawkę
-                    df.loc[i, 'Date_dt'] = candidate_date
-                    df.loc[i, 'Date'] = candidate_date.strftime('%d.%m.%Y')
+                    df.loc[i, "Date_dt"] = candidate_date
+                    df.loc[i, "Date"] = candidate_date.strftime("%d.%m.%Y")
                     corrections_made += 1
-                    
+
                     # W tym specjalnym scenariuszu PRZESUWAMY kotwicę na skorygowaną datę,
                     # ponieważ cały blok (24, 25, 26) idzie jednym ciągiem na złym miesiącu.
                     anchor_date = candidate_date
@@ -155,27 +159,28 @@ def sanitize_date_sequence(df: pd.DataFrame) -> pd.DataFrame:
 
         # Scenariusz C: Data jest mniejsza niż nasza kotwica (krok wstecz w czasie)
         elif diff_from_anchor < 0:
-            # OCR pomylił się lub strona z PDF była wyjęta. Zostawiamy wiersz, ale NIE ruszamy kotwicy, 
+            # OCR pomylił się lub strona z PDF była wyjęta. Zostawiamy wiersz, ale NIE ruszamy kotwicy,
             # czekając aż sekwencja wróci na właściwe tory.
             pass
 
     if corrections_made > 0:
         logging.info(f"Łącznie skorygowano {corrections_made} błędów sekwencji dat.")
 
-    return df.drop(columns=['Date_dt'])
+    return df.drop(columns=["Date_dt"])
+
 
 def run_ocr_pipeline():
     """Główna funkcja uruchamiająca cały proces OCR, z obsługą ZIP lub bezpośredniego PDF."""
     setup_logging()
     logging.info(f"Odczytana ścieżka POPPLER_PATH: {os.getenv('POPPLER_PATH')}")
     # 1. Wczytanie zmiennych środowiskowych
-    zip_url = os.getenv('ZIP_URL')
-    zip_password = os.getenv('ZIP_PASSWORD')
-    pdf_target_name = os.getenv('INT_FILE_NAME') # Nazwa pliku PDF wewnątrz ZIP-a
-    folder_name = os.getenv('FOLDER_NAME')
-    
+    zip_url = os.getenv("ZIP_URL")
+    zip_password = os.getenv("ZIP_PASSWORD")
+    pdf_target_name = os.getenv("INT_FILE_NAME")  # Nazwa pliku PDF wewnątrz ZIP-a
+    folder_name = os.getenv("FOLDER_NAME")
+
     # --- AUTO-DETEKCJA POPPLERA ---
-    poppler_path = None 
+    poppler_path = None
     if sys.platform == "win32":
         poppler_path = os.getenv("POPPLER_PATH")
         if not poppler_path:
@@ -197,7 +202,7 @@ def run_ocr_pipeline():
 
     # [ZMIANA] Inicjalizujemy listę na wyniki poza blokiem `with`
     all_rows = []
-    
+
     # [ZMIANA] Używamy bezpiecznego menedżera kontekstu dla plików tymczasowych
     with tempfile.TemporaryDirectory() as work_dir:
         # [ZMIANA] Tworzymy ścieżki jako obiekty Path
@@ -209,24 +214,28 @@ def run_ocr_pipeline():
             resp = requests.get(zip_url, timeout=60)
             resp.raise_for_status()
             file_content = resp.content
-            
+
             is_zip = False
             try:
                 with pyzipper.AESZipFile(io.BytesIO(file_content)) as zf:
-                    zf.setpassword(zip_password.encode('utf-8'))
+                    zf.setpassword(zip_password.encode("utf-8"))
                     if pdf_target_name not in zf.namelist():
-                        raise FileNotFoundError(f"Plik '{pdf_target_name}' nie został znaleziony wewnątrz archiwum ZIP.")
-                    
+                        raise FileNotFoundError(
+                            f"Plik '{pdf_target_name}' nie został znaleziony wewnątrz archiwum ZIP.",
+                        )
+
                     # [ZMIANA] Rozpakowujemy do bezpiecznego, tymczasowego folderu
                     zf.extract(pdf_target_name, path=work_dir_path)
                     (work_dir_path / pdf_target_name).rename(pdf_path)
-                    
+
                 logging.info(f"Pomyślnie rozpakowano {pdf_target_name} z archiwum ZIP.")
                 is_zip = True
             except (pyzipper.zipfile.BadZipFile, RuntimeError):
-                logging.info("Plik nie jest poprawnym archiwum ZIP lub hasło jest błędne. Próbuję jako bezpośredni PDF...")
+                logging.info(
+                    "Plik nie jest poprawnym archiwum ZIP lub hasło jest błędne. Próbuję jako bezpośredni PDF...",
+                )
                 is_zip = False
-            
+
             if not is_zip:
                 # [ZMIANA] Używamy metody z pathlib do zapisu
                 pdf_path.write_bytes(file_content)
@@ -242,82 +251,89 @@ def run_ocr_pipeline():
 
             for i in range(1, total_pages + 1):
                 images = convert_from_path(
-                    str(pdf_path), 
-                    first_page=i, 
-                    last_page=i, 
-                    dpi=300, 
+                    str(pdf_path),
+                    first_page=i,
+                    last_page=i,
+                    dpi=300,
                     thread_count=2,
-                    userpw=zip_password, 
-                    poppler_path=poppler_path
+                    userpw=zip_password,
+                    poppler_path=poppler_path,
                 )
-                if not images: continue
-                
+                if not images:
+                    continue
+
                 img = np.array(images[0])
                 gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
                 _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                
-                custom_config = r'--oem 3 --psm 6 -l pol+eng'
+
+                custom_config = r"--oem 3 --psm 6 -l pol+eng"
                 text = pytesseract.image_to_string(binary, config=custom_config)
-                
+
                 page_count = 0
-                for line in text.split('\n'):
+                for line in text.split("\n"):
                     match = ROW_PATTERN.search(line)
                     if match:
                         all_rows.append(list(match.groups()))
                         page_count += 1
-                
+
                 logging.info(f"Strona {i}: Wyodrębniono {page_count} wierszy.")
-                
+
                 del images, img, gray, binary, text
                 gc.collect()
 
         except Exception as e:
             raise RuntimeError(f"Błąd podczas przetwarzania OCR: {e}")
-        
+
         # --- LOGIKA UPLOADU ---
         # [ZMIANA] Przeniesiono tę logikę do wnętrza bloku 'with', aby mieć dostęp do 'work_dir'
-        
+
         # Tworzenie DataFrame musi nastąpić przed uploadem
-        df = pd.DataFrame(all_rows, columns=['Date', 'Col2', 'Col3', 'Col4', 'Col5', 'Col6'])
+        df = pd.DataFrame(all_rows, columns=["Date", "Col2", "Col3", "Col4", "Col5", "Col6"])
         df = sanitize_date_sequence(df)
-        
+
         correction_count = 0
         for col in df.columns[1:]:
             processed = df[col].apply(fix_ocr_number)
             df[col] = [x[0] for x in processed]
             correction_count += sum(x[1] for x in processed)
         logging.info(f"Łączna liczba zastosowanych korekt: {correction_count}")
-        
+
         if not _GDRIVE_AVAILABLE or not folder_name:
-            logging.warning(f"Brak klienta GDrive ({_GDRIVE_AVAILABLE}) lub nazwy folderu ({folder_name}). Pomijam upload.")
+            logging.warning(
+                f"Brak klienta GDrive ({_GDRIVE_AVAILABLE}) lub nazwy folderu ({folder_name}). Pomijam upload.",
+            )
         else:
             try:
-                client = GDriveClient() 
+                client = GDriveClient()
                 if not client.service:
-                    raise ConnectionError("Nie można utworzyć serwisu Google Drive. Sprawdź credentials.json.")
-                
+                    raise ConnectionError(
+                        "Nie można utworzyć serwisu Google Drive. Sprawdź credentials.json.",
+                    )
+
                 logging.info(f"Szukam folderu '{folder_name}' na Drive...")
                 folder_id = client.find_file_id(client.root_folder_id, folder_name)
-                
+
                 if not folder_id:
                     query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-                    res = client.service.files().list(q=query, fields='files(id)').execute()
-                    files = res.get('files', [])
+                    res = client.service.files().list(q=query, fields="files(id)").execute()
+                    files = res.get("files", [])
                     if files:
-                        folder_id = files[0]['id']
+                        folder_id = files[0]["id"]
 
                 if not folder_id:
-                    raise FileNotFoundError(f"Folder '{folder_name}' nie został znaleziony na Twoim Drive.")
+                    raise FileNotFoundError(
+                        f"Folder '{folder_name}' nie został znaleziony na Twoim Drive.",
+                    )
 
                 file_name = "filtered_table.csv"
-                
+
                 # [ZMIANA] Używamy ścieżki z pathlib
                 temp_path = work_dir_path / "upload_temp.csv"
-                df.to_csv(temp_path, index=False, header=False, sep=";", encoding='utf-8')
+                df.to_csv(temp_path, index=False, header=False, sep=";", encoding="utf-8")
 
                 logging.info(f"Wysyłam plik {file_name} do folderu {folder_name} ...")
                 client.upload_csv(folder_id, str(temp_path), file_name)
-                
+
                 logging.info("Plik pomyślnie wysłany na Google Drive.")
 
             except Exception as e:
@@ -330,9 +346,10 @@ def run_ocr_pipeline():
     # Jeśli `all_rows` jest puste, DataFrame będzie pusty, co jest OK.
     if not all_rows:
         logging.warning("Nie znaleziono żadnych wierszy danych w pliku PDF.")
-        df = pd.DataFrame(columns=['Date', 'Col2', 'Col3', 'Col4', 'Col5', 'Col6'])
-    
+        df = pd.DataFrame(columns=["Date", "Col2", "Col3", "Col4", "Col5", "Col6"])
+
     logging.info("Potok OCR zakończony pomyślnie.")
+
 
 # Umożliwia uruchomienie pliku jako skryptu z terminala
 if __name__ == "__main__":

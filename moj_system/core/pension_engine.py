@@ -42,34 +42,30 @@ DEPENDENCIES
         load_csv,
     )
 """
+
 from __future__ import annotations
-import itertools
+
 import logging
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 
 from moj_system.core.strategy_engine import (
-    walk_forward,
-    run_strategy_with_trades,
     compute_metrics,
-    compute_buy_and_hold,
-    load_csv,
 )
+
 # --- DODAJ TEN IMPORT ---
-from moj_system.core.utils import build_mmf_extended, signals_to_target_weights, reallocation_gate
-from moj_system.data.data_manager import load_local_csv # Dodaj ten import
-
-
+from moj_system.core.utils import build_mmf_extended, reallocation_gate, signals_to_target_weights
 
 # ============================================================
 # LAYER 2 — WEIGHT MAPPING
 # ============================================================
 
 
-
 # ============================================================
 # LAYER 2 — ALLOCATION OPTIMISATION (both-signals-on state)
 # ============================================================
+
 
 def _feasible_weight_grid(step: float = 0.10) -> list:
     """
@@ -86,22 +82,24 @@ def _feasible_weight_grid(step: float = 0.10) -> list:
     for e in levels:
         for b in levels:
             if round(e + b, 10) <= 1.0:
-                combos.append({
-                    "equity": e,
-                    "bond":   b,
-                    "mmf":    max(0.0, round(1.0 - e - b, 10)),
-                })
+                combos.append(
+                    {
+                        "equity": e,
+                        "bond": b,
+                        "mmf": max(0.0, round(1.0 - e - b, 10)),
+                    },
+                )
     return combos
 
 
 def optimise_both_on_weights(
     equity_returns: pd.Series,
-    bond_returns:   pd.Series,
-    mmf_returns:    pd.Series,
-    sig_equity:     pd.Series,
-    sig_bond:       pd.Series,
-    step:           float = 0.10,
-    objective:      str   = "calmar",
+    bond_returns: pd.Series,
+    mmf_returns: pd.Series,
+    sig_equity: pd.Series,
+    sig_bond: pd.Series,
+    step: float = 0.10,
+    objective: str = "calmar",
 ) -> dict:
     """
     Grid-search the optimal equity/bond split for the both-signals-on state.
@@ -133,23 +131,24 @@ def optimise_both_on_weights(
     combos = _feasible_weight_grid(step)
 
     # Align all series to a common index
-    common = equity_returns.index \
-        .intersection(bond_returns.index) \
-        .intersection(mmf_returns.index) \
-        .intersection(sig_equity.index) \
+    common = (
+        equity_returns.index.intersection(bond_returns.index)
+        .intersection(mmf_returns.index)
+        .intersection(sig_equity.index)
         .intersection(sig_bond.index)
+    )
 
-    eq_r  = equity_returns.loc[common]
-    bd_r  = bond_returns.loc[common]
-    mf_r  = mmf_returns.loc[common]
-    s_eq  = sig_equity.loc[common]
-    s_bd  = sig_bond.loc[common]
+    eq_r = equity_returns.loc[common]
+    bd_r = bond_returns.loc[common]
+    mf_r = mmf_returns.loc[common]
+    s_eq = sig_equity.loc[common]
+    s_bd = sig_bond.loc[common]
 
     # Days when both signals are on — only these rows differ across combos
     both_on = (s_eq == 1) & (s_bd == 1)
 
-    best_score  = -np.inf
-    best_combo  = combos[0]
+    best_score = -np.inf
+    best_combo = combos[0]
 
     for combo in combos:
         # Build daily portfolio returns for the full period
@@ -163,11 +162,11 @@ def optimise_both_on_weights(
         bd_only = (s_eq == 0) & (s_bd == 1)
         both_off = (s_eq == 0) & (s_bd == 0)
 
-        port_r[both_on]  = (combo["equity"] * eq_r
-                            + combo["bond"]   * bd_r
-                            + combo["mmf"]    * mf_r)[both_on]
-        port_r[eq_only]  = eq_r[eq_only]
-        port_r[bd_only]  = bd_r[bd_only]
+        port_r[both_on] = (combo["equity"] * eq_r + combo["bond"] * bd_r + combo["mmf"] * mf_r)[
+            both_on
+        ]
+        port_r[eq_only] = eq_r[eq_only]
+        port_r[bd_only] = bd_r[bd_only]
         port_r[both_off] = mf_r[both_off]
 
         equity_curve = (1 + port_r).cumprod()
@@ -202,9 +201,10 @@ def optimise_both_on_weights(
         "Both-on weight optimisation: best equity=%.0f%% bond=%.0f%% mmf=%.0f%% "
         "(objective=%s score=%.3f)",
         best_combo["equity"] * 100,
-        best_combo["bond"]   * 100,
-        best_combo["mmf"]    * 100,
-        objective, best_score,
+        best_combo["bond"] * 100,
+        best_combo["mmf"] * 100,
+        objective,
+        best_score,
     )
     return best_combo
 
@@ -212,6 +212,7 @@ def optimise_both_on_weights(
 # ============================================================
 # SIGNAL EXTRACTION FROM WALK-FORWARD EQUITY CURVES
 # ============================================================
+
 
 def build_signal_series(wf_equity: pd.Series, wf_trades: pd.DataFrame) -> pd.Series:
     """
@@ -241,22 +242,20 @@ def build_signal_series(wf_equity: pd.Series, wf_trades: pd.DataFrame) -> pd.Ser
         return signal
 
     boundary = {"CARRY", "SAMPLE_END"}
-    closed_trades = wf_trades[
-        ~wf_trades["Exit Reason"].isin(boundary)
-    ].copy()
+    closed_trades = wf_trades[~wf_trades["Exit Reason"].isin(boundary)].copy()
 
     # Also include the currently open trade if the last record is CARRY
     last = wf_trades.iloc[-1]
     if last["Exit Reason"] in boundary:
         # Position is open to end of data — mark to end
         entry = pd.Timestamp(last["EntryDate"])
-        mask  = signal.index >= entry
+        mask = signal.index >= entry
         signal.loc[mask] = 1
 
     for _, row in closed_trades.iterrows():
         entry = pd.Timestamp(row["EntryDate"])
         exit_ = pd.Timestamp(row["ExitDate"])
-        mask  = (signal.index >= entry) & (signal.index <= exit_)
+        mask = (signal.index >= entry) & (signal.index <= exit_)
         signal.loc[mask] = 1
 
     return signal
@@ -302,20 +301,21 @@ documentation freeze, then this file is deleted.
 # ALLOCATION WALK-FORWARD  (Phase 4)
 # ============================================================
 
+
 def allocation_walk_forward(
-    equity_returns:     pd.Series,
-    bond_returns:       pd.Series,
-    mmf_returns:        pd.Series,
-    sig_equity_full:    pd.Series,
-    sig_bond_full:      pd.Series,
-    sig_equity_oos:     pd.Series,
-    sig_bond_oos:       pd.Series,
-    wf_results_eq:      pd.DataFrame,
-    wf_results_bd:      pd.DataFrame,
-    step:               float = 0.10,
-    objective:          str   = "calmar",
-    cooldown_days:      int   = 10,
-    annual_cap:         int   = 12,
+    equity_returns: pd.Series,
+    bond_returns: pd.Series,
+    mmf_returns: pd.Series,
+    sig_equity_full: pd.Series,
+    sig_bond_full: pd.Series,
+    sig_equity_oos: pd.Series,
+    sig_bond_oos: pd.Series,
+    wf_results_eq: pd.DataFrame,
+    wf_results_bd: pd.DataFrame,
+    step: float = 0.10,
+    objective: str = "calmar",
+    cooldown_days: int = 10,
+    annual_cap: int = 12,
 ) -> tuple:
     """
     Walk-forward optimisation of the both-signals-on allocation weights.
@@ -360,83 +360,93 @@ def allocation_walk_forward(
       all_reallocation_log  : list[dict]
       alloc_results_df      : pd.DataFrame — per-window best weights
     """
+
     def _slice(s, start, end):
         return s.loc[(s.index >= start) & (s.index < end)]
 
     oos_equity_slices = []
-    all_weights       = {}
-    alloc_results     = []
+    all_weights = {}
+    alloc_results = []
 
     # Reallocation gate state persists across windows
-    current_weights  = {"equity": 0.0, "bond": 0.0, "mmf": 1.0}
+    current_weights = {"equity": 0.0, "bond": 0.0, "mmf": 1.0}
     last_change_date = None
-    annual_counter   = {}
-    all_realloc_log  = []
+    annual_counter = {}
+    all_realloc_log = []
 
     # Use bond WF schedule — it starts later and defines the common OOS period
-    windows = wf_results_bd[["TrainStart", "TrainEnd",
-                              "TestStart", "TestEnd"]].drop_duplicates()
-    prev_best_combo = None   # tracks best_combo from previous window
+    windows = wf_results_bd[["TrainStart", "TrainEnd", "TestStart", "TestEnd"]].drop_duplicates()
+    prev_best_combo = None  # tracks best_combo from previous window
     for _, row in windows.iterrows():
         train_start = pd.Timestamp(row["TrainStart"])
-        train_end   = pd.Timestamp(row["TrainEnd"])
-        test_start  = pd.Timestamp(row["TestStart"])
-        test_end    = pd.Timestamp(row["TestEnd"])
+        train_end = pd.Timestamp(row["TrainEnd"])
+        test_start = pd.Timestamp(row["TestStart"])
+        test_end = pd.Timestamp(row["TestEnd"])
 
         # --- Training: full in-sample history up to train_end ---
         # Use all available return and signal data — not just the OOS window.
         # Both signals default to 0 (flat) outside their available history.
-        train_eq_r = _slice(equity_returns,  train_start, train_end)
-        train_bd_r = _slice(bond_returns,    train_start, train_end)
-        train_mf_r = _slice(mmf_returns,     train_start, train_end)
-        train_s_eq = _slice(sig_equity_full, train_start, train_end).reindex(
-                         train_eq_r.index).fillna(0).astype(int)
-        train_s_bd = _slice(sig_bond_full,   train_start, train_end).reindex(
-                         train_bd_r.index).fillna(0).astype(int)
+        train_eq_r = _slice(equity_returns, train_start, train_end)
+        train_bd_r = _slice(bond_returns, train_start, train_end)
+        train_mf_r = _slice(mmf_returns, train_start, train_end)
+        train_s_eq = (
+            _slice(sig_equity_full, train_start, train_end)
+            .reindex(train_eq_r.index)
+            .fillna(0)
+            .astype(int)
+        )
+        train_s_bd = (
+            _slice(sig_bond_full, train_start, train_end)
+            .reindex(train_bd_r.index)
+            .fillna(0)
+            .astype(int)
+        )
 
         if len(train_eq_r) < 30 or len(train_bd_r) < 30:
             logging.warning(
                 "Allocation WF: training window %s–%s too short "
                 "(eq=%d rows, bd=%d rows), skipping.",
-                train_start.date(), train_end.date(),
-                len(train_eq_r), len(train_bd_r),
+                train_start.date(),
+                train_end.date(),
+                len(train_eq_r),
+                len(train_bd_r),
             )
             continue
 
         best_combo = optimise_both_on_weights(
-            equity_returns = train_eq_r,
-            bond_returns   = train_bd_r,
-            mmf_returns    = train_mf_r,
-            sig_equity     = train_s_eq,
-            sig_bond       = train_s_bd,
-            step           = step,
-            objective      = objective,
+            equity_returns=train_eq_r,
+            bond_returns=train_bd_r,
+            mmf_returns=train_mf_r,
+            sig_equity=train_s_eq,
+            sig_bond=train_s_bd,
+            step=step,
+            objective=objective,
         )
 
-        alloc_results.append({
-            "TrainStart": train_start,
-            "TrainEnd":   train_end,
-            "TestStart":  test_start,
-            "TestEnd":    test_end,
-            "w_equity":   best_combo["equity"],
-            "w_bond":     best_combo["bond"],
-            "w_mmf":      best_combo["mmf"],
-        })
+        alloc_results.append(
+            {
+                "TrainStart": train_start,
+                "TrainEnd": train_end,
+                "TestStart": test_start,
+                "TestEnd": test_end,
+                "w_equity": best_combo["equity"],
+                "w_bond": best_combo["bond"],
+                "w_mmf": best_combo["mmf"],
+            },
+        )
 
         # --- OOS: simulate with gate (gate state carried across windows) ---
-        test_eq_r = _slice(equity_returns,  test_start, test_end)
-        test_bd_r = _slice(bond_returns,    test_start, test_end)
-        test_mf_r = _slice(mmf_returns,     test_start, test_end)
-        test_s_eq = _slice(sig_equity_oos,  test_start, test_end)
-        test_s_bd = _slice(sig_bond_oos,    test_start, test_end)
+        test_eq_r = _slice(equity_returns, test_start, test_end)
+        test_bd_r = _slice(bond_returns, test_start, test_end)
+        test_mf_r = _slice(mmf_returns, test_start, test_end)
+        test_s_eq = _slice(sig_equity_oos, test_start, test_end)
+        test_s_bd = _slice(sig_bond_oos, test_start, test_end)
 
         if len(test_eq_r) < 5:
             continue
 
         # Align to common dates for this test window
-        common = (test_eq_r.index
-                  .intersection(test_bd_r.index)
-                  .intersection(test_mf_r.index))
+        common = test_eq_r.index.intersection(test_bd_r.index).intersection(test_mf_r.index)
         common = common.sort_values()
 
         eq_r = test_eq_r.loc[common]
@@ -446,88 +456,83 @@ def allocation_walk_forward(
         s_bd = test_s_bd.reindex(common).fillna(0).astype(int)
 
         window_equity_vals = []
-        
-        
+
         for date in common:
             target = signals_to_target_weights(
-                sig_equity      = int(s_eq[date]),
-                sig_bond        = int(s_bd[date]),
-                weights_both_on = best_combo,
+                sig_equity=int(s_eq[date]),
+                sig_bond=int(s_bd[date]),
+                weights_both_on=best_combo,
             )
 
             accepted, reallocated, annual_counter = reallocation_gate(
-                current_weights  = current_weights,
-                target_weights   = target,
-                last_change_date = last_change_date,
-                current_date     = date,
-                cooldown_days    = cooldown_days,
-                annual_cap       = annual_cap,
-                annual_counter   = annual_counter,
+                current_weights=current_weights,
+                target_weights=target,
+                last_change_date=last_change_date,
+                current_date=date,
+                cooldown_days=cooldown_days,
+                annual_cap=annual_cap,
+                annual_counter=annual_counter,
             )
 
             if reallocated:
-                
                 param_updated = (
-                date == common[0]
-                and prev_best_combo is not None
-                and prev_best_combo != best_combo
+                    date == common[0]
+                    and prev_best_combo is not None
+                    and prev_best_combo != best_combo
                 )
 
                 if param_updated:
                     # Would the target have been the same under the old weights?
                     old_target = signals_to_target_weights(
-                    sig_equity      = int(s_eq[date]),
-                    sig_bond        = int(s_bd[date]),
-                    weights_both_on = prev_best_combo,
-                    )   
-                    signal_also_changed = (old_target != target)
+                        sig_equity=int(s_eq[date]),
+                        sig_bond=int(s_bd[date]),
+                        weights_both_on=prev_best_combo,
+                    )
+                    signal_also_changed = old_target != target
                     reason = "BOTH" if signal_also_changed else "PARAM_UPDATE"
                 else:
                     reason = "SIGNAL_CHANGE"
 
-
-                all_realloc_log.append({
-                    "Date":          date,
-                    "equity_before": current_weights["equity"],
-                    "bond_before":   current_weights["bond"],
-                    "mmf_before":    current_weights["mmf"],
-                    "equity_after":  accepted["equity"],
-                    "bond_after":    accepted["bond"],
-                    "mmf_after":     accepted["mmf"],
-                    "reason":        reason,
-                })
-                current_weights  = accepted
+                all_realloc_log.append(
+                    {
+                        "Date": date,
+                        "equity_before": current_weights["equity"],
+                        "bond_before": current_weights["bond"],
+                        "mmf_before": current_weights["mmf"],
+                        "equity_after": accepted["equity"],
+                        "bond_after": accepted["bond"],
+                        "mmf_after": accepted["mmf"],
+                        "reason": reason,
+                    },
+                )
+                current_weights = accepted
                 last_change_date = date
 
             all_weights[date] = dict(current_weights)
 
             w = current_weights
-            r = (w["equity"] * eq_r[date]
-                 + w["bond"]  * bd_r[date]
-                 + w["mmf"]   * mf_r[date])
+            r = w["equity"] * eq_r[date] + w["bond"] * bd_r[date] + w["mmf"] * mf_r[date]
             window_equity_vals.append((date, r))
-            
-            
-            
+
         if not window_equity_vals:
             continue
 
         dates, rets = zip(*window_equity_vals)
-        window_port_r  = pd.Series(list(rets), index=list(dates))
-        window_equity  = (1 + window_port_r).cumprod()
-        window_equity  = window_equity / window_equity.iloc[0]
+        window_port_r = pd.Series(list(rets), index=list(dates))
+        window_equity = (1 + window_port_r).cumprod()
+        window_equity = window_equity / window_equity.iloc[0]
 
         if oos_equity_slices:
             window_equity = window_equity * oos_equity_slices[-1].iloc[-1]
 
         oos_equity_slices.append(window_equity)
-        prev_best_combo = best_combo   
+        prev_best_combo = best_combo
     if not oos_equity_slices:
         logging.warning("Allocation walk-forward produced no OOS slices.")
         return pd.Series(dtype=float), pd.Series(dtype=object), [], pd.DataFrame()
 
     portfolio_equity = pd.concat(oos_equity_slices).sort_index()
-    weights_series   = pd.Series(all_weights).sort_index()
+    weights_series = pd.Series(all_weights).sort_index()
     alloc_results_df = pd.DataFrame(alloc_results)
 
     return portfolio_equity, weights_series, all_realloc_log, alloc_results_df
@@ -537,20 +542,21 @@ def allocation_walk_forward(
 # REPORTING
 # ============================================================
 
+
 def print_multiasset_report(
-    portfolio_metrics:  dict,
-    bh_equity_metrics:  dict,
-    bh_bond_metrics:    dict,
-    alloc_results_df:   pd.DataFrame,
-    reallocation_log:   list,
-    sig_equity:         pd.Series,
-    sig_bond:           pd.Series,
+    portfolio_metrics: dict,
+    bh_equity_metrics: dict,
+    bh_bond_metrics: dict,
+    alloc_results_df: pd.DataFrame,
+    reallocation_log: list,
+    sig_equity: pd.Series,
+    sig_bond: pd.Series,
     oos_start,
     oos_end,
-    sig_bond_raw        = None,
-    spread_prefilter    = None,
-    yield_prefilter     = None,          # NEW
-    sig_bond_post_spread = None,         # NEW — intermediate state between filters
+    sig_bond_raw=None,
+    spread_prefilter=None,
+    yield_prefilter=None,  # NEW
+    sig_bond_post_spread=None,  # NEW — intermediate state between filters
 ) -> None:
     """
     Log a structured multi-asset backtest report.
@@ -578,8 +584,11 @@ def print_multiasset_report(
     sep = "=" * 80
 
     logging.info(sep)
-    logging.info("MULTI-ASSET WALK-FORWARD OOS REPORT  (%s to %s)",
-                 pd.Timestamp(oos_start).date(), pd.Timestamp(oos_end).date())
+    logging.info(
+        "MULTI-ASSET WALK-FORWARD OOS REPORT  (%s to %s)",
+        pd.Timestamp(oos_start).date(),
+        pd.Timestamp(oos_end).date(),
+    )
     logging.info(sep)
 
     # --- Per-window allocation weights ---
@@ -587,18 +596,19 @@ def print_multiasset_report(
         logging.info("PER-WINDOW ALLOCATION PARAMETERS (both-signals-on state):")
         logging.info(
             "\n%s",
-            alloc_results_df[["TrainStart", "TestStart", "TestEnd",
-                               "w_equity", "w_bond", "w_mmf"]].to_string(index=False)
+            alloc_results_df[
+                ["TrainStart", "TestStart", "TestEnd", "w_equity", "w_bond", "w_mmf"]
+            ].to_string(index=False),
         )
     logging.info("-" * 80)
 
     # --- Performance comparison ---
     def _fmt(m):
         return (
-            f"CAGR: {m['CAGR']*100:.2f}%  "
-            f"Vol: {m['Vol']*100:.2f}%  "
+            f"CAGR: {m['CAGR'] * 100:.2f}%  "
+            f"Vol: {m['Vol'] * 100:.2f}%  "
             f"Sharpe: {m['Sharpe']:.2f}  "
-            f"MaxDD: {m['MaxDD']*100:.2f}%  "
+            f"MaxDD: {m['MaxDD'] * 100:.2f}%  "
             f"CalMAR: {m['CalMAR']:.2f}  "
             f"Sortino: {m['Sortino']:.2f}"
         )
@@ -612,38 +622,47 @@ def print_multiasset_report(
     # --- Signal frequency ---
     n = len(sig_equity)
     pct_eq = sig_equity.sum() / n * 100 if n > 0 else 0
-    pct_bd = sig_bond.sum()   / n * 100 if n > 0 else 0
-    both_on  = ((sig_equity == 1) & (sig_bond == 1)).sum() / n * 100
+    pct_bd = sig_bond.sum() / n * 100 if n > 0 else 0
+    both_on = ((sig_equity == 1) & (sig_bond == 1)).sum() / n * 100
     both_off = ((sig_equity == 0) & (sig_bond == 0)).sum() / n * 100
-
 
     logging.info("SIGNAL FREQUENCY (OOS period):")
     logging.info("  Equity signal ON          : %.1f%% of days", pct_eq)
-    logging.info("  Bond signal ON (raw)      : %.1f%% of days",
-         sig_bond_raw.sum() / n * 100 if sig_bond_raw is not None else pct_bd)
+    logging.info(
+        "  Bond signal ON (raw)      : %.1f%% of days",
+        sig_bond_raw.sum() / n * 100 if sig_bond_raw is not None else pct_bd,
+    )
     logging.info("  Bond signal ON (filtered) : %.1f%% of days", pct_bd)
 
     if sig_bond_raw is not None:
         # Spread filter contribution
         sig_post_spread = sig_bond_post_spread if sig_bond_post_spread is not None else sig_bond
-        n_blocked_spread = (sig_bond_raw - sig_post_spread).clip(lower=0).reindex(sig_bond.index).fillna(0).sum()
+        n_blocked_spread = (
+            (sig_bond_raw - sig_post_spread).clip(lower=0).reindex(sig_bond.index).fillna(0).sum()
+        )
         logging.info(
             "  Spread pre-filter blocked : %d days  (%.1f%% of raw bond-on days)",
             int(n_blocked_spread),
             n_blocked_spread / sig_bond_raw.sum() * 100 if sig_bond_raw.sum() > 0 else 0,
-    )
+        )
 
     # Yield filter contribution (only shown if intermediate state available)
     if sig_bond_post_spread is not None:
-        n_blocked_yield = (sig_bond_post_spread - sig_bond).clip(lower=0).reindex(sig_bond.index).fillna(0).sum()
+        n_blocked_yield = (
+            (sig_bond_post_spread - sig_bond).clip(lower=0).reindex(sig_bond.index).fillna(0).sum()
+        )
         logging.info(
             "  Yield pre-filter blocked  : %d days  (%.1f%% of post-spread bond-on days)",
             int(n_blocked_yield),
-            n_blocked_yield / sig_bond_post_spread.sum() * 100 if sig_bond_post_spread.sum() > 0 else 0,
+            n_blocked_yield / sig_bond_post_spread.sum() * 100
+            if sig_bond_post_spread.sum() > 0
+            else 0,
         )
 
     # Combined total blocked across both filters
-    n_blocked_total = (sig_bond_raw - sig_bond).clip(lower=0).reindex(sig_bond.index).fillna(0).sum()
+    n_blocked_total = (
+        (sig_bond_raw - sig_bond).clip(lower=0).reindex(sig_bond.index).fillna(0).sum()
+    )
     if sig_bond_post_spread is not None:
         logging.info(
             "  Both filters blocked      : %d days total  (%.1f%% of raw bond-on days)",
@@ -654,45 +673,47 @@ def print_multiasset_report(
     if spread_prefilter is not None:
         pf_aligned = spread_prefilter.reindex(sig_bond.index).fillna(1)
         logging.info(
-        "  Spread pre-filter ON      : %.1f%% of OOS days",
-        pf_aligned.mean() * 100,
-    )
+            "  Spread pre-filter ON      : %.1f%% of OOS days",
+            pf_aligned.mean() * 100,
+        )
 
     if yield_prefilter is not None:
         yf_aligned = yield_prefilter.reindex(sig_bond.index).fillna(1)
         logging.info(
-        "  Yield pre-filter ON       : %.1f%% of OOS days",
-        yf_aligned.mean() * 100,
-    )
+            "  Yield pre-filter ON       : %.1f%% of OOS days",
+            yf_aligned.mean() * 100,
+        )
 
     logging.info("  Both ON                   : %.1f%% of days", both_on)
     logging.info("  Both OFF (MMF)            : %.1f%% of days", both_off)
     logging.info("-" * 80)
 
-    
     if sig_bond_raw is not None:
         blocked = (sig_bond_raw - sig_bond).clip(lower=0)
         blocked_oos = blocked.reindex(sig_bond.index).fillna(0)
         if blocked_oos.sum() > 0:
-            blocked_df = pd.DataFrame({
-                "blocked":     blocked_oos,
-                "bond_raw_on": sig_bond_raw.reindex(sig_bond.index).fillna(0),
-                })
+            blocked_df = pd.DataFrame(
+                {
+                    "blocked": blocked_oos,
+                    "bond_raw_on": sig_bond_raw.reindex(sig_bond.index).fillna(0),
+                },
+            )
             blocked_df["Year"] = blocked_df.index.year
             annual = blocked_df.groupby("Year").agg(
-                blocked_days = ("blocked",     "sum"),
-                bond_on_days = ("bond_raw_on", "sum"),
-                )
+                blocked_days=("blocked", "sum"),
+                bond_on_days=("bond_raw_on", "sum"),
+            )
             annual["pct_blocked"] = (
                 annual["blocked_days"] / annual["bond_on_days"].replace(0, np.nan) * 100
-                ).fillna(0)
+            ).fillna(0)
             logging.info("  Pre-filter blocking by year:")
             for yr, row in annual[annual["blocked_days"] > 0].iterrows():
                 logging.info(
                     "    %d : %3d days blocked  (%.0f%% of bond-on days that year)",
-                    yr, int(row["blocked_days"]), row["pct_blocked"],
-                    )
-
+                    yr,
+                    int(row["blocked_days"]),
+                    row["pct_blocked"],
+                )
 
     # --- Reallocation summary ---
     n_realloc = len(reallocation_log)
@@ -701,8 +722,8 @@ def print_multiasset_report(
     if sig_bond_raw is not None:
         logging.info(
             "  Note: bond signal includes spread pre-filter — "
-            "transitions to/from bond reflect both MA signal and macro gate."
-            )
+            "transitions to/from bond reflect both MA signal and macro gate.",
+        )
 
     if n_realloc > 0:
         realloc_df = pd.DataFrame(reallocation_log)
@@ -712,10 +733,22 @@ def print_multiasset_report(
         for year, count in annual_counts.items():
             logging.info("    %d : %d", year, count)
         logging.info("  Reallocation log:")
-        logging.info("\n%s", realloc_df[
-            ["Date", "equity_before", "bond_before", "mmf_before",
-            "equity_after", "bond_after", "mmf_after", "reason", "Year"]
-            ].to_string(index=False))
+        logging.info(
+            "\n%s",
+            realloc_df[
+                [
+                    "Date",
+                    "equity_before",
+                    "bond_before",
+                    "mmf_before",
+                    "equity_after",
+                    "bond_after",
+                    "mmf_after",
+                    "reason",
+                    "Year",
+                ]
+            ].to_string(index=False),
+        )
 
     logging.info(sep)
 
@@ -724,19 +757,20 @@ def print_multiasset_report(
 # LEVEL 2 MC — ALLOCATION WEIGHT PERTURBATION ROBUSTNESS
 # ============================================================
 
+
 def allocation_weight_robustness(
-    alloc_results_df:   pd.DataFrame,
-    equity_returns:     pd.Series,
-    bond_returns:       pd.Series,
-    mmf_returns:        pd.Series,
-    sig_equity_oos:     pd.Series,
-    sig_bond_oos:       pd.Series,
-    baseline_metrics:   dict,
-    perturb_steps:      list  = [-0.2, -0.1, 0.0, 0.1, 0.2],
-    min_equity:         float = 0.10,
-    max_equity:         float = 1.00,
-    cooldown_days:      int   = 10,
-    annual_cap:         int   = 12,
+    alloc_results_df: pd.DataFrame,
+    equity_returns: pd.Series,
+    bond_returns: pd.Series,
+    mmf_returns: pd.Series,
+    sig_equity_oos: pd.Series,
+    sig_bond_oos: pd.Series,
+    baseline_metrics: dict,
+    perturb_steps: list = [-0.2, -0.1, 0.0, 0.1, 0.2],
+    min_equity: float = 0.10,
+    max_equity: float = 1.00,
+    cooldown_days: int = 10,
+    annual_cap: int = 12,
 ) -> pd.DataFrame:
     """
     Level 2 robustness check: perturb the optimised both-signals-on equity
@@ -804,43 +838,47 @@ def allocation_weight_robustness(
         MaxDD_vs_base   : MaxDD difference from baseline (pp)
         CalMAR_vs_base  : CalMAR ratio vs baseline (perturbed / baseline)
     """
+
     def _slice(s, start, end):
         return s.loc[(s.index >= start) & (s.index < end)]
 
     results = []
 
     for step in perturb_steps:
-
         # Build perturbed weight set — one dict per window
         perturbed_windows = []
         n_floor_clamped = 0
-        n_ceil_clamped  = 0
+        n_ceil_clamped = 0
         for _, row in alloc_results_df.iterrows():
-            raw_eq  = float(row["w_equity"]) + step
-            w_eq    = round(raw_eq, 10)
+            raw_eq = float(row["w_equity"]) + step
+            w_eq = round(raw_eq, 10)
             clamped = ""
             if w_eq < min_equity:
-                w_eq    = min_equity
+                w_eq = min_equity
                 n_floor_clamped += 1
                 clamped = f"  [floor-clamped: raw={raw_eq:.3f} → {min_equity:.3f}]"
             elif w_eq > max_equity:
-                w_eq    = max_equity
+                w_eq = max_equity
                 n_ceil_clamped += 1
                 clamped = f"  [ceil-clamped:  raw={raw_eq:.3f} → {max_equity:.3f}]"
-            w_bd   = float(row["w_bond"])               # bond weight held fixed
-            w_mmf  = max(0.0, round(1.0 - w_eq - w_bd, 10))
+            w_bd = float(row["w_bond"])  # bond weight held fixed
+            w_mmf = max(0.0, round(1.0 - w_eq - w_bd, 10))
             if clamped:
                 logging.debug(
                     "step=%+.2f  window %s%s",
-                    step, pd.Timestamp(row["TestStart"]).date(), clamped
+                    step,
+                    pd.Timestamp(row["TestStart"]).date(),
+                    clamped,
                 )
-            perturbed_windows.append({
-                "TestStart": pd.Timestamp(row["TestStart"]),
-                "TestEnd":   pd.Timestamp(row["TestEnd"]),
-                "w_equity":  w_eq,
-                "w_bond":    w_bd,
-                "w_mmf":     w_mmf,
-            })
+            perturbed_windows.append(
+                {
+                    "TestStart": pd.Timestamp(row["TestStart"]),
+                    "TestEnd": pd.Timestamp(row["TestEnd"]),
+                    "w_equity": w_eq,
+                    "w_bond": w_bd,
+                    "w_mmf": w_mmf,
+                },
+            )
 
         total_windows = len(perturbed_windows)
         if n_floor_clamped or n_ceil_clamped:
@@ -850,41 +888,42 @@ def allocation_weight_robustness(
                 "Clamped windows did not receive the full shift — "
                 "w_equity_mean will diverge from (baseline_mean + step) for this row.",
                 step,
-                n_floor_clamped, total_windows, min_equity,
-                n_ceil_clamped,  total_windows, max_equity,
+                n_floor_clamped,
+                total_windows,
+                min_equity,
+                n_ceil_clamped,
+                total_windows,
+                max_equity,
             )
         else:
             logging.debug(
                 "step=%+.2f: all %d windows shifted without clamping.",
-                step, total_windows
+                step,
+                total_windows,
             )
 
         # Simulate full OOS — gate state carried continuously across windows
-        current_weights   = {"equity": 0.0, "bond": 0.0, "mmf": 1.0}
-        last_change_date  = None
-        annual_counter    = {}
-        n_reallocations   = 0
+        current_weights = {"equity": 0.0, "bond": 0.0, "mmf": 1.0}
+        last_change_date = None
+        annual_counter = {}
+        n_reallocations = 0
         oos_equity_slices = []
 
         for pw in perturbed_windows:
             test_start = pw["TestStart"]
-            test_end   = pw["TestEnd"]
-            combo      = {"equity": pw["w_equity"],
-                          "bond":   pw["w_bond"],
-                          "mmf":    pw["w_mmf"]}
+            test_end = pw["TestEnd"]
+            combo = {"equity": pw["w_equity"], "bond": pw["w_bond"], "mmf": pw["w_mmf"]}
 
             test_eq_r = _slice(equity_returns, test_start, test_end)
-            test_bd_r = _slice(bond_returns,   test_start, test_end)
-            test_mf_r = _slice(mmf_returns,    test_start, test_end)
+            test_bd_r = _slice(bond_returns, test_start, test_end)
+            test_mf_r = _slice(mmf_returns, test_start, test_end)
             test_s_eq = _slice(sig_equity_oos, test_start, test_end)
-            test_s_bd = _slice(sig_bond_oos,   test_start, test_end)
+            test_s_bd = _slice(sig_bond_oos, test_start, test_end)
 
             if len(test_eq_r) < 5:
                 continue
 
-            common = (test_eq_r.index
-                      .intersection(test_bd_r.index)
-                      .intersection(test_mf_r.index))
+            common = test_eq_r.index.intersection(test_bd_r.index).intersection(test_mf_r.index)
             common = common.sort_values()
 
             eq_r = test_eq_r.loc[common]
@@ -897,41 +936,41 @@ def allocation_weight_robustness(
 
             for date in common:
                 target = signals_to_target_weights(
-                    sig_equity      = int(s_eq[date]),
-                    sig_bond        = int(s_bd[date]),
-                    weights_both_on = combo,
+                    sig_equity=int(s_eq[date]),
+                    sig_bond=int(s_bd[date]),
+                    weights_both_on=combo,
                 )
 
                 accepted, reallocated, annual_counter = reallocation_gate(
-                    current_weights  = current_weights,
-                    target_weights   = target,
-                    last_change_date = last_change_date,
-                    current_date     = date,
-                    cooldown_days    = cooldown_days,
-                    annual_cap       = annual_cap,
-                    annual_counter   = annual_counter,
+                    current_weights=current_weights,
+                    target_weights=target,
+                    last_change_date=last_change_date,
+                    current_date=date,
+                    cooldown_days=cooldown_days,
+                    annual_cap=annual_cap,
+                    annual_counter=annual_counter,
                 )
 
                 if reallocated:
-                    current_weights  = accepted
+                    current_weights = accepted
                     last_change_date = date
                     n_reallocations += 1
 
                 w = current_weights
-                window_rets.append((
-                    date,
-                    w["equity"] * eq_r[date]
-                    + w["bond"]  * bd_r[date]
-                    + w["mmf"]   * mf_r[date]
-                ))
+                window_rets.append(
+                    (
+                        date,
+                        w["equity"] * eq_r[date] + w["bond"] * bd_r[date] + w["mmf"] * mf_r[date],
+                    ),
+                )
 
             if not window_rets:
                 continue
 
-            dates, rets  = zip(*window_rets)
-            port_r       = pd.Series(list(rets), index=list(dates))
-            eq_curve     = (1 + port_r).cumprod()
-            eq_curve     = eq_curve / eq_curve.iloc[0]
+            dates, rets = zip(*window_rets)
+            port_r = pd.Series(list(rets), index=list(dates))
+            eq_curve = (1 + port_r).cumprod()
+            eq_curve = eq_curve / eq_curve.iloc[0]
 
             if oos_equity_slices:
                 eq_curve = eq_curve * oos_equity_slices[-1].iloc[-1]
@@ -939,7 +978,8 @@ def allocation_weight_robustness(
 
         if not oos_equity_slices:
             logging.warning(
-                "Perturbation step=%.2f produced no OOS slices — skipped.", step
+                "Perturbation step=%.2f produced no OOS slices — skipped.",
+                step,
             )
             continue
 
@@ -948,19 +988,21 @@ def allocation_weight_robustness(
 
         w_eq_mean = np.mean([pw["w_equity"] for pw in perturbed_windows])
 
-        results.append({
-            "equity_shift":    step,
-            "w_equity_mean":   round(w_eq_mean, 3),
-            "n_floor_clamped": n_floor_clamped,
-            "n_ceil_clamped":  n_ceil_clamped,
-            "CAGR":            m["CAGR"],
-            "Vol":             m["Vol"],
-            "Sharpe":          m["Sharpe"],
-            "MaxDD":           m["MaxDD"],
-            "CalMAR":          m["CalMAR"],
-            "Sortino":         m["Sortino"],
-            "n_reallocations": n_reallocations,
-        })
+        results.append(
+            {
+                "equity_shift": step,
+                "w_equity_mean": round(w_eq_mean, 3),
+                "n_floor_clamped": n_floor_clamped,
+                "n_ceil_clamped": n_ceil_clamped,
+                "CAGR": m["CAGR"],
+                "Vol": m["Vol"],
+                "Sharpe": m["Sharpe"],
+                "MaxDD": m["MaxDD"],
+                "CalMAR": m["CalMAR"],
+                "Sortino": m["Sortino"],
+                "n_reallocations": n_reallocations,
+            },
+        )
 
     if not results:
         logging.warning("allocation_weight_robustness: no results produced.")
@@ -971,20 +1013,19 @@ def allocation_weight_robustness(
     # Comparison columns relative to the step=0.0 baseline
     base_row = df.loc[df["equity_shift"].abs() < 1e-9]
     if not base_row.empty:
-        base_cagr   = base_row["CAGR"].iloc[0]
-        base_maxdd  = base_row["MaxDD"].iloc[0]
+        base_cagr = base_row["CAGR"].iloc[0]
+        base_maxdd = base_row["MaxDD"].iloc[0]
         base_calmar = base_row["CalMAR"].iloc[0]
-        df["CAGR_vs_base"]   = (df["CAGR"]  - base_cagr)  * 100
-        df["MaxDD_vs_base"]  = (df["MaxDD"] - base_maxdd) * 100
-        df["CalMAR_vs_base"] = (df["CalMAR"] / base_calmar
-                                if base_calmar != 0 else np.nan)
+        df["CAGR_vs_base"] = (df["CAGR"] - base_cagr) * 100
+        df["MaxDD_vs_base"] = (df["MaxDD"] - base_maxdd) * 100
+        df["CalMAR_vs_base"] = df["CalMAR"] / base_calmar if base_calmar != 0 else np.nan
     else:
         logging.warning(
             "Baseline step (0.0) not found in perturb_steps — "
-            "vs_base columns will be NaN. Add 0.0 to perturb_steps."
+            "vs_base columns will be NaN. Add 0.0 to perturb_steps.",
         )
-        df["CAGR_vs_base"]   = np.nan
-        df["MaxDD_vs_base"]  = np.nan
+        df["CAGR_vs_base"] = np.nan
+        df["MaxDD_vs_base"] = np.nan
         df["CalMAR_vs_base"] = np.nan
 
     return df
@@ -1020,22 +1061,34 @@ def print_allocation_robustness_report(results_df: pd.DataFrame) -> None:
 
     # Format display table
     display = results_df.copy()
-    display["CAGR"]           = (display["CAGR"]  * 100).round(2).astype(str) + "%"
-    display["Vol"]            = (display["Vol"]   * 100).round(2).astype(str) + "%"
-    display["MaxDD"]          = (display["MaxDD"] * 100).round(2).astype(str) + "%"
-    display["Sharpe"]         = display["Sharpe"].round(3)
-    display["CalMAR"]         = display["CalMAR"].round(3)
-    display["Sortino"]        = display["Sortino"].round(3)
-    display["CAGR_vs_base"]   = display["CAGR_vs_base"].round(2).astype(str) + "pp"
-    display["MaxDD_vs_base"]  = display["MaxDD_vs_base"].round(2).astype(str) + "pp"
+    display["CAGR"] = (display["CAGR"] * 100).round(2).astype(str) + "%"
+    display["Vol"] = (display["Vol"] * 100).round(2).astype(str) + "%"
+    display["MaxDD"] = (display["MaxDD"] * 100).round(2).astype(str) + "%"
+    display["Sharpe"] = display["Sharpe"].round(3)
+    display["CalMAR"] = display["CalMAR"].round(3)
+    display["Sortino"] = display["Sortino"].round(3)
+    display["CAGR_vs_base"] = display["CAGR_vs_base"].round(2).astype(str) + "pp"
+    display["MaxDD_vs_base"] = display["MaxDD_vs_base"].round(2).astype(str) + "pp"
     display["CalMAR_vs_base"] = display["CalMAR_vs_base"].round(3)
-    display["equity_shift"]   = display["equity_shift"].apply(lambda x: f"{x:+.0%}")
-    display["w_equity_mean"]  = display["w_equity_mean"].apply(lambda x: f"{x:.0%}")
+    display["equity_shift"] = display["equity_shift"].apply(lambda x: f"{x:+.0%}")
+    display["w_equity_mean"] = display["w_equity_mean"].apply(lambda x: f"{x:.0%}")
 
-    cols = ["equity_shift", "w_equity_mean",
-            "n_floor_clamped", "n_ceil_clamped",
-            "CAGR", "Vol", "Sharpe", "MaxDD", "CalMAR", "Sortino",
-            "n_reallocations", "CAGR_vs_base", "MaxDD_vs_base", "CalMAR_vs_base"]
+    cols = [
+        "equity_shift",
+        "w_equity_mean",
+        "n_floor_clamped",
+        "n_ceil_clamped",
+        "CAGR",
+        "Vol",
+        "Sharpe",
+        "MaxDD",
+        "CalMAR",
+        "Sortino",
+        "n_reallocations",
+        "CAGR_vs_base",
+        "MaxDD_vs_base",
+        "CalMAR_vs_base",
+    ]
     logging.info("\n%s", display[cols].to_string(index=False))
     logging.info("-" * 80)
 
@@ -1045,7 +1098,7 @@ def print_allocation_robustness_report(results_df: pd.DataFrame) -> None:
     if inner.empty:
         logging.info(
             "Verdict: ±10pp steps not present in results — "
-            "add ±0.10 to perturb_steps for a verdict."
+            "add ±0.10 to perturb_steps for a verdict.",
         )
     else:
         min_ratio = inner["CalMAR_vs_base"].min()
@@ -1056,34 +1109,34 @@ def print_allocation_robustness_report(results_df: pd.DataFrame) -> None:
                 "Verdict: PLATEAU  (min CalMAR ratio at ±10pp = %.3f >= 0.80). "
                 "Phase 4 allocation weight sits on a broad performance plateau. "
                 "Result is robust to ±10pp equity shifts.",
-                min_ratio
+                min_ratio,
             )
         elif min_ratio >= 0.60:
             logging.info(
                 "Verdict: MODERATE SENSITIVITY  (min CalMAR ratio at ±10pp = %.3f, "
                 "range 0.60–0.80). Portfolio is somewhat sensitive to the exact "
                 "equity weight. Treat Phase 4 result with moderate confidence.",
-                min_ratio
+                min_ratio,
             )
         else:
             logging.info(
                 "Verdict: SPIKE  (min CalMAR ratio at ±10pp = %.3f < 0.60). "
                 "Portfolio is highly sensitive to the exact equity allocation. "
                 "Phase 4 optimised weight should be treated with caution.",
-                min_ratio
+                min_ratio,
             )
 
     logging.info(
         "Note: bond weight held fixed at per-window optimised value throughout. "
-        "Only equity weight was perturbed; MMF absorbed the remainder."
+        "Only equity weight was perturbed; MMF absorbed the remainder.",
     )
     logging.info(sep)
 
 
 def build_spread_prefilter(
-    pl10y:              pd.DataFrame,
-    de10y:              pd.DataFrame,
-    spread_change_window: int   = 63,
+    pl10y: pd.DataFrame,
+    de10y: pd.DataFrame,
+    spread_change_window: int = 63,
     spread_change_cap_bp: float = 50.0,
 ) -> pd.Series:
     """
@@ -1110,7 +1163,7 @@ def build_spread_prefilter(
     -------
     pd.Series (int 0/1, DatetimeIndex) — 1 = filter passes, 0 = blocked
     """
-    pl_close = pl10y.iloc[:, 1]   # second column = Zamkniecie
+    pl_close = pl10y.iloc[:, 1]  # second column = Zamkniecie
     de_close = de10y.iloc[:, 1]
 
     # Align on union, forward-fill yield gaps (yields have no weekend fixings)
@@ -1125,9 +1178,7 @@ def build_spread_prefilter(
     prefilter.name = "spread_prefilter"
 
     logging.info(
-        "Spread pre-filter: %.1f%% of days ON  |  "
-        "threshold=%.0fbp  window=%dd  "
-        "(series: %s to %s)",
+        "Spread pre-filter: %.1f%% of days ON  |  threshold=%.0fbp  window=%dd  (series: %s to %s)",
         prefilter.mean() * 100,
         spread_change_cap_bp,
         spread_change_window,
@@ -1135,7 +1186,6 @@ def build_spread_prefilter(
         prefilter.index.max().date(),
     )
     return prefilter
-
 
 
 def build_yield_price_proxy(
@@ -1165,7 +1215,7 @@ def build_yield_price_proxy(
     containing the synthetic bond price. Ready to pass directly to
     walk_forward as the price input.
     """
-    ytm_series = pl10y.iloc[:, 1].copy() / 100   # convert % to decimal
+    ytm_series = pl10y.iloc[:, 1].copy() / 100  # convert % to decimal
 
     def _price(ytm):
         if pd.isna(ytm) or ytm <= 0:
@@ -1222,11 +1272,11 @@ def build_yield_momentum_prefilter(
     -------
     pd.Series (int 0/1, DatetimeIndex) — 1 = filter passes, 0 = blocked
     """
-    ytm = pl10y.iloc[:, 1].copy().ffill()   # forward-fill weekend gaps
+    ytm = pl10y.iloc[:, 1].copy().ffill()  # forward-fill weekend gaps
 
     # Change in basis points over lookback window
-    ytm_bp    = ytm * 100
-    ytm_chg   = ytm_bp - ytm_bp.shift(lookback_days)
+    ytm_bp = ytm * 100
+    ytm_chg = ytm_bp - ytm_bp.shift(lookback_days)
 
     # Filter: 1 if yield change below threshold, 0 if rising sharply
     prefilter = (ytm_chg < rise_threshold_bp).astype(int)
@@ -1246,17 +1296,14 @@ def build_yield_momentum_prefilter(
     return prefilter
 
 
-
-
-
-
 # These imports are already present in multiasset_library.py
-#from global_equity_library import build_mmf_extended
+# from global_equity_library import build_mmf_extended
 
 
 # ============================================================
 # CONSOLIDATED TWO-ASSET DATA PREPARATION
 # ============================================================
+
 
 def build_standard_two_asset_data(
     wig: pd.DataFrame,
@@ -1329,8 +1376,7 @@ def build_standard_two_asset_data(
         )
     # Matching WIG to available mmf_ext
     wig = wig.loc[wig.index >= pd.Timestamp(mmf_ext.index.min().date())]
-    
-    
+
     # ── Bond entry gate (spread + yield pre-filter AND-ed together) ────────
     spread_pf = build_spread_prefilter(
         pl10y,
@@ -1344,40 +1390,37 @@ def build_standard_two_asset_data(
         lookback_days=yield_lookback_days,
     )
 
-    tbsp_index  = tbsp.index
-    spread_gate = (
-        spread_pf.reindex(tbsp_index, method="ffill").fillna(1).astype(int)
-    )
-    yield_gate = (
-        yield_pf.reindex(tbsp_index, method="ffill").fillna(1).astype(int)
-    )
+    tbsp_index = tbsp.index
+    spread_gate = spread_pf.reindex(tbsp_index, method="ffill").fillna(1).astype(int)
+    yield_gate = yield_pf.reindex(tbsp_index, method="ffill").fillna(1).astype(int)
     bond_gate = (spread_gate & yield_gate).astype(int)
     bond_gate.name = "bond_entry_gate"
 
     logging.info(
-        "Bond entry gate: %.1f%% of days pass  "
-        "(spread: %.1f%% pass | yield: %.1f%% pass)",
+        "Bond entry gate: %.1f%% of days pass  (spread: %.1f%% pass | yield: %.1f%% pass)",
         bond_gate.mean() * 100,
         spread_gate.mean() * 100,
         yield_gate.mean() * 100,
     )
 
     # ── Daily return series ────────────────────────────────────────────────
-    ret_eq  = wig["Zamkniecie"].pct_change().dropna().rename("ret_eq")
-    ret_bd  = tbsp["Zamkniecie"].pct_change().dropna().rename("ret_bd")
+    ret_eq = wig["Zamkniecie"].pct_change().dropna().rename("ret_eq")
+    ret_bd = tbsp["Zamkniecie"].pct_change().dropna().rename("ret_bd")
     ret_mmf = mmf_ext["Zamkniecie"].pct_change().dropna().rename("ret_mmf")
 
     logging.info(
         "Return series: equity %d rows | bond %d rows | mmf %d rows",
-        len(ret_eq), len(ret_bd), len(ret_mmf),
+        len(ret_eq),
+        len(ret_bd),
+        len(ret_mmf),
     )
 
     return dict(
-        mmf_ext   = mmf_ext,
-        bond_gate = bond_gate,
-        spread_pf = spread_pf,
-        yield_pf  = yield_pf,
-        ret_eq    = ret_eq,
-        ret_bd    = ret_bd,
-        ret_mmf   = ret_mmf,
+        mmf_ext=mmf_ext,
+        bond_gate=bond_gate,
+        spread_pf=spread_pf,
+        yield_pf=yield_pf,
+        ret_eq=ret_eq,
+        ret_bd=ret_bd,
+        ret_mmf=ret_mmf,
     )

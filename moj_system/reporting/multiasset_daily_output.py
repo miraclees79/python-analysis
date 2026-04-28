@@ -26,28 +26,29 @@ global_equity_daily_output.py.
 """
 
 
-
+import datetime as dt
 import json
 import logging
 import os
 import tempfile
-import datetime as dt
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from moj_system.core.research import get_current_adx_regime
 from moj_system.reporting.output_base import (
+    append_log_row,
     atomic_write,
     atomic_write_bytes,
-    load_existing_log,
-    append_log_row,
     fetch_file_from_drive,
+    load_existing_log,
 )
-from moj_system.core.research import get_current_adx_regime
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -55,16 +56,17 @@ from moj_system.core.research import get_current_adx_regime
 BOUNDARY_EXITS = {"CARRY", "SAMPLE_END"}
 
 
-
 # ---------------------------------------------------------------------------
 # Signal extraction helpers
 # ---------------------------------------------------------------------------
+
 
 def _get_signal_from_trades(wf_trades: pd.DataFrame) -> str:
     if wf_trades is None or wf_trades.empty:
         return "OUT"
     carry = wf_trades[wf_trades["Exit Reason"] == "CARRY"]
     return "IN" if not carry.empty else "OUT"
+
 
 def _get_open_position(wf_trades: pd.DataFrame) -> dict | None:
     if wf_trades is None or wf_trades.empty:
@@ -73,6 +75,7 @@ def _get_open_position(wf_trades: pd.DataFrame) -> dict | None:
     if carry.empty:
         return None
     return carry.iloc[-1].to_dict()
+
 
 def _get_active_window_params(wf_results: pd.DataFrame) -> dict:
     """Extracts parameters and identifies if ATR or Fixed stop is used."""
@@ -92,49 +95,52 @@ def _get_active_window_params(wf_results: pd.DataFrame) -> dict:
     stop_label = "N_atr" if use_atr else "X"
 
     return {
-        "filter_mode":  last.get("filter_mode", "ma"),
-        "stop_param":   stop_val,
-        "stop_label":   stop_label,
+        "filter_mode": last.get("filter_mode", "ma"),
+        "stop_param": stop_val,
+        "stop_label": stop_label,
         "use_atr_stop": use_atr,
-        "Y":            _safe_float("Y", 0.10),
-        "fast":         int(_safe_float("fast", 50)),
-        "slow":         int(_safe_float("slow", 200)),
-        "stop_loss":    _safe_float("stop_loss", 0.05),
+        "Y": _safe_float("Y", 0.10),
+        "fast": int(_safe_float("fast", 50)),
+        "slow": int(_safe_float("slow", 200)),
+        "stop_loss": _safe_float("stop_loss", 0.05),
         "mom_lookback": int(_safe_float("mom_lookback", 252)),
     }
+
 
 def _compute_ma_filter_state(df: pd.DataFrame, fast: int, slow: int) -> dict:
     """Calculates current Moving Average crossover state."""
     prices = df["Zamkniecie"].dropna()
     if len(prices) < slow:
         return {"fast_ma": None, "slow_ma": None, "filter_on": None, "gap_pct": None}
-    
+
     fast_ma = float(prices.rolling(window=fast).mean().iloc[-1])
     slow_ma = float(prices.rolling(window=slow).mean().iloc[-1])
     filter_on = fast_ma > slow_ma
     gap_pct = round(number=(fast_ma / slow_ma - 1) * 100, ndigits=3)
-    
+
     return {
         "fast_ma": round(number=fast_ma, ndigits=2),
         "slow_ma": round(number=slow_ma, ndigits=2),
         "filter_on": filter_on,
-        "gap_pct": gap_pct
+        "gap_pct": gap_pct,
     }
+
 
 def _compute_mom_filter_state(df: pd.DataFrame, lookback: int) -> dict:
     """Calculates current Momentum state (Close > Close[lookback])."""
     prices = df["Zamkniecie"].dropna()
     if len(prices) < lookback + 21:
         return {"mom_value": None, "filter_on": None}
-    
+
     # Używamy 21-dniowego 'skip' dla spójności z silnikiem
     mom_val = (prices.shift(periods=21).iloc[-1] / prices.shift(periods=lookback).iloc[-1]) - 1
     filter_on = mom_val > 0
-    
+
     return {
         "mom_value": round(number=float(mom_val * 100), ndigits=2),
-        "filter_on": filter_on
+        "filter_on": filter_on,
     }
+
 
 def _get_current_weights(weights_series: pd.Series | None) -> dict:
     if weights_series is None or weights_series.empty:
@@ -142,9 +148,10 @@ def _get_current_weights(weights_series: pd.Series | None) -> dict:
     last = weights_series.iloc[-1]
     return {
         "equity": round(number=float(last.get("equity", 0)), ndigits=4),
-        "bond":   round(number=float(last.get("bond",   0)), ndigits=4),
-        "mmf":    round(number=float(last.get("mmf",    0)), ndigits=4),
+        "bond": round(number=float(last.get("bond", 0)), ndigits=4),
+        "mmf": round(number=float(last.get("mmf", 0)), ndigits=4),
     }
+
 
 def _realloc_today(reallocation_log: list, run_date: dt.date) -> bool:
     if not reallocation_log:
@@ -156,11 +163,12 @@ def _realloc_today(reallocation_log: list, run_date: dt.date) -> bool:
 # Action determination
 # ---------------------------------------------------------------------------
 
+
 def _determine_action(
-    prev_log:       pd.DataFrame | None,
-    sig_eq_today:   str,
-    sig_bd_today:   str,
-    realloc_today:  bool,
+    prev_log: pd.DataFrame | None,
+    sig_eq_today: str,
+    sig_bd_today: str,
+    realloc_today: bool,
 ) -> str:
     """Return composite action string (HOLD, EQ_ENTER, BD_EXIT, REALLOC, etc.)."""
     parts = []
@@ -192,22 +200,23 @@ def _determine_action(
 # Snapshot builder
 # ---------------------------------------------------------------------------
 
+
 def _build_snapshot(
-    wf_equity_eq:      pd.Series,
-    wf_trades_eq:      pd.DataFrame,
-    wf_results_eq:     pd.DataFrame,
-    wf_equity_bd:      pd.Series,
-    wf_trades_bd:      pd.DataFrame,
-    wf_results_bd:     pd.DataFrame,
-    portfolio_equity:  pd.Series,
+    wf_equity_eq: pd.Series,
+    wf_trades_eq: pd.DataFrame,
+    wf_results_eq: pd.DataFrame,
+    wf_equity_bd: pd.Series,
+    wf_trades_bd: pd.DataFrame,
+    wf_results_bd: pd.DataFrame,
+    portfolio_equity: pd.Series,
     portfolio_metrics: dict,
-    weights_series:    pd.Series,
-    reallocation_log:  list,
-    bh_eq_metrics:     dict,
-    bh_bd_metrics:     dict,
-    WIG:               pd.DataFrame,
-    TBSP:              pd.DataFrame,
-    run_date:          dt.date,
+    weights_series: pd.Series,
+    reallocation_log: list,
+    bh_eq_metrics: dict,
+    bh_bd_metrics: dict,
+    WIG: pd.DataFrame,
+    TBSP: pd.DataFrame,
+    run_date: dt.date,
 ) -> dict:
     """
     Buduje pełny słownik stanu strategii, zawierający wszystkie dane widoczne w raporcie tekstowym.
@@ -216,9 +225,9 @@ def _build_snapshot(
 
     # --- 1. Świeżość danych ---
     snap["data_freshness"] = {
-        "WIG":  str(WIG.index.max().date()),
+        "WIG": str(WIG.index.max().date()),
         "TBSP": str(TBSP.index.max().date()),
-        "Portfolio": str(portfolio_equity.index.max().date())
+        "Portfolio": str(portfolio_equity.index.max().date()),
     }
 
     # --- 2. Parametry i Filtry (WIG) ---
@@ -226,13 +235,13 @@ def _build_snapshot(
     snap["signal_equity"] = _get_signal_from_trades(wf_trades=wf_trades_eq)
     snap["params_equity"] = par_eq
     snap["ma_state_equity"] = _compute_ma_filter_state(
-        df=WIG, 
-        fast=par_eq.get("fast"), 
-        slow=par_eq.get("slow")
+        df=WIG,
+        fast=par_eq.get("fast"),
+        slow=par_eq.get("slow"),
     )
     snap["mom_state_equity"] = _compute_mom_filter_state(
-        df=WIG, 
-        lookback=par_eq.get("mom_lookback")
+        df=WIG,
+        lookback=par_eq.get("mom_lookback"),
     )
 
     # --- 3. Pozycja Equity (WIG) ---
@@ -244,23 +253,23 @@ def _build_snapshot(
         # Obliczanie ceny szczytowej od daty wejścia
         in_trade = prices_eq.loc[prices_eq.index >= pd.Timestamp(pos_eq["EntryDate"])]
         peak_px = float(in_trade.max())
-        
+
         # Obliczenia stopów (identyczne jak w tekście)
         trail_stop = round(number=peak_px * (1 - par_eq["stop_param"]), ndigits=2)
         abs_stop = round(number=entry_px * (1 - par_eq["stop_loss"]), ndigits=2)
         binding = max(trail_stop, abs_stop)
-        
+
         snap["equity_position"] = {
-            "entry_date":     pd.Timestamp(pos_eq["EntryDate"]).date().isoformat(),
-            "entry_price":    round(number=entry_px, ndigits=2),
-            "today_price":    round(number=today_px, ndigits=2),
-            "days_in_trade":  int(pos_eq.get("Days", 0)),
+            "entry_date": pd.Timestamp(pos_eq["EntryDate"]).date().isoformat(),
+            "entry_price": round(number=entry_px, ndigits=2),
+            "today_price": round(number=today_px, ndigits=2),
+            "days_in_trade": int(pos_eq.get("Days", 0)),
             "unrealised_pct": round(number=float(pos_eq["Return"]) * 100, ndigits=2),
-            "peak_price":     round(number=peak_px, ndigits=2),
-            "trail_stop":     trail_stop,
-            "abs_stop":       abs_stop,
-            "binding_stop":   binding,
-            "stop_gap_pct":   round(number=(binding - today_px) / today_px * 100, ndigits=2),
+            "peak_price": round(number=peak_px, ndigits=2),
+            "trail_stop": trail_stop,
+            "abs_stop": abs_stop,
+            "binding_stop": binding,
+            "stop_gap_pct": round(number=(binding - today_px) / today_px * 100, ndigits=2),
         }
     else:
         snap["equity_position"] = None
@@ -270,9 +279,9 @@ def _build_snapshot(
     snap["signal_bond"] = _get_signal_from_trades(wf_trades=wf_trades_bd)
     snap["params_bond"] = par_bd
     snap["ma_state_bond"] = _compute_ma_filter_state(
-        df=TBSP, 
-        fast=par_bd.get("fast"), 
-        slow=par_bd.get("slow")
+        df=TBSP,
+        fast=par_bd.get("fast"),
+        slow=par_bd.get("slow"),
     )
 
     # --- 5. Pozycja Bond (TBSP) ---
@@ -283,22 +292,22 @@ def _build_snapshot(
         today_px_bd = float(prices_bd.iloc[-1])
         in_trade_bd = prices_bd.loc[prices_bd.index >= pd.Timestamp(pos_bd["EntryDate"])]
         peak_px_bd = float(in_trade_bd.max())
-        
+
         trail_stop_bd = round(number=peak_px_bd * (1 - par_bd["stop_param"]), ndigits=2)
         abs_stop_bd = round(number=entry_px_bd * (1 - par_bd["stop_loss"]), ndigits=2)
         binding_bd = max(trail_stop_bd, abs_stop_bd)
-        
+
         snap["bond_position"] = {
-            "entry_date":     pd.Timestamp(pos_bd["EntryDate"]).date().isoformat(),
-            "entry_price":    round(number=entry_px_bd, ndigits=2),
-            "today_price":    round(number=today_px_bd, ndigits=2),
-            "days_in_trade":  int(pos_bd.get("Days", 0)),
+            "entry_date": pd.Timestamp(pos_bd["EntryDate"]).date().isoformat(),
+            "entry_price": round(number=entry_px_bd, ndigits=2),
+            "today_price": round(number=today_px_bd, ndigits=2),
+            "days_in_trade": int(pos_bd.get("Days", 0)),
             "unrealised_pct": round(number=float(pos_bd["Return"]) * 100, ndigits=2),
-            "peak_price":     round(number=peak_px_bd, ndigits=2),
-            "trail_stop":     trail_stop_bd,
-            "abs_stop":       abs_stop_bd,
-            "binding_stop":   binding_bd,
-            "stop_gap_pct":   round(number=(binding_bd - today_px_bd) / today_px_bd * 100, ndigits=2),
+            "peak_price": round(number=peak_px_bd, ndigits=2),
+            "trail_stop": trail_stop_bd,
+            "abs_stop": abs_stop_bd,
+            "binding_stop": binding_bd,
+            "stop_gap_pct": round(number=(binding_bd - today_px_bd) / today_px_bd * 100, ndigits=2),
         }
     else:
         snap["bond_position"] = None
@@ -316,10 +325,10 @@ def _build_snapshot(
     }
     snap["current_regime_adx"] = get_current_adx_regime(df=WIG)
     snap["action"] = _determine_action(
-        prev_log=None, # Ta funkcja zostanie wywołana w build_daily_outputs po załadowaniu logu
+        prev_log=None,  # Ta funkcja zostanie wywołana w build_daily_outputs po załadowaniu logu
         sig_eq_today=snap["signal_equity"],
         sig_bd_today=snap["signal_bond"],
-        realloc_today=_realloc_today(reallocation_log=reallocation_log, run_date=run_date)
+        realloc_today=_realloc_today(reallocation_log=reallocation_log, run_date=run_date),
     )
 
     if reallocation_log:
@@ -327,22 +336,23 @@ def _build_snapshot(
         snap["last_realloc"] = {
             "date": str(pd.Timestamp(last_r["Date"]).date()),
             "equity_after": round(number=float(last_r["equity_after"]), ndigits=2),
-            "bond_after":   round(number=float(last_r["bond_after"]),   ndigits=2),
-            "mmf_after":    round(number=float(last_r["mmf_after"]),    ndigits=2),
-            "reason":       last_r.get("reason", "")
+            "bond_after": round(number=float(last_r["bond_after"]), ndigits=2),
+            "mmf_after": round(number=float(last_r["mmf_after"]), ndigits=2),
+            "reason": last_r.get("reason", ""),
         }
-    
+
     return snap
+
 
 # ---------------------------------------------------------------------------
 # Status text
 # ---------------------------------------------------------------------------
 def _build_status_text(snap: dict, action: str) -> str:
-    sep  = "=" * 65
+    sep = "=" * 65
     sep2 = "-" * 65
-    w  = snap["weights"]
+    w = snap["weights"]
     pm = snap["portfolio_metrics"]
-    
+
     lines = [
         sep,
         f"  MULTI-ASSET STRATEGY SIGNAL — {snap['run_date']}",
@@ -353,9 +363,15 @@ def _build_status_text(snap: dict, action: str) -> str:
         f"  Rynek (ADX):      {snap.get('current_regime_adx', 'N/A').upper()}",
         sep2,
         "  CURRENT ALLOCATION",
-        f"  Equity (WIG):   {w['equity']*100:.0f}%" if w['equity'] is not None else "  Equity (WIG):   N/A",
-        f"  Bond (TBSP):    {w['bond']*100:.0f}%"   if w['bond']   is not None else "  Bond (TBSP):    N/A",
-        f"  MMF:            {w['mmf']*100:.0f}%"    if w['mmf']    is not None else "  MMF:            N/A",
+        f"  Equity (WIG):   {w['equity'] * 100:.0f}%"
+        if w["equity"] is not None
+        else "  Equity (WIG):   N/A",
+        f"  Bond (TBSP):    {w['bond'] * 100:.0f}%"
+        if w["bond"] is not None
+        else "  Bond (TBSP):    N/A",
+        f"  MMF:            {w['mmf'] * 100:.0f}%"
+        if w["mmf"] is not None
+        else "  MMF:            N/A",
         sep2,
     ]
 
@@ -370,19 +386,23 @@ def _build_status_text(snap: dict, action: str) -> str:
             f"  Today price:    {ep['today_price']}",
             f"  Days in trade:  {ep['days_in_trade']}",
             f"  Unrealised:     {ep['unrealised_pct']:+.2f}%",
-            f"  Trail stop:     {ep['trail_stop']}  (peak {ep['peak_price']} × (1-{pe.get('stop_param',0):.2f} [{pe.get('stop_label','X')}]))",
-            f"  Abs stop:       {ep['abs_stop']}  (entry × (1-{pe.get('stop_loss',0):.0%}))",
+            f"  Trail stop:     {ep['trail_stop']}  (peak {ep['peak_price']} × (1-{pe.get('stop_param', 0):.2f} [{pe.get('stop_label', 'X')}]))",
+            f"  Abs stop:       {ep['abs_stop']}  (entry × (1-{pe.get('stop_loss', 0):.0%}))",
             f"  Binding stop:   {ep['binding_stop']}  (gap: {ep['stop_gap_pct']:+.1f}%)",
         ]
     else:
         lines.append("  No open equity position.")
-    
+
     ma_eq = snap.get("ma_state_equity", {})
     mom_eq = snap.get("mom_state_equity", {})
     fmode_eq = pe.get("filter_mode", "ma").upper()
     lines.append(f"  Filter (Active: {fmode_eq}):")
-    lines.append(f"    MA:  {ma_eq.get('fast_ma')} / {ma_eq.get('slow_ma')} (gap {ma_eq.get('gap_pct'):+.2f}%) -> {'ON' if ma_eq.get('filter_on') else 'OFF'}")
-    lines.append(f"    MOM: {mom_eq.get('mom_value'):+.2f}% -> {'ON' if mom_eq.get('filter_on') else 'OFF'}")
+    lines.append(
+        f"    MA:  {ma_eq.get('fast_ma')} / {ma_eq.get('slow_ma')} (gap {ma_eq.get('gap_pct'):+.2f}%) -> {'ON' if ma_eq.get('filter_on') else 'OFF'}",
+    )
+    lines.append(
+        f"    MOM: {mom_eq.get('mom_value'):+.2f}% -> {'ON' if mom_eq.get('filter_on') else 'OFF'}",
+    )
     lines.append(sep2)
 
     # Sekcja Obligacji (TBSP)
@@ -396,20 +416,22 @@ def _build_status_text(snap: dict, action: str) -> str:
             f"  Today price:    {bp['today_price']}",
             f"  Days in trade:  {bp['days_in_trade']}",
             f"  Unrealised:     {bp['unrealised_pct']:+.2f}%",
-            f"  Trail stop:     {bp['trail_stop']}  (peak {bp['peak_price']} × (1-{pb.get('stop_param',0):.2f} [{pb.get('stop_label','X')}]))",
-            f"  Abs stop:       {bp['abs_stop']}  (entry × (1-{pb.get('stop_loss',0):.0%}))",
+            f"  Trail stop:     {bp['trail_stop']}  (peak {bp['peak_price']} × (1-{pb.get('stop_param', 0):.2f} [{pb.get('stop_label', 'X')}]))",
+            f"  Abs stop:       {bp['abs_stop']}  (entry × (1-{pb.get('stop_loss', 0):.0%}))",
             f"  Binding stop:   {bp['binding_stop']}  (gap: {bp['stop_gap_pct']:+.1f}%)",
         ]
     else:
         lines.append("  No open bond position.")
-    
+
     ma_bd = snap.get("ma_state_bond", {})
-    lines.append(f"  MA Filter: {ma_bd.get('fast_ma')} / {ma_bd.get('slow_ma')} (gap {ma_bd.get('gap_pct'):+.2f}%) -> {'ON' if ma_bd.get('filter_on') else 'OFF'}")
+    lines.append(
+        f"  MA Filter: {ma_bd.get('fast_ma')} / {ma_bd.get('slow_ma')} (gap {ma_bd.get('gap_pct'):+.2f}%) -> {'ON' if ma_bd.get('filter_on') else 'OFF'}",
+    )
     lines.append(sep2)
 
     lines += [
         "  PORTFOLIO OOS METRICS",
-        f"  CAGR: {pm.get('CAGR')*100:+.2f}% | Sharpe: {pm.get('Sharpe'):.2f} | MaxDD: {pm.get('MaxDD')*100:+.2f}%",
+        f"  CAGR: {pm.get('CAGR') * 100:+.2f}% | Sharpe: {pm.get('Sharpe'):.2f} | MaxDD: {pm.get('MaxDD') * 100:+.2f}%",
         sep2,
     ]
 
@@ -421,34 +443,35 @@ def _build_status_text(snap: dict, action: str) -> str:
 # Log row
 # ---------------------------------------------------------------------------
 
+
 def _build_log_row(snap: dict, action: str) -> dict:
-    w  = snap["weights"]
+    w = snap["weights"]
     pm = snap["portfolio_metrics"]
     ep = snap.get("equity_position") or {}
-    bp = snap.get("bond_position")   or {}
+    bp = snap.get("bond_position") or {}
     return {
-        "date":              snap["run_date"],
-        "action":            action,
-        "signal_equity":     snap["signal_equity"],
-        "signal_bond":       snap["signal_bond"],
-        "regime_adx":        snap.get("current_regime_adx"),
-        "w_equity":          w.get("equity"),
-        "w_bond":            w.get("bond"),
-        "w_mmf":             w.get("mmf"),
-        "realloc_today":     snap.get("realloc_today", False),
-        "eq_entry_date":     ep.get("entry_date"),
-        "eq_entry_price":    ep.get("entry_price"),
+        "date": snap["run_date"],
+        "action": action,
+        "signal_equity": snap["signal_equity"],
+        "signal_bond": snap["signal_bond"],
+        "regime_adx": snap.get("current_regime_adx"),
+        "w_equity": w.get("equity"),
+        "w_bond": w.get("bond"),
+        "w_mmf": w.get("mmf"),
+        "realloc_today": snap.get("realloc_today", False),
+        "eq_entry_date": ep.get("entry_date"),
+        "eq_entry_price": ep.get("entry_price"),
         "eq_unrealised_pct": ep.get("unrealised_pct"),
-        "eq_binding_stop":   ep.get("binding_stop"),
-        "eq_stop_gap_pct":   ep.get("stop_gap_pct"),
-        "bd_entry_date":     bp.get("entry_date"),
-        "bd_entry_price":    bp.get("entry_price"),
+        "eq_binding_stop": ep.get("binding_stop"),
+        "eq_stop_gap_pct": ep.get("stop_gap_pct"),
+        "bd_entry_date": bp.get("entry_date"),
+        "bd_entry_price": bp.get("entry_price"),
         "bd_unrealised_pct": bp.get("unrealised_pct"),
-        "bd_binding_stop":   bp.get("binding_stop"),
-        "bd_stop_gap_pct":   bp.get("stop_gap_pct"),
-        "portfolio_cagr":    pm.get("CAGR"),
-        "portfolio_maxdd":   pm.get("MaxDD"),
-        "portfolio_calmar":  pm.get("CalMAR"),
+        "bd_binding_stop": bp.get("binding_stop"),
+        "bd_stop_gap_pct": bp.get("stop_gap_pct"),
+        "portfolio_cagr": pm.get("CAGR"),
+        "portfolio_maxdd": pm.get("MaxDD"),
+        "portfolio_calmar": pm.get("CalMAR"),
     }
 
 
@@ -456,31 +479,41 @@ def _build_log_row(snap: dict, action: str) -> dict:
 # Chart
 # ---------------------------------------------------------------------------
 
+
 def _build_chart(
     portfolio_equity: pd.Series,
-    sig_eq_oos:       pd.Series,
-    sig_bd_oos:       pd.Series,
+    sig_eq_oos: pd.Series,
+    sig_bd_oos: pd.Series,
     reallocation_log: list,
-    bh_eq_equity:     pd.Series,
-    bh_bd_equity:     pd.Series,
-    chart_path:       Path,
-    action:           str,
-    run_date:         dt.date,
+    bh_eq_equity: pd.Series,
+    bh_bd_equity: pd.Series,
+    chart_path: Path,
+    action: str,
+    run_date: dt.date,
 ) -> None:
     fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
-    fig.suptitle(f"Multi-Asset Strategy — {run_date}  [{action}]",
-                 fontsize=12, fontweight="bold")
+    fig.suptitle(f"Multi-Asset Strategy — {run_date}  [{action}]", fontsize=12, fontweight="bold")
 
     oos_start = portfolio_equity.index.min()
 
     ax = axes[0]
     portfolio_equity.plot(ax=ax, label="Portfolio", color="steelblue", linewidth=1.8)
     if bh_eq_equity is not None:
-        bh_eq = bh_eq_equity.loc[bh_eq_equity.index >= oos_start] / bh_eq_equity.loc[bh_eq_equity.index >= oos_start].iloc[0]
-        bh_eq.plot(ax=ax, label="B&H WIG",  color="darkorange", linewidth=1, linestyle="--", alpha=0.7)
+        bh_eq = (
+            bh_eq_equity.loc[bh_eq_equity.index >= oos_start]
+            / bh_eq_equity.loc[bh_eq_equity.index >= oos_start].iloc[0]
+        )
+        bh_eq.plot(
+            ax=ax, label="B&H WIG", color="darkorange", linewidth=1, linestyle="--", alpha=0.7,
+        )
     if bh_bd_equity is not None:
-        bh_bd = bh_bd_equity.loc[bh_bd_equity.index >= oos_start] / bh_bd_equity.loc[bh_bd_equity.index >= oos_start].iloc[0]
-        bh_bd.plot(ax=ax, label="B&H TBSP", color="seagreen",   linewidth=1, linestyle="--", alpha=0.7)
+        bh_bd = (
+            bh_bd_equity.loc[bh_bd_equity.index >= oos_start]
+            / bh_bd_equity.loc[bh_bd_equity.index >= oos_start].iloc[0]
+        )
+        bh_bd.plot(
+            ax=ax, label="B&H TBSP", color="seagreen", linewidth=1, linestyle="--", alpha=0.7,
+        )
     ax.set_title("Portfolio Equity (OOS)")
     ax.set_ylabel("Equity (rebased to 1.0)")
     ax.legend(fontsize=8)
@@ -490,9 +523,14 @@ def _build_chart(
     dd_port = portfolio_equity / portfolio_equity.cummax() - 1
     dd_port.plot(ax=ax, label="Portfolio", color="steelblue", linewidth=1.5)
     if bh_eq_equity is not None:
-        bh_eq = bh_eq_equity.loc[bh_eq_equity.index >= oos_start] / bh_eq_equity.loc[bh_eq_equity.index >= oos_start].iloc[0]
-        dd_eq  = bh_eq / bh_eq.cummax() - 1
-        dd_eq.plot(ax=ax, label="B&H WIG", color="darkorange", linewidth=1, linestyle="--", alpha=0.7)
+        bh_eq = (
+            bh_eq_equity.loc[bh_eq_equity.index >= oos_start]
+            / bh_eq_equity.loc[bh_eq_equity.index >= oos_start].iloc[0]
+        )
+        dd_eq = bh_eq / bh_eq.cummax() - 1
+        dd_eq.plot(
+            ax=ax, label="B&H WIG", color="darkorange", linewidth=1, linestyle="--", alpha=0.7,
+        )
     ax.set_title("Drawdown")
     ax.set_ylabel("Drawdown")
     ax.legend(fontsize=8)
@@ -502,11 +540,12 @@ def _build_chart(
     if sig_eq_oos is not None and not sig_eq_oos.empty:
         sig_eq_oos.plot(ax=ax, label="Equity signal", color="darkorange", linewidth=0.9, alpha=0.8)
     if sig_bd_oos is not None and not sig_bd_oos.empty:
-        sig_bd_oos.plot(ax=ax, label="Bond signal",   color="seagreen",   linewidth=0.9, alpha=0.8)
+        sig_bd_oos.plot(ax=ax, label="Bond signal", color="seagreen", linewidth=0.9, alpha=0.8)
     if reallocation_log:
         rdates = [pd.Timestamp(r["Date"]) for r in reallocation_log]
-        ax.vlines(rdates, ymin=0, ymax=1.05, color="grey",
-                  linewidth=0.5, alpha=0.5, label="Reallocation")
+        ax.vlines(
+            rdates, ymin=0, ymax=1.05, color="grey", linewidth=0.5, alpha=0.5, label="Reallocation",
+        )
     ax.set_title("Asset Signals and Reallocation Events")
     ax.set_ylabel("Signal (0=off, 1=on)")
     ax.set_ylim(-0.05, 1.15)
@@ -527,29 +566,30 @@ def _build_chart(
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def build_daily_outputs(
-    wf_equity_eq:      pd.Series,
-    wf_trades_eq:      pd.DataFrame,
-    wf_results_eq:     pd.DataFrame,
-    wf_equity_bd:      pd.Series,
-    wf_trades_bd:      pd.DataFrame,
-    wf_results_bd:     pd.DataFrame,
-    portfolio_equity:  pd.Series,
+    wf_equity_eq: pd.Series,
+    wf_trades_eq: pd.DataFrame,
+    wf_results_eq: pd.DataFrame,
+    wf_equity_bd: pd.Series,
+    wf_trades_bd: pd.DataFrame,
+    wf_results_bd: pd.DataFrame,
+    portfolio_equity: pd.Series,
     portfolio_metrics: dict,
-    weights_series:    pd.Series,
-    reallocation_log:  list,
-    bh_eq_equity:      pd.Series,
-    bh_eq_metrics:     dict,
-    bh_bd_equity:      pd.Series,
-    bh_bd_metrics:     dict,
-    WIG:               pd.DataFrame,
-    TBSP:              pd.DataFrame,
-    sig_eq_oos:        pd.Series,
-    sig_bd_oos:        pd.Series,
-    output_dir:        str       = "outputs",
-    asset_name:        str       = "PENSION", 
-    run_date:          dt.date | None = None,
-    gdrive_folder_id:   str | None = None,
+    weights_series: pd.Series,
+    reallocation_log: list,
+    bh_eq_equity: pd.Series,
+    bh_eq_metrics: dict,
+    bh_bd_equity: pd.Series,
+    bh_bd_metrics: dict,
+    WIG: pd.DataFrame,
+    TBSP: pd.DataFrame,
+    sig_eq_oos: pd.Series,
+    sig_bd_oos: pd.Series,
+    output_dir: str = "outputs",
+    asset_name: str = "PENSION",
+    run_date: dt.date | None = None,
+    gdrive_folder_id: str | None = None,
     gdrive_credentials: str | None = None,
 ) -> dict:
     """
@@ -561,15 +601,15 @@ def build_daily_outputs(
     if run_date is None:
         run_date = dt.date.today()
 
-    out_dir       = Path(output_dir)
+    out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # [ZMIANA] Dynamiczne nazwy plików
     prefix = asset_name.lower()
-    logfile_name  = f"{prefix}_signal_log.csv"
-    log_path      = out_dir / logfile_name
-    status_path   = out_dir / f"{prefix}_signal_status.txt"
-    chart_path    = out_dir / f"{prefix}_equity_chart.png"
+    logfile_name = f"{prefix}_signal_log.csv"
+    log_path = out_dir / logfile_name
+    status_path = out_dir / f"{prefix}_signal_status.txt"
+    chart_path = out_dir / f"{prefix}_equity_chart.png"
     snapshot_path = out_dir / f"{prefix}_signal_snapshot.json"
 
     if gdrive_folder_id and gdrive_credentials:
@@ -578,25 +618,25 @@ def build_daily_outputs(
         logging.info("multiasset_daily_output: skipping Drive log fetch.")
 
     snap = _build_snapshot(
-        wf_equity_eq     = wf_equity_eq,
-        wf_trades_eq     = wf_trades_eq,
-        wf_results_eq    = wf_results_eq,
-        wf_equity_bd     = wf_equity_bd,
-        wf_trades_bd     = wf_trades_bd,
-        wf_results_bd    = wf_results_bd,
-        portfolio_equity = portfolio_equity,
-        portfolio_metrics= portfolio_metrics,
-        weights_series   = weights_series,
-        reallocation_log = reallocation_log,
-        bh_eq_metrics    = bh_eq_metrics,
-        bh_bd_metrics    = bh_bd_metrics,
-        WIG              = WIG,
-        TBSP             = TBSP,
-        run_date         = run_date,
+        wf_equity_eq=wf_equity_eq,
+        wf_trades_eq=wf_trades_eq,
+        wf_results_eq=wf_results_eq,
+        wf_equity_bd=wf_equity_bd,
+        wf_trades_bd=wf_trades_bd,
+        wf_results_bd=wf_results_bd,
+        portfolio_equity=portfolio_equity,
+        portfolio_metrics=portfolio_metrics,
+        weights_series=weights_series,
+        reallocation_log=reallocation_log,
+        bh_eq_metrics=bh_eq_metrics,
+        bh_bd_metrics=bh_bd_metrics,
+        WIG=WIG,
+        TBSP=TBSP,
+        run_date=run_date,
     )
 
     prev_log = load_existing_log(log_path)
-    action   = _determine_action(
+    action = _determine_action(
         prev_log,
         snap["signal_equity"],
         snap["signal_bond"],
@@ -618,31 +658,32 @@ def build_daily_outputs(
     logging.info("multiasset_daily_output: snapshot written to %s", snapshot_path)
 
     _build_chart(
-        portfolio_equity = portfolio_equity,
-        sig_eq_oos       = sig_eq_oos,
-        sig_bd_oos       = sig_bd_oos,
-        reallocation_log = reallocation_log,
-        bh_eq_equity     = bh_eq_equity,
-        bh_bd_equity     = bh_bd_equity,
-        chart_path       = chart_path,
-        action           = action,
-        run_date         = run_date,
+        portfolio_equity=portfolio_equity,
+        sig_eq_oos=sig_eq_oos,
+        sig_bd_oos=sig_bd_oos,
+        reallocation_log=reallocation_log,
+        bh_eq_equity=bh_eq_equity,
+        bh_bd_equity=bh_bd_equity,
+        chart_path=chart_path,
+        action=action,
+        run_date=run_date,
     )
     # --- NOWA LOGIKA: WYSYŁANIE NA GOOGLE DRIVE ---
     if gdrive_folder_id and gdrive_credentials:
         logging.info("Uploading artefacts to Google Drive...")
         try:
             from moj_system.data.gdrive import GDriveClient
+
             client = GDriveClient(credentials_path=gdrive_credentials)
-            
+
             if client.service:
                 # Wysyłamy wszystkie 4 wygenerowane pliki
                 files_to_upload = [log_path, status_path, chart_path, snapshot_path]
                 for file_path in files_to_upload:
                     if file_path.exists():
                         client.upload_csv(gdrive_folder_id, str(file_path), file_path.name)
-                        # Uwaga: metoda nazywa się 'upload_csv', ale w kodzie GDriveClient używa 
-                        # ogólnego mimetypu 'text/csv' lub go ignoruje, więc prześle poprawnie też .txt i .png. 
+                        # Uwaga: metoda nazywa się 'upload_csv', ale w kodzie GDriveClient używa
+                        # ogólnego mimetypu 'text/csv' lub go ignoruje, więc prześle poprawnie też .txt i .png.
                         # Dla pewności, można w przyszłości zaktualizować metodę w GDriveClient.
                 logging.info("Successfully uploaded all daily artefacts to Google Drive.")
             else:
@@ -653,12 +694,12 @@ def build_daily_outputs(
         logging.info("No GDrive credentials provided. Artefacts saved locally only.")
     # ---------------------------------------------
     return {
-        "action":        action,
+        "action": action,
         "signal_equity": snap["signal_equity"],
-        "signal_bond":   snap["signal_bond"],
-        "status_text":   status_text,
-        "log_row":       log_row,
-        "chart_path":    chart_path,
+        "signal_bond": snap["signal_bond"],
+        "status_text": status_text,
+        "log_row": log_row,
+        "chart_path": chart_path,
         "snapshot_path": snapshot_path,
-        "log_path":      log_path,
+        "log_path": log_path,
     }

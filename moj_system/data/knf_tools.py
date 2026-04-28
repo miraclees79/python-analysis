@@ -3,43 +3,63 @@
 moj_system/data/knf_tools.py
 ============================
 Unified toolkit for KNF API interaction and Stooq name matching.
-Features: 
+Features:
 - Brand-aware TFI filtering
 - Advanced fuzzy matching via RapidFuzz
 - GDrive integration
 - PRICE VERIFICATION: Validates matches by comparing KNF NAV with Stooq NAV.
 """
 
-import os
-import re
 import logging
-import unicodedata
+import re
 import time
-import requests
-import pandas as pd
+import unicodedata
 from pathlib import Path
-from rapidfuzz import process, fuzz
 
-from moj_system.data.gdrive import GDriveClient
+import pandas as pd
+import requests
+from rapidfuzz import fuzz, process
+
 from moj_system.data.data_manager import load_local_csv
+from moj_system.data.gdrive import GDriveClient
 
 # --- CONFIGURATION ---
 KNF_API_BASE = "https://wybieramfundusze-api.knf.gov.pl"
 FUZZY_THRESHOLD = 75  # Minimum score to consider a fuzzy match
-PRICE_TOLERANCE = 0.05 # 5% tolerance for NAV comparison
+PRICE_TOLERANCE = 0.05  # 5% tolerance for NAV comparison
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 FUND_NAMES_DIR = SCRIPT_DIR / "fund_names_stooq"
 
 # --- TFI REGISTRY (Wide Scope) ---
 TFI_IN_SCOPE = {
-    "tfi allianz polska s.a.", "generali investments tfi s.a.", "goldman sachs tfi s.a.",
-    "investors tfi s.a.", "pko tfi s.a.", "tfi pzu sa", "quercus tfi s.a.",
-    "skarbiec tfi s.a.", "uniqa tfi s.a.", "vig/c-quadrat tfi s.a.", "agiofunds tfi s.a.",
-    "opoka tfi s.a.", "alior tfi s.a.", "rockbridge tfi s.a.", "amundi polska tfi s.a.",
-    "bnp paribas tfi s.a.", "caspar tfi s.a.", "santander tfi s.a.", "eques investment tfi s.a.",
-    "esaliens tfi s.a.", "mtfi s.a.", "best tfi s.a.", "mci capital tfi s.a.",
-    "millennium tfi s.a.", "pekao tfi s.a.", "ipopema tfi s.a.", "velofunds tfi s.a."
+    "tfi allianz polska s.a.",
+    "generali investments tfi s.a.",
+    "goldman sachs tfi s.a.",
+    "investors tfi s.a.",
+    "pko tfi s.a.",
+    "tfi pzu sa",
+    "quercus tfi s.a.",
+    "skarbiec tfi s.a.",
+    "uniqa tfi s.a.",
+    "vig/c-quadrat tfi s.a.",
+    "agiofunds tfi s.a.",
+    "opoka tfi s.a.",
+    "alior tfi s.a.",
+    "rockbridge tfi s.a.",
+    "amundi polska tfi s.a.",
+    "bnp paribas tfi s.a.",
+    "caspar tfi s.a.",
+    "santander tfi s.a.",
+    "eques investment tfi s.a.",
+    "esaliens tfi s.a.",
+    "mtfi s.a.",
+    "best tfi s.a.",
+    "mci capital tfi s.a.",
+    "millennium tfi s.a.",
+    "pekao tfi s.a.",
+    "ipopema tfi s.a.",
+    "velofunds tfi s.a.",
 }
 
 # --- TFI BRAND OVERRIDES ---
@@ -53,6 +73,7 @@ TFI_BRAND_OVERRIDES = {
     "investors tfi s.a.": "investor",
 }
 
+
 class KNFTools:
     def __init__(self, credentials_path=None):
         self.gdrive = GDriveClient(credentials_path)
@@ -64,35 +85,54 @@ class KNFTools:
 
     @staticmethod
     def to_ascii(s: str) -> str:
-        if not isinstance(s, str): return ""
+        if not isinstance(s, str):
+            return ""
         return unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode("ascii")
 
     def tfi_brand_token(self, company_name: str) -> str:
-        if not isinstance(company_name, str) or not company_name.strip(): return ""
+        if not isinstance(company_name, str) or not company_name.strip():
+            return ""
         raw_key = self.to_ascii(company_name.strip().lower())
-        if raw_key in TFI_BRAND_OVERRIDES: return TFI_BRAND_OVERRIDES[raw_key]
-        
+        if raw_key in TFI_BRAND_OVERRIDES:
+            return TFI_BRAND_OVERRIDES[raw_key]
+
         s = raw_key
         structural = [
-            r"\btowarzystwo funduszy inwestycyjnych\b", r"\bfunduszy inwestycyjnych\b",
-            r"\binvestment(?:\s+partners)?\b", r"\basset\s+management\b", r"\btfi\b",
-            r"\bs\.?\s*a\.?\b", r"\bsp\.?\s*z\.?\s*o\.?\s*o\.?\b"
+            r"\btowarzystwo funduszy inwestycyjnych\b",
+            r"\bfunduszy inwestycyjnych\b",
+            r"\binvestment(?:\s+partners)?\b",
+            r"\basset\s+management\b",
+            r"\btfi\b",
+            r"\bs\.?\s*a\.?\b",
+            r"\bsp\.?\s*z\.?\s*o\.?\s*o\.?\b",
         ]
-        for term in structural: s = re.sub(term, " ", s)
+        for term in structural:
+            s = re.sub(term, " ", s)
         s = re.sub(r"[^a-z0-9 ]", " ", s)
         return re.sub(r"\s+", " ", s).strip()
 
     def residual_name(self, name: str, brand_token: str = "") -> str:
-        if not isinstance(name, str): return ""
+        if not isinstance(name, str):
+            return ""
         s = self.to_ascii(name.lower())
         legal_terms = [
-            r"\bfundusz inwestycyjny otwarty\b", r"\bfundusz inwestycyjny zamkniety\b",
-            r"\bspecjalistyczny fundusz inwestycyjny otwarty\b", r"\bfundusz inwestycyjny\b",
-            r"\bsfio\b", r"\bfio\b", r"\bfiz\b", r"\bsubfundusz\b", r"\bparasolowy\b", r"\bparasol\b",
-            r"\btowarzystwo funduszy inwestycyjnych\b", r"\btfi\b"
+            r"\bfundusz inwestycyjny otwarty\b",
+            r"\bfundusz inwestycyjny zamkniety\b",
+            r"\bspecjalistyczny fundusz inwestycyjny otwarty\b",
+            r"\bfundusz inwestycyjny\b",
+            r"\bsfio\b",
+            r"\bfio\b",
+            r"\bfiz\b",
+            r"\bsubfundusz\b",
+            r"\bparasolowy\b",
+            r"\bparasol\b",
+            r"\btowarzystwo funduszy inwestycyjnych\b",
+            r"\btfi\b",
         ]
-        for term in legal_terms: s = re.sub(term, " ", s)
-        if brand_token: s = re.sub(r"\b" + re.escape(brand_token) + r"\b", " ", s)
+        for term in legal_terms:
+            s = re.sub(term, " ", s)
+        if brand_token:
+            s = re.sub(r"\b" + re.escape(brand_token) + r"\b", " ", s)
         s = re.sub(r"[^a-z0-9 ]", " ", s)
         return re.sub(r"\s+", " ", s).strip()
 
@@ -112,7 +152,7 @@ class KNFTools:
 
         line_re = re.compile(r"^\s*(\d+)\.n\s+(.+)$", re.IGNORECASE)
         rows = []
-        
+
         for txt_path in txt_files:
             category = txt_path.stem
             try:
@@ -120,26 +160,30 @@ class KNFTools:
                 for line in text.splitlines():
                     m = line_re.match(line)
                     if m:
-                        rows.append({
-                            "stooq_id": int(m.group(1)),
-                            "stooq_ticker": f"{m.group(1)}.N",
-                            "stooq_title": m.group(2).strip(),
-                            "stooq_category": category,
-                        })
+                        rows.append(
+                            {
+                                "stooq_id": int(m.group(1)),
+                                "stooq_ticker": f"{m.group(1)}.N",
+                                "stooq_title": m.group(2).strip(),
+                                "stooq_category": category,
+                            },
+                        )
             except Exception as e:
                 logging.warning(f"Could not read {txt_path.name}: {e}")
 
         df = pd.DataFrame(rows)
-        if df.empty: return df
-        
+        if df.empty:
+            return df
+
         df = df.drop_duplicates(subset=["stooq_id"], keep="first")
-        
+
         def strip_prefix(title, sid):
             prefix = f"{sid}.n - "
-            if title.lower().startswith(prefix): title = title[len(prefix):]
+            if title.lower().startswith(prefix):
+                title = title[len(prefix) :]
             title = re.sub(r"^\d+\.n\s*-\s*", "", title, flags=re.IGNORECASE)
             return re.sub(r"\s*-\s*stooq\s*$", "", title, flags=re.IGNORECASE).strip()
-            
+
         df["stooq_name"] = df.apply(lambda r: strip_prefix(r["stooq_title"], r["stooq_id"]), axis=1)
         logging.info(f"Loaded {len(df)} Stooq names from {len(txt_files)} files.")
         return df
@@ -147,71 +191,83 @@ class KNFTools:
     def _fetch_all_pages(self, path: str, params: dict = None) -> list:
         items = []
         page = 0
-        if params is None: params = {}
+        if params is None:
+            params = {}
         while True:
             current_params = {**params, "size": 200, "page": page}
             resp = requests.get(f"{KNF_API_BASE}{path}", params=current_params, timeout=30)
             resp.raise_for_status()
             data = resp.json()
-            items.extend(data.get('content', []))
-            if page + 1 >= data.get('page', {}).get('totalPages', 1): break
+            items.extend(data.get("content", []))
+            if page + 1 >= data.get("page", {}).get("totalPages", 1):
+                break
             page += 1
             time.sleep(0.05)
         return items
 
     def fetch_knf_subfunds(self, confirmed_ids: set, use_tfi_scope: bool = True) -> pd.DataFrame:
         """
-        Deep Hydration: Fetches subfunds and crawls through KIDs to get 
+        Deep Hydration: Fetches subfunds and crawls through KIDs to get
         Fees, Risk Levels and Benchmarks.
         """
         logging.info("Building TFI and Fund lookup maps...")
         companies = self._fetch_all_pages("/v1/companies")
-        company_map = {c['companyId']: c['name'] for c in companies if 'companyId' in c}
+        company_map = {c["companyId"]: c["name"] for c in companies if "companyId" in c}
         funds = self._fetch_all_pages("/v1/funds")
-        fund_to_company = {f['fundId']: f['companyId'] for f in funds if 'fundId' in f}
+        fund_to_company = {f["fundId"]: f["companyId"] for f in funds if "fundId" in f}
 
         logging.info("Fetching subfund list...")
         all_subfunds = self._fetch_all_pages("/v1/subfunds", {"includeInactive": "false"})
-        
+
         # Filter scope first to save API calls
         scoped_raw = []
         for s in all_subfunds:
-            comp_id = fund_to_company.get(s.get('fundId'))
+            comp_id = fund_to_company.get(s.get("fundId"))
             tfi_name = company_map.get(comp_id, "")
             tfi_key = self.to_ascii(tfi_name.lower().strip())
             if not use_tfi_scope or tfi_key in TFI_IN_SCOPE:
-                s['tfi_name'] = tfi_name
+                s["tfi_name"] = tfi_name
                 scoped_raw.append(s)
 
         logging.info(f"Hydrating {len(scoped_raw)} subfunds with KID metadata...")
         hydrated_rows = []
-        
+
         for i, s in enumerate(scoped_raw):
-            sfid = s['subfundId']
-            if i > 0 and i % 20 == 0: logging.info(f"  ... hydrated {i}/{len(scoped_raw)}")
-            
+            sfid = s["subfundId"]
+            if i > 0 and i % 20 == 0:
+                logging.info(f"  ... hydrated {i}/{len(scoped_raw)}")
+
             try:
                 # 1. Basic subfund detail
                 detail = requests.get(f"{KNF_API_BASE}/v1/subfunds/{sfid}", timeout=10).json()
                 s.update(detail)
-                
+
                 # 2. Get latest Primary KID UUID
-                kid_list = requests.get(f"{KNF_API_BASE}/v1/key-information/units", 
-                                        params={"subfundId": sfid, "isPrimary": "true", "size": 1}, timeout=10).json()
-                content = kid_list.get('content', [])
-                
+                kid_list = requests.get(
+                    f"{KNF_API_BASE}/v1/key-information/units",
+                    params={"subfundId": sfid, "isPrimary": "true", "size": 1},
+                    timeout=10,
+                ).json()
+                content = kid_list.get("content", [])
+
                 if content:
-                    uuid = content[0]['documentUuid']
+                    uuid = content[0]["documentUuid"]
                     # 3. Get Deep KID Metadata (Fees, Risk, Benchmark)
-                    kid_detail = requests.get(f"{KNF_API_BASE}/v1/key-information/units/{uuid}", timeout=10).json()
-                    s.update({
-                        "riskLevel": kid_detail.get("riskLevel"),
-                        "managementAndOtherFeesRate": kid_detail.get("managementAndOtherFeesRate"),
-                        "maxEntryFeeRate": kid_detail.get("maxEntryFeeRate"),
-                        "hasBenchmark": kid_detail.get("hasBenchmark"),
-                        "benchmark": kid_detail.get("benchmark")
-                    })
-                
+                    kid_detail = requests.get(
+                        f"{KNF_API_BASE}/v1/key-information/units/{uuid}", timeout=10,
+                    ).json()
+                    s.update(
+                        {
+                            "riskLevel": kid_detail.get("riskLevel"),
+                            "managementAndOtherFeesRate": kid_detail.get(
+                                "managementAndOtherFeesRate",
+                            ),
+                            "maxEntryFeeRate": kid_detail.get("maxEntryFeeRate"),
+                            "hasBenchmark": kid_detail.get("hasBenchmark"),
+                            "benchmark": kid_detail.get("benchmark"),
+                        },
+                    )
+
                 hydrated_rows.append(s)
                 time.sleep(0.05)
             except Exception as e:
@@ -219,28 +275,33 @@ class KNFTools:
                 hydrated_rows.append(s)
 
         df = pd.DataFrame(hydrated_rows)
-        if df.empty: return df
-        
-        df = df[~df['category'].astype(str).str.startswith("PPK")]
-        df['knf_tfi_key'] = df['tfi_name'].apply(self.tfi_brand_token)
-        df['knf_norm'] = df.apply(lambda r: self.residual_name(str(r['name']), r['knf_tfi_key']), axis=1)
-        
+        if df.empty:
+            return df
+
+        df = df[~df["category"].astype(str).str.startswith("PPK")]
+        df["knf_tfi_key"] = df["tfi_name"].apply(self.tfi_brand_token)
+        df["knf_norm"] = df.apply(
+            lambda r: self.residual_name(str(r["name"]), r["knf_tfi_key"]), axis=1,
+        )
+
         logging.info(f"Deep hydration complete. {len(df)} subfunds ready.")
         return df
-
 
     def fetch_subfund_history(self, subfund_id: int) -> list:
         url = f"{KNF_API_BASE}/v1/subfunds/{subfund_id}/history?size=50&sort=validFrom,desc"
         try:
             resp = requests.get(url, headers={"Accept": "application/json"}, timeout=10)
-            if resp.status_code == 404: return []
+            if resp.status_code == 404:
+                return []
             resp.raise_for_status()
             content = resp.json().get("content", [])
             former = set()
             for entry in content:
-                if str(entry.get("validTo", "")) == "9999-12-31": continue
+                if str(entry.get("validTo", "")) == "9999-12-31":
+                    continue
                 name = entry.get("data", {}).get("name", "")
-                if name: former.add(name)
+                if name:
+                    former.add(name)
             return list(former)
         except Exception:
             return []
@@ -250,41 +311,45 @@ class KNFTools:
     # =========================================================================
 
     def _verify_price_match(self, subfund_id: int, stooq_id: int) -> bool:
-        from moj_system.data.updater import DataUpdater # Import here to avoid circular dependency
-        
-    
+        from moj_system.data.updater import DataUpdater  # Import here to avoid circular dependency
+
         try:
             # 1. KNF: Get latest valuation (could be 1 month old)
             url = f"{KNF_API_BASE}/v1/valuations"
-            resp = requests.get(url, params={"subfundId": subfund_id, "size": 1, "sort": "date,desc"}, timeout=10)
+            resp = requests.get(
+                url, params={"subfundId": subfund_id, "size": 1, "sort": "date,desc"}, timeout=10,
+            )
             resp.raise_for_status()
-            knf_data = resp.json().get('content', [])
-            
-            if not knf_data: return False
+            knf_data = resp.json().get("content", [])
+
+            if not knf_data:
+                return False
             item = knf_data[0]
-            if item.get('valuation') is None or item.get('date') is None: return False
-            
-            knf_date = pd.to_datetime(item['date']).normalize()
-            knf_nav = float(item['valuation'])
+            if item.get("valuation") is None or item.get("date") is None:
+                return False
+
+            knf_date = pd.to_datetime(item["date"]).normalize()
+            knf_nav = float(item["valuation"])
 
             # 2. STOOQ: Force extraction of candidate's history from local ZIP
             logging.info(f"    [Verification] Extracting candidate {stooq_id} from ZIP...")
             updater = DataUpdater(credentials_path=self.gdrive.credentials_path)
             success = updater.update_ticker(
-                label=f"fund_{stooq_id}", 
-                stooq_ticker=f"{stooq_id}.n", 
-                knf_id=None, # Stooq history only
-                zip_type="fund_pl", 
-                upload_to_drive=False
+                label=f"fund_{stooq_id}",
+                stooq_ticker=f"{stooq_id}.n",
+                knf_id=None,  # Stooq history only
+                zip_type="fund_pl",
+                upload_to_drive=False,
             )
-            
+
             if not success:
                 logging.warning(f"    [Rejected] Could not extract {stooq_id}.n from ZIP.")
                 return False
 
             # 3. Load the newly extracted CSV
             stooq_df = load_local_csv(f"fund_{stooq_id}", f"Stooq_{stooq_id}", mandatory=False)
-            if stooq_df is None or stooq_df.empty: return False 
+            if stooq_df is None or stooq_df.empty:
+                return False
             stooq_df.index = pd.to_datetime(stooq_df.index).tz_localize(None)
 
             # 4. DATE ALIGNMENT
@@ -293,28 +358,38 @@ class KNFTools:
             else:
                 past_dates = stooq_df.index[stooq_df.index <= knf_date]
                 if past_dates.empty:
-                    logging.warning(f"    [Rejected] Stooq history starts after KNF date ({knf_date.date()})")
+                    logging.warning(
+                        f"    [Rejected] Stooq history starts after KNF date ({knf_date.date()})",
+                    )
                     return False
-                
-                stooq_date = past_dates[-1] 
+
+                stooq_date = past_dates[-1]
                 if (knf_date - stooq_date).days > 4:
-                    logging.warning(f"    [Rejected] Gap too large (KNF: {knf_date.date()}, Stooq: {stooq_date.date()})")
+                    logging.warning(
+                        f"    [Rejected] Gap too large (KNF: {knf_date.date()}, Stooq: {stooq_date.date()})",
+                    )
                     return False
 
             # 5. COMPARE
             stooq_nav = float(stooq_df.loc[stooq_date, "Zamkniecie"])
             diff_pct = abs(knf_nav - stooq_nav) / knf_nav
             is_match = diff_pct <= PRICE_TOLERANCE
-            
+
             if is_match:
-                logging.info(f"    [+] PRICE VERIFIED! KNF: {knf_nav:.2f} | Stooq: {stooq_nav:.2f} on {stooq_date.date()} (Diff: {diff_pct*100:.2f}%)")
+                logging.info(
+                    f"    [+] PRICE VERIFIED! KNF: {knf_nav:.2f} | Stooq: {stooq_nav:.2f} on {stooq_date.date()} (Diff: {diff_pct * 100:.2f}%)",
+                )
             else:
-                logging.info(f"    [-] PRICE MISMATCH! KNF: {knf_nav:.2f} | Stooq: {stooq_nav:.2f} on {stooq_date.date()} (Diff: {diff_pct*100:.2f}%)")
-                
+                logging.info(
+                    f"    [-] PRICE MISMATCH! KNF: {knf_nav:.2f} | Stooq: {stooq_nav:.2f} on {stooq_date.date()} (Diff: {diff_pct * 100:.2f}%)",
+                )
+
             return is_match
 
         except Exception as e:
-            logging.warning(f"    [Rejected] Exception during verification {subfund_id} vs {stooq_id}: {e}")
+            logging.warning(
+                f"    [Rejected] Exception during verification {subfund_id} vs {stooq_id}: {e}",
+            )
             return False
 
     # =========================================================================
@@ -323,131 +398,178 @@ class KNFTools:
 
     def match_funds(self, knf_df: pd.DataFrame, stooq_df: pd.DataFrame) -> pd.DataFrame:
         knf_tfi_keys = set(knf_df["knf_tfi_key"].dropna().unique())
-        
+
         sorted_tokens = sorted(knf_tfi_keys - {""}, key=len, reverse=True)
+
         def detect_tfi(name: str):
             s = self.to_ascii(name.lower())
             for t in sorted_tokens:
-                if t and t in s: return t
+                if t and t in s:
+                    return t
             return ""
-            
-        stooq_df["stooq_tfi_key"] = stooq_df["stooq_name"].apply(detect_tfi)
-        stooq_df["stooq_norm"] = stooq_df.apply(lambda r: self.residual_name(r["stooq_name"], r["stooq_tfi_key"]), axis=1)
 
-        tfi_groups = {str(k): g.reset_index(drop=True) for k, g in stooq_df.groupby("stooq_tfi_key")}
+        stooq_df["stooq_tfi_key"] = stooq_df["stooq_name"].apply(detect_tfi)
+        stooq_df["stooq_norm"] = stooq_df.apply(
+            lambda r: self.residual_name(r["stooq_name"], r["stooq_tfi_key"]), axis=1,
+        )
+
+        tfi_groups = {
+            str(k): g.reset_index(drop=True) for k, g in stooq_df.groupby("stooq_tfi_key")
+        }
         results = []
 
         for _, knf_row in knf_df.iterrows():
             sfid = knf_row.get("subfundId")
             knf_norm = knf_row["knf_norm"]
             knf_tfi_key = str(knf_row.get("knf_tfi_key", ""))
-            
+
             result = {
-                "subfundId": sfid, "name": knf_row.get("name"), "tfi_name": knf_row.get("tfi_name"),
-                "category": knf_row.get("category"), "match_tier": "none", "match_score": 0,
-                "price_verified": False, "stooq_id": None, "stooq_title": None, "stooq_name": None
+                "subfundId": sfid,
+                "name": knf_row.get("name"),
+                "tfi_name": knf_row.get("tfi_name"),
+                "category": knf_row.get("category"),
+                "match_tier": "none",
+                "match_score": 0,
+                "price_verified": False,
+                "stooq_id": None,
+                "stooq_title": None,
+                "stooq_name": None,
             }
 
             if not knf_norm:
-                results.append(result); continue
+                results.append(result)
+                continue
 
             pool = tfi_groups.get(knf_tfi_key, stooq_df)
             pool_norms = pool["stooq_norm"].tolist()
 
             def attempt_match(row, tier, score):
-                logging.info(f"  Candidate: {knf_row['name'][:40]} -> {row['stooq_title']} ({tier}, score {score})")
+                logging.info(
+                    f"  Candidate: {knf_row['name'][:40]} -> {row['stooq_title']} ({tier}, score {score})",
+                )
                 if self._verify_price_match(sfid, row["stooq_id"]):
-                    result.update({
-                        "match_tier": tier, "match_score": score, "price_verified": True,
-                        "stooq_id": row["stooq_id"], "stooq_title": row["stooq_title"], "stooq_name": row["stooq_name"]
-                    })
+                    result.update(
+                        {
+                            "match_tier": tier,
+                            "match_score": score,
+                            "price_verified": True,
+                            "stooq_id": row["stooq_id"],
+                            "stooq_title": row["stooq_title"],
+                            "stooq_name": row["stooq_name"],
+                        },
+                    )
                     return True
                 return False
 
             # Pass 1: Exact
             exact = pool[pool["stooq_norm"] == knf_norm]
             if not exact.empty and attempt_match(exact.iloc[0], "exact", 100):
-                results.append(result); continue
+                results.append(result)
+                continue
 
             # Pass 2: Fuzzy
-            best_match = process.extractOne(knf_norm, pool_norms, scorer=fuzz.token_sort_ratio, score_cutoff=FUZZY_THRESHOLD)
-            if best_match and attempt_match(pool.iloc[best_match[2]], "fuzzy", round(best_match[1], 1)):
-                results.append(result); continue
+            best_match = process.extractOne(
+                knf_norm, pool_norms, scorer=fuzz.token_sort_ratio, score_cutoff=FUZZY_THRESHOLD,
+            )
+            if best_match and attempt_match(
+                pool.iloc[best_match[2]], "fuzzy", round(best_match[1], 1),
+            ):
+                results.append(result)
+                continue
 
             # Pass 3: Historical Names
             former_names = self.fetch_subfund_history(int(sfid))
             matched_history = False
             for fname in former_names:
                 fnorm = self.residual_name(fname, knf_tfi_key)
-                if not fnorm: continue
-                
+                if not fnorm:
+                    continue
+
                 exact_h = pool[pool["stooq_norm"] == fnorm]
                 if not exact_h.empty and attempt_match(exact_h.iloc[0], "historical_exact", 100):
-                    matched_history = True; break
-                    
-                best_h = process.extractOne(fnorm, pool_norms, scorer=fuzz.token_sort_ratio, score_cutoff=FUZZY_THRESHOLD)
-                if best_h and attempt_match(pool.iloc[best_h[2]], "historical_fuzzy", round(best_h[1], 1)):
-                    matched_history = True; break
-            
+                    matched_history = True
+                    break
+
+                best_h = process.extractOne(
+                    fnorm, pool_norms, scorer=fuzz.token_sort_ratio, score_cutoff=FUZZY_THRESHOLD,
+                )
+                if best_h and attempt_match(
+                    pool.iloc[best_h[2]], "historical_fuzzy", round(best_h[1], 1),
+                ):
+                    matched_history = True
+                    break
+
             if matched_history:
-                results.append(result); continue
+                results.append(result)
+                continue
 
             results.append(result)
             time.sleep(0.1)
 
         return pd.DataFrame(results)
 
-    def run_update_pipeline(self, confirmed_file="knf_stooq_confirmed.csv", use_tfi_scope: bool = True):
+    def run_update_pipeline(
+        self, confirmed_file="knf_stooq_confirmed.csv", use_tfi_scope: bool = True,
+    ):
         """Full pipeline: Load confirmed -> Fetch KNF -> Load Stooq -> Match -> Save."""
         if not self.root_folder:
             logging.error("GDRIVE_FOLDER_ID not set.")
             return
-            
+
         df_confirmed = self.gdrive.download_csv(self.root_folder, confirmed_file, sep=",")
-        confirmed_ids = set(pd.to_numeric(df_confirmed['subfundId'], errors='coerce').dropna().tolist()) if df_confirmed is not None else set()
-        
+        confirmed_ids = (
+            set(pd.to_numeric(df_confirmed["subfundId"], errors="coerce").dropna().tolist())
+            if df_confirmed is not None
+            else set()
+        )
+
         # --- Przekazujemy parametr do fetch_knf_subfunds ---
         knf_df = self.fetch_knf_subfunds(confirmed_ids, use_tfi_scope=use_tfi_scope)
-        
+
         if knf_df.empty:
             logging.info("No new subfunds to match.")
             return
-        
+
         # Zapisujemy summary wszystkich pobranych funduszy (jeśli use_tfi_scope=False to wyślemy GIGANTYCZNY słownik)
         out_dir = Path("outputs")
         out_dir.mkdir(exist_ok=True)
         summary_path = out_dir / "knf_summary.csv"
         knf_df.to_csv(summary_path, index=False, sep=";")
-        self.gdrive.upload_csv(self.root_folder, str(summary_path))    
-        
-        stooq_df = self.load_stooq_txt_files()
-        if stooq_df.empty: return
+        self.gdrive.upload_csv(self.root_folder, str(summary_path))
 
-        logging.info(f"\n--- Starting Ironclad Matching ({len(knf_df)} KNF vs {len(stooq_df)} Stooq) ---")
+        stooq_df = self.load_stooq_txt_files()
+        if stooq_df.empty:
+            return
+
+        logging.info(
+            f"\n--- Starting Ironclad Matching ({len(knf_df)} KNF vs {len(stooq_df)} Stooq) ---",
+        )
         match_df = self.match_funds(knf_df, stooq_df)
 
         matched = match_df[match_df["match_tier"] != "none"]
         unmatched = match_df[match_df["match_tier"] == "none"]
-        
-        logging.info(f"\nMatch Results: {len(matched)} successful (Price Verified), {len(unmatched)} failed.")
-        
-        
-        
+
+        logging.info(
+            f"\nMatch Results: {len(matched)} successful (Price Verified), {len(unmatched)} failed.",
+        )
+
         match_path = out_dir / "knf_stooq_matches.csv"
         unmatched_path = out_dir / "knf_stooq_unmatched.csv"
         review_path = out_dir / "knf_stooq_review.csv"
-        
+
         match_df.to_csv(match_path, index=False, sep=";")
         unmatched.to_csv(unmatched_path, index=False, sep=";")
-        
-        review_mask = (match_df["match_tier"].isin(["fuzzy", "historical_fuzzy"])) & (match_df["match_score"] < 90)
+
+        review_mask = (match_df["match_tier"].isin(["fuzzy", "historical_fuzzy"])) & (
+            match_df["match_score"] < 90
+        )
         match_df[review_mask].sort_values("match_score").to_csv(review_path, index=False, sep=";")
-        
+
         self.gdrive.upload_csv(self.root_folder, str(match_path))
         self.gdrive.upload_csv(self.root_folder, str(unmatched_path))
         self.gdrive.upload_csv(self.root_folder, str(review_path))
         logging.info("Matches uploaded to Google Drive.")
-        
+
     def verify_confirmed_matches(self, confirmed_file="knf_stooq_confirmed.csv"):
         """
         Pobiera potwierdzoną listę funduszy z GDrive i tylko dla nich uruchamia weryfikację cen.
@@ -459,49 +581,51 @@ class KNFTools:
 
         logging.info(f"Downloading confirmed matches from {confirmed_file}...")
         df_confirmed = self.gdrive.download_csv(self.root_folder, confirmed_file, sep=",")
-        
+
         if df_confirmed is None or df_confirmed.empty:
             logging.error("Confirmed list is empty or could not be downloaded.")
             return
 
         # Zachowujemy tylko te, które mają ID Stooq
-        df_to_verify = df_confirmed.dropna(subset=['stooq_id']).copy()
-        
+        df_to_verify = df_confirmed.dropna(subset=["stooq_id"]).copy()
+
         if df_to_verify.empty:
             logging.info("No valid stooq_id entries found in the confirmed list.")
             return
 
         total_funds = len(df_to_verify)
-        logging.info(f"\n--- Starting Fast Price Verification for {total_funds} confirmed funds ---")
+        logging.info(
+            f"\n--- Starting Fast Price Verification for {total_funds} confirmed funds ---",
+        )
 
         success_count = 0
         failed_funds = []
 
         for index, row in df_to_verify.iterrows():
-            subfund_id = int(float(row['subfundId']))
-            stooq_id = int(float(row['stooq_id']))
-            fund_name = row.get('name', f"Subfund {subfund_id}")
-            
+            subfund_id = int(float(row["subfundId"]))
+            stooq_id = int(float(row["stooq_id"]))
+            fund_name = row.get("name", f"Subfund {subfund_id}")
+
             logging.info(f"Verifying: {fund_name} (KNF: {subfund_id}, Stooq: {stooq_id})")
-            
+
             is_match = self._verify_price_match(subfund_id, stooq_id)
-            
+
             if is_match:
                 success_count += 1
             else:
                 failed_funds.append(f"KNF: {subfund_id} | Stooq: {stooq_id} | Name: {fund_name}")
-                
-            time.sleep(0.1) # Drobne opóźnienie dla stabilności
-            
-        logging.info("\n" + "="*50)
+
+            time.sleep(0.1)  # Drobne opóźnienie dla stabilności
+
+        logging.info("\n" + "=" * 50)
         logging.info("VERIFICATION SUMMARY")
-        logging.info("="*50)
+        logging.info("=" * 50)
         logging.info(f"Total checked: {total_funds}")
         logging.info(f"Passed:        {success_count}")
         logging.info(f"Failed:        {total_funds - success_count}")
-        
+
         if failed_funds:
             logging.warning("Failed funds:")
             for f in failed_funds:
                 logging.warning(f"  - {f}")
-        logging.info("="*50)
+        logging.info("=" * 50)

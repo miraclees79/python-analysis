@@ -24,13 +24,16 @@ import logging
 import os
 import random
 import time
-import pandas as pd
+
 import numpy as np
-import requests
-import sys
+import pandas as pd
 
 # Import funkcji, od których te moduły zależą
-from moj_system.core.strategy_engine import load_csv, download_csv_old # (Zakładając, że download_csv_old jest chwilowo potrzebny)
+from moj_system.core.strategy_engine import (  # (Zakładając, że download_csv_old jest chwilowo potrzebny)
+    download_csv_old,
+    load_csv,
+)
+
 
 def download_fund_navs(fund_codes: dict, tmp_dir: str) -> dict:
     """
@@ -42,7 +45,7 @@ def download_fund_navs(fund_codes: dict, tmp_dir: str) -> dict:
     for code, name in fund_codes.items():
         url = BASE_URL.format(code=code)
         filepath = os.path.join(tmp_dir, f"fund_{code}_{name}.csv")
-        
+
         # UWAGA: Ta funkcja zależy od download_csv_old. Jeśli usuniesz ją z strategy_engine,
         # musisz przenieść ją tutaj lub zastąpić nowym mechanizmem pobierania.
         # Na razie zostawiamy, zakładając tymczasową zależność.
@@ -53,13 +56,16 @@ def download_fund_navs(fund_codes: dict, tmp_dir: str) -> dict:
             logging.info(f"Fund {name} ({code}) — downloaded to {filepath}.")
         else:
             logging.warning(f"Fund {name} ({code}) — download failed, will be excluded.")
-        
+
         time.sleep(random.uniform(0.3, 1))
-        
+
     logging.info(f"download_fund_navs: {len(fund_files)} of {len(fund_codes)} funds downloaded.")
     return fund_files
 
-def build_funds_df(fund_files: dict, price_col: str = "Zamkniecie", min_history_years: int = 10) -> pd.DataFrame:
+
+def build_funds_df(
+    fund_files: dict, price_col: str = "Zamkniecie", min_history_years: int = 10,
+) -> pd.DataFrame:
     """
     Build a combined fund NAV panel from a list of CSV files.
     """
@@ -95,6 +101,7 @@ def build_funds_df(fund_files: dict, price_col: str = "Zamkniecie", min_history_
     if funds_df.empty:
         logging.error("build_funds_df: panel is empty after cleaning.")
     return funds_df
+
 
 def compute_fund_breadth_signal(
     funds_df: pd.DataFrame,

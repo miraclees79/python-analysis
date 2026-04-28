@@ -5,23 +5,15 @@ Created on Tue Apr 21 08:05:08 2026
 @author: adamg
 """
 
+import logging
 import os
 import sys
-import logging
-
 import tempfile
-import pandas as pd
-import numpy as np
-from datetime import datetime as dt
-
-
 
 # --- Path Setup ---
 from moj_system.config import OUTPUT_DIR
-
-from moj_system.data.updater import DataUpdater
 from moj_system.data.gdrive import GDriveClient
-
+from moj_system.data.updater import DataUpdater
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 log_file = OUTPUT_DIR / "fund_refresh.log"
@@ -29,7 +21,7 @@ log_file = OUTPUT_DIR / "fund_refresh.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler(log_file, mode='w'), logging.StreamHandler(sys.stdout)]
+    handlers=[logging.FileHandler(log_file, mode="w"), logging.StreamHandler(sys.stdout)],
 )
 
 creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")

@@ -31,34 +31,36 @@ Public API:
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import os
 import tempfile
-import datetime as dt
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 
 from moj_system.reporting.output_base import (
-    atomic_write, atomic_write_bytes, load_existing_log,
-    append_log_row, fetch_file_from_drive,
+    append_log_row,
+    atomic_write,
+    atomic_write_bytes,
+    fetch_file_from_drive,
+    load_existing_log,
 )
-
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 
-
 # ---------------------------------------------------------------------------
 # Signal extraction
 # ---------------------------------------------------------------------------
+
 
 def _get_signal_from_series(sig_oos: pd.Series | None) -> str:
     """Return 'IN' if the last OOS signal value is 1, else 'OUT'."""
@@ -78,11 +80,12 @@ def _get_current_weights(weights_series: pd.Series | None) -> dict:
 # Action determination
 # ---------------------------------------------------------------------------
 
+
 def _determine_action(
-    prev_log:       pd.DataFrame | None,
-    signals_today:  dict,
-    realloc_today:  bool,
-    asset_keys:     list,
+    prev_log: pd.DataFrame | None,
+    signals_today: dict,
+    realloc_today: bool,
+    asset_keys: list,
 ) -> str:
     """
     Determine today's action string.
@@ -119,50 +122,46 @@ def _determine_action(
 # Snapshot builder
 # ---------------------------------------------------------------------------
 
+
 def _build_snapshot(
-    portfolio_equity:  pd.Series,
+    portfolio_equity: pd.Series,
     portfolio_metrics: dict,
-    weights_series:    pd.Series,
-    reallocation_log:  list,
-    signals_oos_dict:  dict,
-    asset_keys:        list,
-    portfolio_mode:    str,
-    fx_hedged:         bool,
-    run_date:          dt.date,
+    weights_series: pd.Series,
+    reallocation_log: list,
+    signals_oos_dict: dict,
+    asset_keys: list,
+    portfolio_mode: str,
+    fx_hedged: bool,
+    run_date: dt.date,
 ) -> dict:
     """Build the snapshot dict for JSON serialisation."""
     current_weights = _get_current_weights(weights_series)
-    signals_today   = {
-        k: _get_signal_from_series(signals_oos_dict.get(k))
-        for k in asset_keys
-    }
+    signals_today = {k: _get_signal_from_series(signals_oos_dict.get(k)) for k in asset_keys}
     realloc_today = any(
-        pd.Timestamp(r["Date"]).date() == run_date
-        for r in reallocation_log
-        if "Date" in r
+        pd.Timestamp(r["Date"]).date() == run_date for r in reallocation_log if "Date" in r
     )
 
     return {
-        "run_date":         str(run_date),
-        "portfolio_mode":   portfolio_mode,
-        "fx_hedged":        fx_hedged,
-        "signals":          signals_today,
-        "weights":          current_weights,
-        "realloc_today":    realloc_today,
-        "portfolio_level":  float(portfolio_equity.iloc[-1])
-                            if portfolio_equity is not None and not portfolio_equity.empty
-                            else None,
-        "portfolio_cagr":   portfolio_metrics.get("CAGR"),
+        "run_date": str(run_date),
+        "portfolio_mode": portfolio_mode,
+        "fx_hedged": fx_hedged,
+        "signals": signals_today,
+        "weights": current_weights,
+        "realloc_today": realloc_today,
+        "portfolio_level": float(portfolio_equity.iloc[-1])
+        if portfolio_equity is not None and not portfolio_equity.empty
+        else None,
+        "portfolio_cagr": portfolio_metrics.get("CAGR"),
         "portfolio_sharpe": portfolio_metrics.get("Sharpe"),
-        "portfolio_maxdd":  portfolio_metrics.get("MaxDD"),
+        "portfolio_maxdd": portfolio_metrics.get("MaxDD"),
         "portfolio_calmar": portfolio_metrics.get("CalMAR"),
-        "oos_start":        str(portfolio_equity.index.min().date())
-                            if portfolio_equity is not None and not portfolio_equity.empty
-                            else None,
-        "oos_end":          str(portfolio_equity.index.max().date())
-                            if portfolio_equity is not None and not portfolio_equity.empty
-                            else None,
-        "n_reallocations":  len(reallocation_log),
+        "oos_start": str(portfolio_equity.index.min().date())
+        if portfolio_equity is not None and not portfolio_equity.empty
+        else None,
+        "oos_end": str(portfolio_equity.index.max().date())
+        if portfolio_equity is not None and not portfolio_equity.empty
+        else None,
+        "n_reallocations": len(reallocation_log),
     }
 
 
@@ -170,12 +169,12 @@ def _build_snapshot(
 # Status text
 # ---------------------------------------------------------------------------
 
+
 def _build_status_text(snap: dict, action: str, asset_keys: list) -> str:
     lines = [
         "=" * 60,
         f"GLOBAL EQUITY PORTFOLIO  —  {snap['run_date']}",
-        f"Mode: {snap['portfolio_mode']}  |  "
-        f"FX: {'hedged' if snap['fx_hedged'] else 'unhedged'}",
+        f"Mode: {snap['portfolio_mode']}  |  FX: {'hedged' if snap['fx_hedged'] else 'unhedged'}",
         "=" * 60,
         f"ACTION: {action}",
         "-" * 60,
@@ -193,22 +192,22 @@ def _build_status_text(snap: dict, action: str, asset_keys: list) -> str:
     wt_mmf = w.get("mmf", 1.0 - sum(w.get(k, 0.0) for k in asset_keys))
     lines.append(f"  {'MMF':<14} {wt_mmf:.0%}")
     lines.append("-" * 60)
-    cagr   = snap.get("portfolio_cagr")
+    cagr = snap.get("portfolio_cagr")
     sharpe = snap.get("portfolio_sharpe")
-    maxdd  = snap.get("portfolio_maxdd")
+    maxdd = snap.get("portfolio_maxdd")
     calmar = snap.get("portfolio_calmar")
     lines.append("OOS PORTFOLIO METRICS:")
     lines.append(
-        f"  CAGR   {cagr*100:.2f}%  |  "
+        f"  CAGR   {cagr * 100:.2f}%  |  "
         f"Sharpe {sharpe:.2f}  |  "
-        f"MaxDD {maxdd*100:.2f}%  |  "
+        f"MaxDD {maxdd * 100:.2f}%  |  "
         f"CalMAR {calmar:.2f}"
         if all(v is not None for v in [cagr, sharpe, maxdd, calmar])
-        else "  N/A"
+        else "  N/A",
     )
     lines.append(
         f"  OOS: {snap.get('oos_start')} to {snap.get('oos_end')}  "
-        f"({snap.get('n_reallocations', 0)} reallocations)"
+        f"({snap.get('n_reallocations', 0)} reallocations)",
     )
     lines.append("=" * 60)
     return "\n".join(lines)
@@ -218,11 +217,12 @@ def _build_status_text(snap: dict, action: str, asset_keys: list) -> str:
 # Log row
 # ---------------------------------------------------------------------------
 
+
 def _build_log_row(snap: dict, action: str, asset_keys: list) -> dict:
     row = {
-        "Date":   snap["run_date"],
+        "Date": snap["run_date"],
         "Action": action,
-        "Mode":   snap["portfolio_mode"],
+        "Mode": snap["portfolio_mode"],
     }
     for k in asset_keys:
         row[f"signal_{k}"] = snap["signals"].get(k, "OUT")
@@ -231,9 +231,9 @@ def _build_log_row(snap: dict, action: str, asset_keys: list) -> dict:
         "mmf",
         max(0.0, 1.0 - sum(snap["weights"].get(k, 0.0) for k in asset_keys)),
     )
-    row["portfolio_cagr"]   = snap.get("portfolio_cagr")
+    row["portfolio_cagr"] = snap.get("portfolio_cagr")
     row["portfolio_sharpe"] = snap.get("portfolio_sharpe")
-    row["portfolio_maxdd"]  = snap.get("portfolio_maxdd")
+    row["portfolio_maxdd"] = snap.get("portfolio_maxdd")
     return row
 
 
@@ -241,24 +241,25 @@ def _build_log_row(snap: dict, action: str, asset_keys: list) -> dict:
 # Chart
 # ---------------------------------------------------------------------------
 
+
 def _build_chart(
-    portfolio_equity:  pd.Series,
-    signals_oos_dict:  dict,
-    reallocation_log:  list,
-    returns_dict:      dict,
-    chart_path:        Path,
-    action:            str,
-    asset_keys:        list,
-    run_date:          dt.date,
-    portfolio_mode:    str,
-    fx_hedged:         bool,
+    portfolio_equity: pd.Series,
+    signals_oos_dict: dict,
+    reallocation_log: list,
+    returns_dict: dict,
+    chart_path: Path,
+    action: str,
+    asset_keys: list,
+    run_date: dt.date,
+    portfolio_mode: str,
+    fx_hedged: bool,
 ) -> None:
     if portfolio_equity is None or portfolio_equity.empty:
         logging.warning("_build_chart: portfolio_equity is empty, skipping.")
         return
 
     oos_start = portfolio_equity.index.min()
-    oos_end   = portfolio_equity.index.max()
+    oos_end = portfolio_equity.index.max()
 
     fig, axes = plt.subplots(2, 1, figsize=(14, 9))
     fig.suptitle(
@@ -273,8 +274,14 @@ def _build_chart(
     ax1.set_yscale("log")
 
     port_norm = portfolio_equity / portfolio_equity.iloc[0] * 100
-    ax1.plot(port_norm.index, port_norm.values, color="black", linewidth=2.0,
-             label="Portfolio", zorder=10)
+    ax1.plot(
+        port_norm.index,
+        port_norm.values,
+        color="black",
+        linewidth=2.0,
+        label="Portfolio",
+        zorder=10,
+    )
 
     colors = ["C0", "C1", "C2", "C3", "C4"]
     for i, (key, ret) in enumerate(returns_dict.items()):
@@ -282,8 +289,9 @@ def _build_chart(
         if ret_oos.empty:
             continue
         bh = (1 + ret_oos).cumprod() * 100
-        ax1.plot(bh.index, bh.values, color=colors[i % len(colors)],
-                 linewidth=0.9, alpha=0.65, label=key)
+        ax1.plot(
+            bh.index, bh.values, color=colors[i % len(colors)], linewidth=0.9, alpha=0.65, label=key,
+        )
 
     ax1.legend(fontsize=8, ncol=3, loc="upper left")
     ax1.set_ylabel("Cumulative return (log, base=100)")
@@ -298,8 +306,9 @@ def _build_chart(
         sig = signals_oos_dict.get(key)
         if sig is None or sig.empty:
             continue
-        ax2.fill_between(sig.index, y_offset, y_offset + sig.values * 0.8,
-                         alpha=0.55, step="post", label=key)
+        ax2.fill_between(
+            sig.index, y_offset, y_offset + sig.values * 0.8, alpha=0.55, step="post", label=key,
+        )
         ytick_pos.append(y_offset + 0.4)
         ytick_labels.append(key)
         y_offset += 1.0
@@ -330,23 +339,24 @@ def _build_chart(
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def build_daily_outputs(
-    wf_results_dict:   dict,
-    portfolio_equity:  pd.Series,
+    wf_results_dict: dict,
+    portfolio_equity: pd.Series,
     portfolio_metrics: dict,
-    weights_series:    pd.Series,
-    reallocation_log:  list,
-    bh_metrics_dict:   dict,
-    returns_dict:      dict,
-    signals_oos_dict:  dict,
-    asset_keys:        list,
-    portfolio_mode:    str,
-    fx_hedged:         bool,
-    output_dir:        str           = "outputs",
-    asset_name:        str           = "GLOBAL_EQUITY",
-    run_date:          dt.date | None = None,
-    gdrive_folder_id:  str | None    = None,
-    gdrive_credentials: str | None   = None,
+    weights_series: pd.Series,
+    reallocation_log: list,
+    bh_metrics_dict: dict,
+    returns_dict: dict,
+    signals_oos_dict: dict,
+    asset_keys: list,
+    portfolio_mode: str,
+    fx_hedged: bool,
+    output_dir: str = "outputs",
+    asset_name: str = "GLOBAL_EQUITY",
+    run_date: dt.date | None = None,
+    gdrive_folder_id: str | None = None,
+    gdrive_credentials: str | None = None,
 ) -> dict:
     """
     Build and write all daily output artefacts for the global equity strategy.
@@ -377,15 +387,15 @@ def build_daily_outputs(
     if run_date is None:
         run_date = dt.date.today()
 
-    out_dir       = Path(output_dir)
+    out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # [ZMIANA] Dynamiczne nazwy
     prefix = asset_name.lower()
-    logfile_name  = f"{prefix}_signal_log.csv"
-    log_path      = out_dir / logfile_name
-    status_path   = out_dir / f"{prefix}_signal_status.txt"
-    chart_path    = out_dir / f"{prefix}_equity_chart.png"
+    logfile_name = f"{prefix}_signal_log.csv"
+    log_path = out_dir / logfile_name
+    status_path = out_dir / f"{prefix}_signal_status.txt"
+    chart_path = out_dir / f"{prefix}_equity_chart.png"
     snapshot_path = out_dir / f"{prefix}_signal_snapshot.json"
 
     if gdrive_folder_id and gdrive_credentials:
@@ -394,23 +404,23 @@ def build_daily_outputs(
         logging.info("global_equity_daily_output: skipping log pre-fetch.")
 
     snap = _build_snapshot(
-        portfolio_equity  = portfolio_equity,
-        portfolio_metrics = portfolio_metrics,
-        weights_series    = weights_series,
-        reallocation_log  = reallocation_log,
-        signals_oos_dict  = signals_oos_dict,
-        asset_keys        = asset_keys,
-        portfolio_mode    = portfolio_mode,
-        fx_hedged         = fx_hedged,
-        run_date          = run_date,
+        portfolio_equity=portfolio_equity,
+        portfolio_metrics=portfolio_metrics,
+        weights_series=weights_series,
+        reallocation_log=reallocation_log,
+        signals_oos_dict=signals_oos_dict,
+        asset_keys=asset_keys,
+        portfolio_mode=portfolio_mode,
+        fx_hedged=fx_hedged,
+        run_date=run_date,
     )
 
     prev_log = load_existing_log(log_path)
-    action   = _determine_action(
-        prev_log      = prev_log,
-        signals_today = snap["signals"],
-        realloc_today = snap.get("realloc_today", False),
-        asset_keys    = asset_keys,
+    action = _determine_action(
+        prev_log=prev_log,
+        signals_today=snap["signals"],
+        realloc_today=snap.get("realloc_today", False),
+        asset_keys=asset_keys,
     )
     snap["action"] = action
 
@@ -428,32 +438,33 @@ def build_daily_outputs(
     logging.info("build_daily_outputs: snapshot written to %s", snapshot_path)
 
     _build_chart(
-        portfolio_equity = portfolio_equity,
-        signals_oos_dict = signals_oos_dict,
-        reallocation_log = reallocation_log,
-        returns_dict     = returns_dict,
-        chart_path       = chart_path,
-        action           = action,
-        asset_keys       = asset_keys,
-        run_date         = run_date,
-        portfolio_mode   = portfolio_mode,
-        fx_hedged        = fx_hedged,
+        portfolio_equity=portfolio_equity,
+        signals_oos_dict=signals_oos_dict,
+        reallocation_log=reallocation_log,
+        returns_dict=returns_dict,
+        chart_path=chart_path,
+        action=action,
+        asset_keys=asset_keys,
+        run_date=run_date,
+        portfolio_mode=portfolio_mode,
+        fx_hedged=fx_hedged,
     )
     # --- NOWA LOGIKA: WYSYŁANIE NA GOOGLE DRIVE ---
     if gdrive_folder_id and gdrive_credentials:
         logging.info("Uploading artefacts to Google Drive...")
         try:
             from moj_system.data.gdrive import GDriveClient
+
             client = GDriveClient(credentials_path=gdrive_credentials)
-            
+
             if client.service:
                 # Wysyłamy wszystkie 4 wygenerowane pliki
                 files_to_upload = [log_path, status_path, chart_path, snapshot_path]
                 for file_path in files_to_upload:
                     if file_path.exists():
                         client.upload_csv(gdrive_folder_id, str(file_path), file_path.name)
-                        # Uwaga: metoda nazywa się 'upload_csv', ale w kodzie GDriveClient używa 
-                        # ogólnego mimetypu 'text/csv' lub go ignoruje, więc prześle poprawnie też .txt i .png. 
+                        # Uwaga: metoda nazywa się 'upload_csv', ale w kodzie GDriveClient używa
+                        # ogólnego mimetypu 'text/csv' lub go ignoruje, więc prześle poprawnie też .txt i .png.
                         # Dla pewności, można w przyszłości zaktualizować metodę w GDriveClient.
                 logging.info("Successfully uploaded all daily artefacts to Google Drive.")
             else:
@@ -464,12 +475,12 @@ def build_daily_outputs(
         logging.info("No GDrive credentials provided. Artefacts saved locally only.")
     # ---------------------------------------------
     return {
-        "action":         action,
-        "status_text":    status_text,
-        "log_row":        log_row,
-        "chart_path":     str(chart_path),
-        "snapshot_path":  str(snapshot_path),
-        "log_path":       str(log_path),
-        "signals":        snap["signals"],
-        "weights":        snap.get("weights", {}),
+        "action": action,
+        "status_text": status_text,
+        "log_row": log_row,
+        "chart_path": str(chart_path),
+        "snapshot_path": str(snapshot_path),
+        "log_path": str(log_path),
+        "signals": snap["signals"],
+        "weights": snap.get("weights", {}),
     }
