@@ -10,8 +10,8 @@ select = [
     "W",    # pycodestyle (ostrzeżenia)
     "F",    # Pyflakes (nieużywane zmienne/importy)
     "I",    # isort (sortowanie importów)
-    "N",    # flake8-naming (konwencje nazw)
-    "ANN",  # flake8-annotations (wymóg typowania - Twoja zasada!)
+    "N",    # pep8-naming (konwencje nazw)
+    "ANN",  # flake8-annotations (wymóg typowania)
     "B",    # flake8-bugbear (najlepsze praktyki)
     "COM",  # flake8-commas (wymóg przecinków - wymusza formatowanie linia po linii)
     "ARG",  # flake8-unused-arguments (nieużywane argumenty)
@@ -20,29 +20,26 @@ select = [
 ]
 
 ignore = [
-    "ANN101", # Ignoruj brak typu dla 'self' w metodach klasy
-    "ANN102", # Ignoruj brak typu dla 'cls' w metodach klasy
+    "ANN101", # Ignoruj brak typu dla 'self' (starsze wersje Ruff)
+    "ANN102", # Ignoruj brak typu dla 'cls'
+    "COM812", # Czasami koliduje z formaterem, ale zostawiamy jeśli chcesz wymuszać przecinki
 ]
 
 [tool.ruff.lint.flake8-annotations]
-# Wymuszaj typowanie dla wszystkich funkcji (publicznych i prywatnych)
+# Wymuszaj typowanie dla wszystkich funkcji
 allow-star-arg-any = false
 suppress-none-returning = false
 
-[tool.ruff.lint.flake8-naming]
-# Twoja zasada: Zakaz używania "_" jako nazwy zmiennej
-# Wymuszamy, aby każda zmienna miała co najmniej 2 znaki lub nie była samym podkreślnikiem
+[tool.ruff.lint.pep8-naming]
+# Poprawione z flake8-naming na pep8-naming
 ignore-names = []
 
 [tool.ruff.lint.pyflakes]
-# Twoja zasada: Zakaz ignorowania nieużywanych zmiennych przez "_"
-# Ruff domyślnie ignoruje zmienne o nazwie "_". Poniższy regex sprawia, 
-# że Ruff będzie zgłaszał błąd nawet dla samej podkreślnika (F841).
+# Zakaz używania "_" jako nazwy zmiennej - Ruff zgłosi F841 przy przypisaniu do "_"
 extend-variable-rgx = "^$" 
 
 [tool.ruff.format]
-# Ustawienia formatera - to one wymuszą wygląd linia po linii
 quote-style = "double"
 indent-style = "space"
-# Wymuszaj łamanie linii przy wielu argumentach (jeśli jest przecinek na końcu)
+# To ustawienie w połączeniu z przecinkiem na końcu wymusza formatowanie linia po linii
 skip-magic-trailing-comma = false
