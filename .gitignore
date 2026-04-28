@@ -57,3 +57,4 @@ moj_system_do_przegladu.txt
 *.xlsx
 /analiza wynikow
 moj_system/run_batch_validation.py
+top50ruff.py
