@@ -192,10 +192,6 @@ def _determine_action(
 # Snapshot builder
 # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Snapshot builder
-# ---------------------------------------------------------------------------
-
 def _build_snapshot(
     wf_equity_eq:     pd.Series,
     wf_trades_eq:     pd.DataFrame,
@@ -212,15 +208,13 @@ def _build_snapshot(
     WIG:              pd.DataFrame,
     TBSP:             pd.DataFrame,
     run_date:         dt.date,
-) -> dict:
+    ) -> dict:
     snap = {"run_date": run_date.isoformat()}
 
     # --- EQUITY (WIG) STATE ---
     par_eq = _get_active_window_params(wf_results=wf_results_eq)
     snap["signal_equity"] = _get_signal_from_trades(wf_trades=wf_trades_eq)
     snap["params_equity"] = par_eq
-    
-    # Obliczamy oba filtry dla WIG, aby Dashboard mógł pokazać kontekst
     snap["ma_state_equity"] = _compute_ma_filter_state(df=WIG, fast=par_eq.get("fast"), slow=par_eq.get("slow"))
     snap["mom_state_equity"] = _compute_mom_filter_state(df=WIG, lookback=par_eq.get("mom_lookback"))
 
@@ -232,14 +226,8 @@ def _build_snapshot(
         in_trade = prices_eq.loc[prices_eq.index >= pd.Timestamp(pos_eq["EntryDate"])]
         peak_px = float(in_trade.max())
         
-        stop_val = par_eq["stop_param"]
-        # Jeśli ATR, stop liczymy inaczej (uproszczone dla raportu)
-        if par_eq["use_atr_stop"]:
-             # Pobieramy ostatnią wartość ATR z silnika (tutaj uproszczone do % z peaku dla spójności wizualnej)
-             trail_stop = round(number=peak_px * (1 - stop_val), ndigits=2)
-        else:
-             trail_stop = round(number=peak_px * (1 - stop_val), ndigits=2)
-             
+        # Obliczenia stopów
+        trail_stop = round(number=peak_px * (1 - par_eq["stop_param"]), ndigits=2)
         abs_stop = round(number=entry_px * (1 - par_eq["stop_loss"]), ndigits=2)
         binding = max(trail_stop, abs_stop)
         
@@ -250,6 +238,8 @@ def _build_snapshot(
             "days_in_trade":  int(pos_eq.get("Days", 0)),
             "unrealised_pct": round(number=float(pos_eq["Return"]) * 100, ndigits=2),
             "peak_price":     round(number=peak_px, ndigits=2),
+            "trail_stop":     trail_stop, # DODANO
+            "abs_stop":       abs_stop,   # DODANO
             "binding_stop":   binding,
             "stop_gap_pct":   round(number=(binding - today_px) / today_px * 100, ndigits=2),
         }
@@ -261,7 +251,6 @@ def _build_snapshot(
     snap["signal_bond"] = _get_signal_from_trades(wf_trades=wf_trades_bd)
     snap["params_bond"] = par_bd
     snap["ma_state_bond"] = _compute_ma_filter_state(df=TBSP, fast=par_bd.get("fast"), slow=par_bd.get("slow"))
-    # Obligacje zazwyczaj nie używają MOM, ale liczymy dla struktury
     snap["mom_state_bond"] = _compute_mom_filter_state(df=TBSP, lookback=par_bd.get("mom_lookback"))
 
     pos_bd = _get_open_position(wf_trades=wf_trades_bd)
@@ -282,6 +271,9 @@ def _build_snapshot(
             "today_price":    round(number=today_px_bd, ndigits=2),
             "days_in_trade":  int(pos_bd.get("Days", 0)),
             "unrealised_pct": round(number=float(pos_bd["Return"]) * 100, ndigits=2),
+            "trail_stop":     trail_stop_bd, # DODANO
+            "abs_stop":       abs_stop_bd,   # DODANO
+            "peak_price":     round(number=peak_px_bd, ndigits=2),
             "binding_stop":   binding_bd,
             "stop_gap_pct":   round(number=(binding_bd - today_px_bd) / today_px_bd * 100, ndigits=2),
         }
@@ -300,9 +292,13 @@ def _build_snapshot(
         last_r = reallocation_log[-1]
         snap["last_realloc"] = {
             "date": str(pd.Timestamp(last_r["Date"]).date()),
-            "equity_after": round(number=float(last_r["equity_after"]), ndigits=2),
-            "bond_after":   round(number=float(last_r["bond_after"]), ndigits=2),
-            "reason":       last_r.get("reason", "")
+            "equity_before": round(number=float(last_r["equity_before"]), ndigits=2),
+            "bond_before":   round(number=float(last_r["bond_before"]),   ndigits=2), # POPRAWIONE
+            "mmf_before":    round(number=float(last_r["mmf_before"]),    ndigits=2), # POPRAWIONE
+            "equity_after":  round(number=float(last_r["equity_after"]),  ndigits=2), # POPRAWIONE
+            "bond_after":    round(number=float(last_r["bond_after"]),    ndigits=2), # POPRAWIONE
+            "mmf_after":     round(number=float(last_r["mmf_after"]),     ndigits=2), # POPRAWIONE
+            "reason":        last_r.get("reason", "")
         }
     
     return snap
@@ -311,16 +307,12 @@ def _build_snapshot(
 # ---------------------------------------------------------------------------
 # Status text
 # ---------------------------------------------------------------------------
-
 def _build_status_text(snap: dict, action: str) -> str:
     sep  = "=" * 65
     sep2 = "-" * 65
     w  = snap["weights"]
     pm = snap["portfolio_metrics"]
-
-    def _pct(v):
-        return f"{v*100:.2f}%" if v is not None else "N/A"
-
+    
     lines = [
         sep,
         f"  MULTI-ASSET STRATEGY SIGNAL — {snap['run_date']}",
@@ -337,9 +329,10 @@ def _build_status_text(snap: dict, action: str) -> str:
         sep2,
     ]
 
+    # Sekcja Akcji (WIG)
     lines.append("  EQUITY POSITION (WIG)")
-    ep     = snap.get("equity_position")
-    par_eq = snap.get("params_equity", {})
+    ep = snap.get("equity_position")
+    pe = snap.get("params_equity", {})
     if ep:
         lines += [
             f"  Entry date:     {ep['entry_date']}",
@@ -347,24 +340,25 @@ def _build_status_text(snap: dict, action: str) -> str:
             f"  Today price:    {ep['today_price']}",
             f"  Days in trade:  {ep['days_in_trade']}",
             f"  Unrealised:     {ep['unrealised_pct']:+.2f}%",
-            f"  Trail stop:     {ep['trail_stop']}  (peak {ep['peak_price']} × (1-{par_eq.get('X',0):.0%}))",
-            f"  Abs stop:       {ep['abs_stop']}  (entry × (1-{par_eq.get('stop_loss',0):.0%}))",
+            f"  Trail stop:     {ep['trail_stop']}  (peak {ep['peak_price']} × (1-{pe.get('stop_param',0):.2f} [{pe.get('stop_label','X')}]))",
+            f"  Abs stop:       {ep['abs_stop']}  (entry × (1-{pe.get('stop_loss',0):.0%}))",
             f"  Binding stop:   {ep['binding_stop']}  (gap: {ep['stop_gap_pct']:+.1f}%)",
         ]
     else:
         lines.append("  No open equity position.")
-    ma_eq  = snap.get("ma_state_equity", {})
-    icon   = "(+)" if ma_eq.get("filter_on") else "(-)"
-    lines.append(
-        f"  MA filter: {icon}  fast({par_eq.get('fast','?')})={ma_eq.get('fast_ma')}  "
-        f"slow({par_eq.get('slow','?')})={ma_eq.get('slow_ma')}  "
-        f"gap={ma_eq.get('gap_pct')}%"
-    )
+    
+    ma_eq = snap.get("ma_state_equity", {})
+    mom_eq = snap.get("mom_state_equity", {})
+    fmode_eq = pe.get("filter_mode", "ma").upper()
+    lines.append(f"  Filter (Active: {fmode_eq}):")
+    lines.append(f"    MA:  {ma_eq.get('fast_ma')} / {ma_eq.get('slow_ma')} (gap {ma_eq.get('gap_pct'):+.2f}%) -> {'ON' if ma_eq.get('filter_on') else 'OFF'}")
+    lines.append(f"    MOM: {mom_eq.get('mom_value'):+.2f}% -> {'ON' if mom_eq.get('filter_on') else 'OFF'}")
     lines.append(sep2)
 
+    # Sekcja Obligacji (TBSP)
     lines.append("  BOND POSITION (TBSP)")
-    bp     = snap.get("bond_position")
-    par_bd = snap.get("params_bond", {})
+    bp = snap.get("bond_position")
+    pb = snap.get("params_bond", {})
     if bp:
         lines += [
             f"  Entry date:     {bp['entry_date']}",
@@ -372,36 +366,22 @@ def _build_status_text(snap: dict, action: str) -> str:
             f"  Today price:    {bp['today_price']}",
             f"  Days in trade:  {bp['days_in_trade']}",
             f"  Unrealised:     {bp['unrealised_pct']:+.2f}%",
-            f"  Trail stop:     {bp['trail_stop']}  (peak {bp['peak_price']} × (1-{par_bd.get('X',0):.0%}))",
-            f"  Abs stop:       {bp['abs_stop']}  (entry × (1-{par_bd.get('stop_loss',0):.0%}))",
+            f"  Trail stop:     {bp['trail_stop']}  (peak {bp['peak_price']} × (1-{pb.get('stop_param',0):.2f} [{pb.get('stop_label','X')}]))",
+            f"  Abs stop:       {bp['abs_stop']}  (entry × (1-{pb.get('stop_loss',0):.0%}))",
             f"  Binding stop:   {bp['binding_stop']}  (gap: {bp['stop_gap_pct']:+.1f}%)",
         ]
     else:
         lines.append("  No open bond position.")
-    ma_bd  = snap.get("ma_state_bond", {})
-    icon2  = "+" if ma_bd.get("filter_on") else "(-)"
-    lines.append(
-        f"  MA filter: {icon2}  fast({par_bd.get('fast','?')})={ma_bd.get('fast_ma')}  "
-        f"slow({par_bd.get('slow','?')})={ma_bd.get('slow_ma')}  "
-        f"gap={ma_bd.get('gap_pct')}%"
-    )
+    
+    ma_bd = snap.get("ma_state_bond", {})
+    lines.append(f"  MA Filter: {ma_bd.get('fast_ma')} / {ma_bd.get('slow_ma')} (gap {ma_bd.get('gap_pct'):+.2f}%) -> {'ON' if ma_bd.get('filter_on') else 'OFF'}")
     lines.append(sep2)
 
     lines += [
         "  PORTFOLIO OOS METRICS",
-        f"  CAGR:    {_pct(pm.get('CAGR'))}  |  Sharpe:  {pm.get('Sharpe', 'N/A'):.2f}  |  "
-        f"MaxDD: {_pct(pm.get('MaxDD'))}  |  CalMAR: {pm.get('CalMAR', 'N/A'):.2f}",
+        f"  CAGR: {pm.get('CAGR')*100:+.2f}% | Sharpe: {pm.get('Sharpe'):.2f} | MaxDD: {pm.get('MaxDD')*100:+.2f}%",
         sep2,
     ]
-
-    lr = snap.get("last_realloc")
-    if lr:
-        lines += [
-            "  LAST REALLOCATION",
-            f"  Date:   {lr['date']}  ({lr['reason']})",
-            f"  Before: EQ {lr['equity_before']*100:.0f}%  BD {lr['bond_before']*100:.0f}%  MMF {lr['mmf_before']*100:.0f}%",
-            f"  After:  EQ {lr['equity_after']*100:.0f}%  BD {lr['bond_after']*100:.0f}%  MMF {lr['mmf_after']*100:.0f}%",
-        ]
 
     lines.append(sep)
     return "\n".join(lines)
