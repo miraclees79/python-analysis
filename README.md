@@ -71,12 +71,6 @@ The following consolidation work was completed. All changes preserve backward-co
 - `DataUpdater` in `updater.py` replaces `stooq_hybrid_updater.py`, consolidating ZIP extraction, yfinance extension, and KNF NAV fetching into one class
 - `builder.py` handles MSCI World and STOXX600 synthetic series construction (WSJ base + yfinance extension + synthetic pre-2010 chain-link)
 
-**Known engineering issues resolved**
-
-- `USE_ATR_STOP = False` discrepancy in `twoasset_robustness.py` — file replaced by `validate_robustness.py`
-- Broken merge artifact (`NameError` from concatenated `_stooq()` + `load_stooq_local()`) in `global_equity_runfile_v2.py` — file replaced
-- Logging gap in `twoasset_extended_comparison.py` Drive-loaded TBSP path — file replaced
-- `build_signal_series(wf_bd, _)` bug in `sweep_optimizer.py` and `objective_benchmarker.py` (wrong trades DataFrame passed due to `_` collision across unpacks) — fixed with explicit variable naming throughout
 
 ---
 
@@ -96,9 +90,9 @@ The following consolidation work was completed. All changes preserve backward-co
 
 ## Validation Hierarchy
 
-Walk-forward OOS → Monte Carlo parameter perturbation → block bootstrap → deployment. Each gate must be passed sequentially.
+Walk-forward OOS → Monte Carlo parameter perturbation → block bootstrap → assessment of investment results → deployment. Each gate must be passed sequentially.
 
-A full parameter sweep across train/test window configurations and stop modes (fixed vs ATR) is currently in progress to reconfirm deployed configs under the refactored codebase.
+
 
 ---
 
