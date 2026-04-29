@@ -85,8 +85,8 @@ The following consolidation work was completed. All changes preserve backward-co
 | Asset | Config | Stop Mode | Robustness Status |
 |---|---|---|---|
 | WIG20TR | 6+2 | fixed | Pending verification |
-| GLOBAL_B | 7+1 | atr | Pending verification |
-| Multiasset (WIG+TBSP+MMF) | — | — | Production |
+| GLOBAL_B | 7+2 | atr | Pending verification |
+| PENSION (WIG+TBSP+MMF) | — | — | Production |
 
 **Deployment gate**: configs must pass both MC parameter perturbation and block bootstrap before deployment consideration. MC alone is insufficient.
 
