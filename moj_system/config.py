@@ -125,5 +125,6 @@ ASSET_REGISTRY = {
         "train": 7,
         "test": 2,
         "fx_hedged": True,
+        "default_stop_eq": "atr"
     },
 }
