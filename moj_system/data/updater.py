@@ -18,8 +18,9 @@ import yfinance as yf
 from moj_system.config import DATA_DIR
 from moj_system.data.gdrive import GDriveClient
 
-# [ZMIANA] RAW_DIR to teraz bezpośrednio DATA_DIR z config.py
+# RAW_DIR to bezpośrednio DATA_DIR z config.py (czyli .../data/raw_csv)
 RAW_DIR = DATA_DIR 
+# ZIP_DIR ląduje obok raw_csv, czyli w .../data/zips
 ZIP_DIR = DATA_DIR.parent / "zips"
 
 RAW_DIR.mkdir(parents=True, exist_ok=True)

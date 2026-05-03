@@ -9,7 +9,8 @@ import yfinance as yf
 from moj_system.data.gdrive import GDriveClient
 
 from moj_system.config import DATA_DIR
-RAW_DIR = DATA_DIR # Używamy centralnej konfiguracji
+RAW_DIR = DATA_DIR # Spójność z updater.py
+
 DATA_START = "1990-01-01"
 CLOSE_COL = "Zamkniecie"
 

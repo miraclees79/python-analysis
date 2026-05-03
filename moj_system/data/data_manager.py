@@ -12,9 +12,7 @@ import os
 import pandas as pd
 
 # Target data path: moj_system/data/raw_csv/
-from moj_system.config import DATA_DIR as DATA_ROOT
-
-DATA_DIR = DATA_ROOT / "raw_csv"
+from moj_system.config import DATA_DIR # Importuj z configa!
 
 
 def ensure_data_dir_exists():
@@ -28,7 +26,10 @@ def load_local_csv(
     """
     Loads a local CSV file from moj_system/data/raw_csv/.
     """
-    path = os.path.join(DATA_DIR, f"{ticker}.csv")
+        # Używamy bezpośrednio DATA_DIR
+    path = DATA_DIR / f"{ticker}.csv"
+    
+
 
     if not os.path.exists(path):
         if mandatory:
