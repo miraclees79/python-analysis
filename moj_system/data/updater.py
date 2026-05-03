@@ -18,9 +18,9 @@ import yfinance as yf
 from moj_system.config import DATA_DIR
 from moj_system.data.gdrive import GDriveClient
 
-DATA_ROOT = DATA_DIR
-RAW_DIR = DATA_ROOT / "raw_csv"
-ZIP_DIR = DATA_ROOT / "zips"
+# [ZMIANA] RAW_DIR to teraz bezpośrednio DATA_DIR z config.py
+RAW_DIR = DATA_DIR 
+ZIP_DIR = DATA_DIR.parent / "zips"
 
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 ZIP_DIR.mkdir(parents=True, exist_ok=True)
@@ -278,7 +278,10 @@ class DataUpdater:
             if (df_hist is not None and df_new is not None)
             else (df_hist if df_hist is not None else df_new)
         )
-
+        if df_final is not None and not df_final.empty:
+            logging.info(f"   [DATA] {label} range: {df_final['Data'].min().date()} to {df_final['Data'].max().date()}")
+        
+                
         df_validated = self._validate_and_clean(df_final, label)
         if df_validated is not None:
             safe_name = label.replace(" ", "_").lower()

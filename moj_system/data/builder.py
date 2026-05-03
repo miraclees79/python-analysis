@@ -8,8 +8,8 @@ import yfinance as yf
 
 from moj_system.data.gdrive import GDriveClient
 
-DATA_ROOT = Path(__file__).resolve().parent
-RAW_DIR = DATA_ROOT / "raw_csv"
+from moj_system.config import DATA_DIR
+RAW_DIR = DATA_DIR # Używamy centralnej konfiguracji
 DATA_START = "1990-01-01"
 CLOSE_COL = "Zamkniecie"
 
