@@ -16,23 +16,39 @@ CLOSE_COL = "Zamkniecie"
 
 
 def _parse_wsj_csv(raw_bytes: bytes) -> pd.DataFrame | None:
-    """Parses WSJ export format."""
+    """Parses WSJ export format using multiple encoding attempts."""
     raw = None
     encodings_to_try = ("utf-8-sig", "utf-8", "latin-1")
+    
     for current_enc in encodings_to_try:
         try:
+            # Tworzymy bufor bajtów
+            initial_data = io.BytesIO(initial_bytes=raw_bytes)
+            
+            # Próba odczytu z jawnymi argumentami
             raw = pd.read_csv(
-                filepath_or_buffer=io.BytesIO(initial_bytes=raw_bytes),
+                filepath_or_buffer=initial_data,
                 encoding=current_enc,
                 thousands=",",
                 skipinitialspace=True,
             )
+            # Jeśli się udało, wychodzimy z pętli
             break
-        except Exception:
+            
+        except Exception as exc:
+            # Naprawa Bandit B112: Logujemy błąd zamiast cichego 'continue'
+            logging.debug(
+                msg=f"Attempt with encoding {current_enc} failed: {exc}"
+            )
             continue
+            
     if raw is None:
+        logging.error(
+            msg="Failed to parse WSJ CSV: None of the attempted encodings worked."
+        )
         return None
 
+    # Normalizacja nazw kolumn
     col_map = {c: c.strip().capitalize() for c in raw.columns}
     for col_raw_name in raw.columns:
         low_name = col_raw_name.strip().lower()
@@ -40,16 +56,34 @@ def _parse_wsj_csv(raw_bytes: bytes) -> pd.DataFrame | None:
             col_map[col_raw_name] = "Close"
         elif low_name in ("date", "data"):
             col_map[col_raw_name] = "Date"
+            
     raw = raw.rename(columns=col_map)
-    raw["Date"] = pd.to_datetime(arg=raw["Date"], format="mixed", errors="coerce")
+    
+    # Konwersja daty
+    raw["Date"] = pd.to_datetime(
+        arg=raw["Date"], 
+        format="mixed", 
+        errors="coerce"
+    )
     raw = raw.dropna(subset=["Date"])
 
-    # 'Date' to Series, więc .dt jest tutaj poprawne
+    # Budowa wynikowego DataFrame
     out = pd.DataFrame(index=raw["Date"].dt.tz_localize(tz=None))
     out.index.name = "Data"
-    out[CLOSE_COL] = pd.to_numeric(arg=raw["Close"], errors="coerce")
-    out["Najwyzszy"] = pd.to_numeric(arg=raw.get("High", raw["Close"]), errors="coerce")
-    out["Najnizszy"] = pd.to_numeric(arg=raw.get("Low", raw["Close"]), errors="coerce")
+    
+    out[CLOSE_COL] = pd.to_numeric(
+        arg=raw["Close"], 
+        errors="coerce"
+    )
+    out["Najwyzszy"] = pd.to_numeric(
+        arg=raw.get("High", raw["Close"]), 
+        errors="coerce"
+    )
+    out["Najnizszy"] = pd.to_numeric(
+        arg=raw.get("Low", raw["Close"]), 
+        errors="coerce"
+    )
+    
     return out.sort_index().dropna()
 
 
