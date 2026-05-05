@@ -117,7 +117,7 @@ ASSET_REGISTRY = {
                 "default_stop_eq": "atr"},
     
     # GLOBAL_A config inactive
-    # "GLOBAL_A": {"type": "portfolio_global", "mode": "global_equity", "train": 7, "test": 2, "fx_hedged": True},
+    "GLOBAL_A": {"type": "portfolio_global", "mode": "global_equity", "train": 7, "test": 2, "fx_hedged": True},
     
     "GLOBAL_B": {
         "type": "portfolio_global",
