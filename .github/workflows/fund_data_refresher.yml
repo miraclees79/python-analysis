@@ -40,4 +40,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fund-refresh-logs
-          path: outputs / fund_refresh.log
+          path: outputs/fund_refresh.log

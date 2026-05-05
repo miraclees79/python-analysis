@@ -442,7 +442,7 @@ def allocation_walk_forward(
         test_s_eq = _slice(sig_equity_oos, test_start, test_end)
         test_s_bd = _slice(sig_bond_oos, test_start, test_end)
 
-        if len(test_eq_r) < 5:
+        if test_eq_r.empty:
             continue
 
         # Align to common dates for this test window

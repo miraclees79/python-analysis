@@ -1169,34 +1169,23 @@ def walk_forward(
 
     while True:
         gate_train = None
-        gate_oos = None
+        gate_oos   = None
         train_start = start
-        train_end = train_start + pd.DateOffset(years=train_years)
-        test_end = train_end + pd.DateOffset(years=test_years)
+        train_end   = train_start + pd.DateOffset(years=train_years)
+        test_end    = train_end   + pd.DateOffset(years=test_years)
 
         train = df.loc[(df.index >= train_start) & (df.index < train_end)]
-
-        next_window_has_enough = len(df.loc[df.index >= test_end]) >= (test_years * 252)
-        if not next_window_has_enough:
-            test_end = data_end + pd.DateOffset(days=1)
-
         test = df.loc[(df.index >= train_end) & (df.index < test_end)]
 
         logging.info(
-            "Iteration: train=%s to %s (%d rows) | test=%s to %s (%d rows) | "
-            "next_window_has_enough=%s | data_end=%s",
-            train_start.date(),
-            train_end.date(),
-            len(train),
-            train_end.date(),
-            test_end.date(),
-            len(test),
-            next_window_has_enough,
-            data_end.date(),
+            msg=f"Iteration: train={train_start.date()} to {train_end.date()} ({len(train)} rows) | "
+                f"test={train_end.date()} to {test_end.date()} ({len(test)} rows) | "
+                f"data_end={data_end.date()}"
         )
 
-        if train.empty or len(test) < 30:
-            logging.info("Breaking — train empty or test too short")
+        # Break only if there is zero data left to trade
+        if train.empty or test.empty:
+            logging.info(msg="Breaking — train or test empty")
             break
 
         cash_train = cash_df.loc[(cash_df.index >= train_start) & (cash_df.index < train_end)]
@@ -1521,6 +1510,12 @@ def walk_forward(
 
         carry_state = end_state
 
+        # --- STUB RULE: Mute stats if OOS is less than 60 days ---
+        if len(test) < 60:
+            logging.info(msg=f"Stub window detected ({len(test)} days). Muting OOS statistics.")
+            for k in test_metrics.keys():
+                test_metrics[k] = float('nan')
+
         equity_slice = bt_oos["equity"].copy()
         if oos_equity_slices:
             prev_end = oos_equity_slices[-1].iloc[-1]
@@ -1565,21 +1560,7 @@ def walk_forward(
 
         start += pd.DateOffset(years=test_years)
 
-        if not next_window_has_enough:
-            logging.info(
-                "Window: train=%s to %s | test=%s to %s | rows in test=%d | "
-                "data_end=%s | next_window_data_rows=%d | next_window_has_enough=%s",
-                train_start,
-                train_end,
-                train_end,
-                test_end,
-                len(test),
-                data_end,
-                len(df.loc[df.index >= test_end]),
-                next_window_has_enough,
-            )
-            logging.info("Final OOS window extended to %s (end of data).", data_end)
-            break
+
 
     if carry_state is not None and all_oos_trades:
         logging.info(

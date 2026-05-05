@@ -210,7 +210,37 @@ class SweepManager:
         self.wf_cache = {}
         self.mc_cache = {}
         self.boot_cache = {}
-
+    
+    
+    def _create_portfolio_wf_results(self, wf_results_ref, port_eq):
+        """Helper to compute aggregate portfolio metrics per window and apply the Stub Rule."""
+        portfolio_wf_results = wf_results_ref.copy()
+        
+        for row_index, row in portfolio_wf_results.iterrows():
+            w_start = row["TestStart"]
+            w_end   = row["TestEnd"]
+            
+            # Slice the portfolio equity curve for this specific window
+            window_equity_slice = port_eq.loc[w_start:w_end]
+            
+            # STUB RULE: Mute stats if window is too short
+            if len(window_equity_slice) < 60:
+                m_win = {"CAGR": np.nan, "Sharpe": np.nan, "MaxDD": np.nan, "CalMAR": np.nan, "Sortino": np.nan}
+            elif not window_equity_slice.empty:
+                window_equity_norm = window_equity_slice / window_equity_slice.iloc[0]
+                m_win = compute_metrics(equity=window_equity_norm)
+            else:
+                m_win = {"CAGR": np.nan, "Sharpe": np.nan, "MaxDD": np.nan, "CalMAR": np.nan, "Sortino": np.nan}
+                
+            portfolio_wf_results.loc[row_index, "CAGR"]   = m_win.get("CAGR", np.nan)
+            portfolio_wf_results.loc[row_index, "Sharpe"] = m_win.get("Sharpe", np.nan)
+            portfolio_wf_results.loc[row_index, "MaxDD"]  = m_win.get("MaxDD", np.nan)
+            portfolio_wf_results.loc[row_index, "CalMAR"] = m_win.get("CalMAR", np.nan)
+            portfolio_wf_results.loc[row_index, "Sortino"] = m_win.get("Sortino", np.nan)
+            portfolio_wf_results.loc[row_index, "filter_mode"] = "PORTFOLIO"
+            
+        return portfolio_wf_results
+    
     def get_cached_wf(
         self, asset_name, df, train_y, test_y, stop_type, grid_type="EQUITY", entry_gate=None,
     ):
@@ -614,14 +644,16 @@ class SweepManager:
             print_live_regime_report(regime_metrics)
         else:
             regime_metrics = extract_flat_regime_stats({})
-
+        
+        portfolio_wf_res = self._create_portfolio_wf_results(wf_results_ref=wf_res_eq, port_eq=port_eq)
+        
         return self._compile_full_result(
             strat_name="PENSION",
             train_y=train_y,
             test_y=test_y,
             stop_type=stop_type_eq,
             common_start=common_start,
-            wf_results=wf_res_eq,
+            wf_results=portfolio_wf_res,
             wf_equity_trimmed=trimmed,
             m_trimmed=m,
             bh_metrics=bh_metrics,
@@ -803,13 +835,15 @@ class SweepManager:
                 # sensu w jednym polu, więc możemy je oznaczyć jako NaN lub 0
                 portfolio_wf_results.loc[row_index, "filter_mode"] = "PORTFOLIO"
 
+        portfolio_wf_res = self._create_portfolio_wf_results(wf_results_ref=portfolio_wf_results, port_eq=port_eq)
+
         return self._compile_full_result(
             strat_name=variant_key,
             train_y=train_y,
             test_y=test_y,
             stop_type=stop_type_eq,
             common_start=common_start,
-            wf_results=portfolio_wf_results,
+            wf_results=portfolio_wf_res,
             wf_equity_trimmed=trimmed,
             m_trimmed=m,
             bh_metrics=bh_metrics,
