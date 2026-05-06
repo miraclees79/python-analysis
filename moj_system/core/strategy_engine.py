@@ -1419,7 +1419,7 @@ def walk_forward(
             break
         else:
             stop_label = (
-                f"N_atr={best_params['N_atr']:.1f}" if use_atr_stop else f"X={best_params['X']:.2f}"
+                f"N_atr={best_params['N_atr']:.2f}" if use_atr_stop else f"X={best_params['X']:.2f}"
             )
             logging.info(
                 "Window %s: best raw_%s=%.4f | penalised_%s=%.4f | filter=%s | "
