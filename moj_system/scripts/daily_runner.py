@@ -202,9 +202,11 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
     derived = build_standard_two_asset_data(WIG, TBSP, MMF, WIBOR, PL10Y, DE10Y, "1995-01-02")
     n_jobs = get_n_jobs()
 
+    logging.info("================ WIG ================")
     wf_eq, wf_res_eq, wf_tr_eq = walk_forward(
         WIG, derived["mmf_ext"], cfg["train"], cfg["test"], use_atr_stop=use_atr_eq, n_jobs=n_jobs,
     )
+    logging.info("================ TBSP ================")
     wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
         TBSP,
         derived["mmf_ext"],
@@ -276,12 +278,17 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
         gdrive_credentials=creds_path,
     )
 
-
 def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
     cfg = ASSET_REGISTRY[asset_key]
-    mode, train_y, test_y, fx_h = cfg["mode"], cfg["train"], cfg["test"], cfg["fx_hedged"]
+    mode, train_y, test_y, fx_h = cfg["mode"], cfg["train"], cfg["test"], cfg.get("fx_hedged", True)
     folder_id = os.environ.get("GDRIVE_FOLDER_ID")
-    logging.info(f"GLOBAL PORTFOLIO ENGINE: {mode} | FX Hedged: {fx_h} | Stop mode: {cfg["default_stop_eq"]} | Train years: {cfg["train"]} | Test years: {cfg["test"]}")
+    
+    #[POPRAWKA 1] Ustalenie trybu stopu (podobnie jak w PENSION)
+    selected_stop = cfg.get("default_stop_eq", "atr") if stop_mode_arg == "auto" else stop_mode_arg
+    use_atr_eq = (selected_stop == "atr")
+    
+    # [POPRAWKA 2] Naprawione cudzysłowy w f-stringu, aby uniknąć SyntaxError
+    logging.info(f"GLOBAL PORTFOLIO ENGINE: {mode} | FX Hedged: {fx_h} | Stop mode: {selected_stop} | Train years: {train_y} | Test years: {test_y}")
 
     WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
     TBSP = build_and_upload(
@@ -329,13 +336,27 @@ def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
         ret_s = build_return_series(px_df, fx_series=fx_s, hedged=fx_h)
         rets_dict[lbl] = ret_s.dropna()
         proc_px = px_df if fx_h or fx_s is None else build_price_df_from_returns(ret_s, lbl)
-        wf_e, wf_r, wf_t = walk_forward(proc_px, MMF, train_y, test_y, n_jobs=n_jobs)
+        logging.info(f"================ {lbl} ================")
+        #[POPRAWKA 3] Jawne przekazanie parametrów stopu, siatek i fast_mode
+        wf_e, wf_r, wf_t = walk_forward(
+            proc_px, MMF, train_y, test_y, 
+            X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
+            fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
+            use_atr_stop=use_atr_eq, 
+            N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr_eq else None,
+            n_jobs=n_jobs, fast_mode=True
+        )
+        
         sigs_full[lbl] = build_signal_series(wf_e, wf_t)
         if lbl == "WIG":
             wig_wf_res = wf_r
-
+    logging.info("================ TBSP ================")
+    # [POPRAWKA 4] Dodanie odpowiednich siatek również dla obligacji
     wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
-        TBSP, MMF, train_y, test_y, filter_modes_override=["ma"], n_jobs=n_jobs,
+        TBSP, MMF, train_y, test_y, filter_modes_override=["ma"], 
+        X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
+        fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
+        n_jobs=n_jobs, fast_mode=True
     )
     rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
     sigs_full["TBSP"] = build_signal_series(wf_bd, wf_tr_bd)
@@ -372,17 +393,17 @@ def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
 
     # Wysyłanie (wewnętrznie wywołuje upload na GDrive)
     build_global_outputs(
-        {},
-        p_e,
-        m,
-        w_s,
-        realloc,
-        bh_metrics_all,
-        rets_dict,
-        sigs_full,
-        list(rets_dict.keys()),
-        mode,
-        fx_h,
+        wf_results_dict={},
+        portfolio_equity=p_e,
+        portfolio_metrics=m,
+        weights_series=w_s,
+        reallocation_log=realloc,
+        bh_metrics_dict=bh_metrics_all,
+        returns_dict=rets_dict,
+        signals_oos_dict=sigs_full,
+        asset_keys=list(rets_dict.keys()),
+        portfolio_mode=mode,
+        fx_hedged=fx_h,
         output_dir=str(OUTPUT_DIR / asset_key.lower()),
         asset_name=asset_key,  # [Ważne] - czyli np. GLOBAL_A lub GLOBAL_B
         run_date=None,
