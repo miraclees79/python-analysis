@@ -143,7 +143,7 @@ class ValidationManager:
             use_atr_stop=use_atr,
             N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
             n_jobs=get_n_jobs(),
-            fast_mode=True,
+            engine_mode="numba_full",
         )
 
         bh_eq, bh_m = compute_buy_and_hold(
@@ -179,7 +179,7 @@ class ValidationManager:
                 slow_grid=BASE_GRIDS["SLOW_GRID"],
                 use_atr_stop=use_atr,
                 N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
-                fast_mode=True,
+                engine_mode="numba_full",
             )
             analyze_bootstrap(
                 results_df=bb_results,
@@ -242,7 +242,7 @@ class ValidationManager:
             fast_grid=BOND_GRIDS["FAST_GRID"],
             slow_grid=BOND_GRIDS["SLOW_GRID"],
             n_jobs=get_n_jobs(),
-            fast_mode=True,
+            engine_mode="numba_full",
         )
         if self.n_mc > 0:
             mc_bd = self.rob_engine.run_mc_test(
@@ -267,7 +267,7 @@ class ValidationManager:
                 fast_grid=BOND_GRIDS["FAST_GRID"],
                 slow_grid=BOND_GRIDS["SLOW_GRID"],
                 use_atr_stop=False,
-                fast_mode=True,
+                engine_mode="numba_full",
             )
             analyze_bootstrap(
                 results_df=bb_bd,
@@ -288,7 +288,7 @@ class ValidationManager:
             use_atr_stop=use_atr_eq,
             N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr_eq else None,
             n_jobs=get_n_jobs(),
-            fast_mode=True,
+            engine_mode="numba_full",
         )
         sig_eq = build_signal_series(wf_equity=wf_eq, wf_trades=wf_tr_eq)
         sig_bd = build_signal_series(wf_equity=wf_bd_eq, wf_trades=wf_bd_tr)
@@ -415,7 +415,7 @@ class ValidationManager:
                 use_atr_stop=use_atr,
                 N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
                 n_jobs=get_n_jobs(),
-                fast_mode=True,
+                engine_mode="numba_full",
             )
             sigs_full[lbl] = build_signal_series(wf_equity=wf_e, wf_trades=wf_t)
 
@@ -442,7 +442,7 @@ class ValidationManager:
                     slow_grid=BASE_GRIDS["SLOW_GRID"],
                     use_atr_stop=use_atr,
                     N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
-                    fast_mode=True,
+                    engine_mode="numba_full",
                 )
                 analyze_bootstrap(
                     results_df=bb_res,
@@ -463,7 +463,7 @@ class ValidationManager:
             fast_grid=BOND_GRIDS["FAST_GRID"],
             slow_grid=BOND_GRIDS["SLOW_GRID"],
             n_jobs=get_n_jobs(),
-            fast_mode=True,
+            engine_mode="numba_full",
         )
         rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
         sigs_full["TBSP"] = build_signal_series(wf_equity=wf_bd, wf_trades=wf_tr_bd)

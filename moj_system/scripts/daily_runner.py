@@ -123,10 +123,10 @@ def run_single_asset(asset_name, stop_mode_arg, creds_path):
         mom_lookback_grid=grids["MOM_LB_GRID"],
         objective="calmar",
         n_jobs=get_n_jobs(),
-        fast_mode=True,
         use_atr_stop=use_atr_stop,
         N_atr_grid=grids["N_ATR_GRID"] if use_atr_stop else None,
         atr_window=grids["ATR_WINDOW"],
+        engine_mode="numba_full"
     )
     if wf_equity.empty:
         sys.exit(f"Walk-forward returned no results for {asset_name}.")
@@ -219,7 +219,7 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
         N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr_eq else None,
         atr_window=BASE_GRIDS.get("ATR_WINDOW", 20),
         n_jobs=n_jobs,
-        fast_mode=True
+        engine_mode="numba_full"
     )
     
     logging.info("================ TBSP ================")
@@ -238,7 +238,7 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
         use_atr_stop=False, # Obligacje testowaliśmy zawsze na Fixed Stop
         n_jobs=n_jobs,
         entry_gate_series=derived["bond_gate"],
-        fast_mode=True
+        engine_mode="numba_full"
     )
 
     sig_eq, sig_bd = build_signal_series(wf_eq, wf_tr_eq), build_signal_series(wf_bd, wf_tr_bd)
@@ -371,7 +371,7 @@ def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
             fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
             use_atr_stop=use_atr_eq, 
             N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr_eq else None,
-            n_jobs=n_jobs, fast_mode=True
+            n_jobs=n_jobs, engine_mode="numba_full"
         )
         
         sigs_full[lbl] = build_signal_series(wf_e, wf_t)
@@ -383,7 +383,7 @@ def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
         TBSP, MMF, train_y, test_y, filter_modes_override=["ma"], 
         X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
         fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
-        n_jobs=n_jobs, fast_mode=True
+        n_jobs=n_jobs, engine_mode="numba_full"
     )
     rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
     sigs_full["TBSP"] = build_signal_series(wf_bd, wf_tr_bd)
