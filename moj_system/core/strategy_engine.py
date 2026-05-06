@@ -6,6 +6,8 @@ import sys
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
+from numba import njit
+from moj_system.core.fund_filter import compute_fund_breadth_signal
 
 # ============================================================
 # CANONICAL N_JOBS CALCULATION
@@ -129,7 +131,9 @@ def count_year_wins(
 #
 
 
-def load_csv(filename):
+def load_csv(
+    filename: str
+) -> pd.DataFrame | None:
     """
     Load and validate a price series CSV downloaded from stooq.pl.
 
@@ -227,7 +231,10 @@ def load_csv(filename):
     return df
 
 
-def prepare_cash_returns(cash_df, price_col="Zamkniecie"):
+def prepare_cash_returns(
+    cash_df: pd.DataFrame, 
+    price_col: str = "Zamkniecie"
+) -> pd.DataFrame:
     cash = cash_df.copy()
     cash["cash_price"] = cash[price_col]
     cash["cash_ret"] = cash["cash_price"].pct_change()
@@ -241,13 +248,13 @@ def prepare_cash_returns(cash_df, price_col="Zamkniecie"):
 
 
 def compute_momentum(
-    series,
-    lookback=252,
-    skip=21,
-    blend=False,
-    blend_lookbacks=(21, 63, 126, 252),
-    blend_skip=5,
-):
+    series: pd.Series,
+    lookback: int = 252,
+    skip: int = 21,
+    blend: bool = False,
+    blend_lookbacks: tuple[int, ...] = (21, 63, 126, 252),
+    blend_skip: int = 5,
+) -> pd.Series:
     """
     Compute a momentum signal from a price series.
 
@@ -311,7 +318,12 @@ def compute_momentum(
 # ============================
 
 
-def compute_metrics(equity, risk_free_rate=0, freq=252):
+def compute_metrics(
+    equity: pd.Series, 
+    risk_free_rate: float = 0.0, 
+    freq: int = 252
+) -> dict[str, float]:
+    
     ret = equity.pct_change().dropna()
 
     years = len(ret) / freq
@@ -336,12 +348,12 @@ def compute_metrics(equity, risk_free_rate=0, freq=252):
     calmar = cagr / abs(max_dd) if max_dd != 0 else 0.0
 
     return {
-        "CAGR": cagr,
-        "Vol": vol,
-        "Sharpe": sharpe,
-        "Sortino": sortino,
-        "MaxDD": max_dd,
-        "CalMAR": calmar,
+        "CAGR": float(cagr),
+        "Vol": float(vol),
+        "Sharpe": float(sharpe),
+        "Sortino": float(sortino),
+        "MaxDD": float(max_dd),
+        "CalMAR": float(calmar),
     }
 
 
@@ -350,7 +362,12 @@ def compute_metrics(equity, risk_free_rate=0, freq=252):
 # ============================================================
 
 
-def neighbour_mean(key, scores, stop_grid, Y_grid):
+def neighbour_mean(
+    key: tuple, 
+    scores: dict, 
+    stop_grid: list[float], 
+    Y_grid: list[float]
+) -> float:
     """
     Compute the mean score of neighbouring parameter sets for a given key.
 
@@ -398,10 +415,15 @@ def neighbour_mean(key, scores, stop_grid, Y_grid):
                 if nkey in scores:
                     neighbours.append(scores[nkey])
 
-    return np.mean(neighbours) if neighbours else scores[key]
+    return float(np.mean(neighbours)) if neighbours else float(scores[key])
 
 
-def calc_position(vol, position_mode, target_vol, max_leverage):
+def calc_position(
+    vol: float, 
+    position_mode: str, 
+    target_vol: float, 
+    max_leverage: float
+) -> float:
     if position_mode == "full":
         return 1.0
     if pd.notna(vol) and vol > 0:
@@ -416,7 +438,13 @@ def calc_position(vol, position_mode, target_vol, max_leverage):
 # ============================
 
 
-def compute_buy_and_hold(df, price_col="Zamkniecie", start=None, end=None):
+def compute_buy_and_hold(
+    df: pd.DataFrame, 
+    price_col: str = "Zamkniecie", 
+    start: pd.Timestamp | None = None, 
+    end: pd.Timestamp | None = None
+) -> tuple[pd.Series, dict[str, float]]:
+    
     bh = df[price_col].copy()
 
     if start is not None:
@@ -430,38 +458,413 @@ def compute_buy_and_hold(df, price_col="Zamkniecie", start=None, end=None):
     return bh_equity, {k: float(v) for k, v in bh_metrics.items()}
 
 
+
+# ============================
+# NUMBA CORE ENGINES
+# ============================
+
+@njit(cache=True, nogil=True)
+def calc_position_numba(
+    vol: float,
+    position_mode_int: int,
+    target_vol: float,
+    max_leverage: float
+) -> float:
+    if position_mode_int == 0:
+        return 1.0
+    if not np.isnan(vol) and vol > 0.0:
+        pos = target_vol / vol
+    else:
+        pos = 1.0
+    return min(pos, max_leverage)
+
+
+@njit(cache=True, nogil=True)
+def run_numba_light(
+    prices: np.ndarray,
+    rets: np.ndarray,
+    cash_rets: np.ndarray,
+    trends: np.ndarray,
+    moms: np.ndarray,
+    vols: np.ndarray,
+    atrs: np.ndarray,
+    warmups: np.ndarray,
+    gate_vals: np.ndarray,
+    fund_vals: np.ndarray,
+    dates: np.ndarray,
+    filter_mode_int: int,
+    position_mode_int: int,
+    stop_loss: float,
+    target_vol: float,
+    max_leverage: float,
+    use_atr_stop: bool,
+    N_atr: float,
+    X: float,
+    Y: float,
+    init_position: float,
+    init_entry_price: float,
+    init_entry_date: int,
+    init_entry_pos: float,
+    init_M: float,
+    init_m: float,
+    init_rebal_count: int,
+    init_rebal_cost_total: float
+) -> tuple:
+    n = len(prices)
+    equity_curve = np.zeros(shape=n, dtype=np.float64)
+    equity = 1.0
+
+    position = init_position
+    entry_price = init_entry_price
+    entry_date = init_entry_date
+    entry_pos = init_entry_pos
+    M = init_M
+    m = init_m
+    rebal_count = init_rebal_count
+    rebal_cost_total = init_rebal_cost_total
+
+    for arr_idx in range(n):
+        price = prices[arr_idx]
+        ret = rets[arr_idx]
+        cash_ret = cash_rets[arr_idx]
+        trend = trends[arr_idx]
+        mom = moms[arr_idx]
+        vol = vols[arr_idx]
+        atr_val = atrs[arr_idx]
+
+        if filter_mode_int == 3:
+            filter_on = fund_vals[arr_idx] == 1
+        elif filter_mode_int == 1 or filter_mode_int == 2:
+            filter_on = mom > 0.0
+        else:
+            filter_on = trend == 1
+
+        if warmups[arr_idx]:
+            equity_curve[arr_idx] = equity
+            continue
+
+        if position > 0.0:
+            equity *= 1.0 + position * ret + (1.0 - position) * cash_ret
+        else:
+            equity *= 1.0 + cash_ret
+
+        exit_reasons = 0
+
+        if position > 0.0:
+            dd = (price - entry_price) / entry_price
+            if dd < -stop_loss:
+                exit_reasons |= 1
+
+        if position > 0.0 and position_mode_int == 1:
+            new_pos = calc_position_numba(
+                vol=vol, 
+                position_mode_int=position_mode_int, 
+                target_vol=target_vol, 
+                max_leverage=max_leverage
+            )
+            size_change = abs(new_pos - position)
+            if size_change > 0.1:
+                rebal_cost = 0.0005
+                equity *= 1.0 - size_change * rebal_cost
+                position = new_pos
+                rebal_count += 1
+                rebal_cost_total += size_change * rebal_cost
+
+        if position > 0.0:
+            if np.isnan(M):
+                M = price
+            else:
+                M = max(M, price)
+
+            trail_breached = False
+            if use_atr_stop:
+                if not np.isnan(atr_val) and atr_val > 0.0:
+                    stop_level = M * (1.0 - N_atr * atr_val)
+                    trail_breached = price < stop_level
+            else:
+                trail_breached = price < (1.0 - X) * M
+
+            if trail_breached:
+                if (exit_reasons & 1) == 0:
+                    exit_reasons |= 2
+            elif not filter_on:
+                exit_reasons |= 4
+
+        if position > 0.0 and exit_reasons > 0:
+            position = 0.0
+            entry_price = np.nan
+            entry_date = 0
+            M = np.nan
+            m = np.nan
+            entry_pos = np.nan
+
+        if position == 0.0:
+            if np.isnan(m):
+                m = price
+            else:
+                m = min(m, price)
+            gate_allows = gate_vals[arr_idx] == 1
+            if (price > (1.0 + Y) * m) and filter_on and gate_allows:
+                position = calc_position_numba(
+                    vol=vol, 
+                    position_mode_int=position_mode_int, 
+                    target_vol=target_vol, 
+                    max_leverage=max_leverage
+                )
+                entry_price = price
+                entry_date = dates[arr_idx]
+                entry_pos = position
+                M = price
+
+        equity_curve[arr_idx] = equity
+
+    return equity_curve, position, entry_price, entry_date, entry_pos, M, m, rebal_count, rebal_cost_total
+
+
+@njit(cache=True, nogil=True)
+def run_numba_full(
+    prices: np.ndarray,
+    rets: np.ndarray,
+    cash_rets: np.ndarray,
+    trends: np.ndarray,
+    moms: np.ndarray,
+    vols: np.ndarray,
+    atrs: np.ndarray,
+    warmups: np.ndarray,
+    gate_vals: np.ndarray,
+    fund_vals: np.ndarray,
+    dates: np.ndarray,
+    filter_mode_int: int,
+    position_mode_int: int,
+    stop_loss: float,
+    target_vol: float,
+    max_leverage: float,
+    use_atr_stop: bool,
+    N_atr: float,
+    X: float,
+    Y: float,
+    init_position: float,
+    init_entry_price: float,
+    init_entry_date: int,
+    init_entry_pos: float,
+    init_M: float,
+    init_m: float,
+    init_entry_carried: bool,
+    init_rebal_count: int,
+    init_rebal_cost_total: float,
+    init_entry_reason_int: int
+) -> tuple:
+    n = len(prices)
+    equity_curve = np.zeros(shape=n, dtype=np.float64)
+    equity = 1.0
+
+    position = init_position
+    entry_price = init_entry_price
+    entry_date = init_entry_date
+    entry_pos = init_entry_pos
+    M = init_M
+    m = init_m
+    entry_carried = init_entry_carried
+    rebal_count = init_rebal_count
+    rebal_cost_total = init_rebal_cost_total
+    entry_reason_int = init_entry_reason_int
+
+    out_entry_dates = np.zeros(shape=n, dtype=np.int64)
+    out_exit_dates = np.zeros(shape=n, dtype=np.int64)
+    out_entry_prices = np.zeros(shape=n, dtype=np.float64)
+    out_positions = np.zeros(shape=n, dtype=np.float64)
+    out_exit_prices = np.zeros(shape=n, dtype=np.float64)
+    out_returns = np.zeros(shape=n, dtype=np.float64)
+    out_days = np.zeros(shape=n, dtype=np.int64)
+    out_entry_reasons = np.zeros(shape=n, dtype=np.int64)
+    out_exit_reasons = np.zeros(shape=n, dtype=np.int64)
+    out_cross_window = np.zeros(shape=n, dtype=np.bool_)
+    trade_idx = 0
+
+    for arr_idx in range(n):
+        price = prices[arr_idx]
+        ret = rets[arr_idx]
+        cash_ret = cash_rets[arr_idx]
+        trend = trends[arr_idx]
+        mom = moms[arr_idx]
+        vol = vols[arr_idx]
+        atr_val = atrs[arr_idx]
+
+        if filter_mode_int == 3:
+            filter_on = fund_vals[arr_idx] == 1
+        elif filter_mode_int == 1 or filter_mode_int == 2:
+            filter_on = mom > 0.0
+        else:
+            filter_on = trend == 1
+
+        if warmups[arr_idx]:
+            equity_curve[arr_idx] = equity
+            continue
+
+        if position > 0.0:
+            equity *= 1.0 + position * ret + (1.0 - position) * cash_ret
+        else:
+            equity *= 1.0 + cash_ret
+
+        exit_reasons = 0
+
+        if position > 0.0:
+            dd = (price - entry_price) / entry_price
+            if dd < -stop_loss:
+                exit_reasons |= 1
+
+        if position > 0.0 and position_mode_int == 1:
+            new_pos = calc_position_numba(
+                vol=vol, 
+                position_mode_int=position_mode_int, 
+                target_vol=target_vol, 
+                max_leverage=max_leverage
+            )
+            size_change = abs(new_pos - position)
+            if size_change > 0.1:
+                rebal_cost = 0.0005
+                equity *= 1.0 - size_change * rebal_cost
+                position = new_pos
+                rebal_count += 1
+                rebal_cost_total += size_change * rebal_cost
+
+        if position > 0.0:
+            if np.isnan(M):
+                M = price
+            else:
+                M = max(M, price)
+
+            trail_breached = False
+            if use_atr_stop:
+                if not np.isnan(atr_val) and atr_val > 0.0:
+                    stop_level = M * (1.0 - N_atr * atr_val)
+                    trail_breached = price < stop_level
+            else:
+                trail_breached = price < (1.0 - X) * M
+
+            if trail_breached:
+                if (exit_reasons & 1) == 0:
+                    exit_reasons |= 2
+            elif not filter_on:
+                exit_reasons |= 4
+
+        if position > 0.0 and exit_reasons > 0:
+            cost = 0.0020
+            trade_ret = price / entry_price - 1.0 - cost
+            days_in = (dates[arr_idx] - entry_date) // 86400000000000
+
+            out_entry_dates[trade_idx] = entry_date
+            out_exit_dates[trade_idx] = dates[arr_idx]
+            out_entry_prices[trade_idx] = entry_price
+            out_positions[trade_idx] = entry_pos
+            out_exit_prices[trade_idx] = price
+            out_returns[trade_idx] = trade_ret
+            out_days[trade_idx] = days_in
+            out_entry_reasons[trade_idx] = entry_reason_int
+            out_exit_reasons[trade_idx] = exit_reasons
+            out_cross_window[trade_idx] = entry_carried
+            trade_idx += 1
+
+            position = 0.0
+            entry_price = np.nan
+            entry_date = 0
+            entry_reason_int = 0
+            M = np.nan
+            m = np.nan
+            entry_pos = np.nan
+            entry_carried = False
+
+        if position == 0.0:
+            if np.isnan(m):
+                m = price
+            else:
+                m = min(m, price)
+            gate_allows = gate_vals[arr_idx] == 1
+            if (price > (1.0 + Y) * m) and filter_on and gate_allows:
+                position = calc_position_numba(
+                    vol=vol, 
+                    position_mode_int=position_mode_int, 
+                    target_vol=target_vol, 
+                    max_leverage=max_leverage
+                )
+                entry_price = price
+                entry_date = dates[arr_idx]
+                entry_pos = position
+                M = price
+                entry_carried = False
+                entry_reason_int = 1
+
+        equity_curve[arr_idx] = equity
+
+    return (
+        equity_curve,
+        position, entry_price, entry_date, entry_pos, M, m, entry_carried, rebal_count, rebal_cost_total, entry_reason_int,
+        out_entry_dates[:trade_idx],
+        out_exit_dates[:trade_idx],
+        out_entry_prices[:trade_idx],
+        out_positions[:trade_idx],
+        out_exit_prices[:trade_idx],
+        out_returns[:trade_idx],
+        out_days[:trade_idx],
+        out_entry_reasons[:trade_idx],
+        out_exit_reasons[:trade_idx],
+        out_cross_window[:trade_idx]
+    )
+
+def decode_exit_reasons(
+    reasons_int: int
+) -> str | None:
+    if reasons_int == 0:
+        return None
+    reasons =[]
+    if reasons_int & 1:
+        reasons.append("ABSOLUTE_STOP")
+    if reasons_int & 2:
+        reasons.append("TRAIL_STOP")
+    if reasons_int & 4:
+        reasons.append("FILTER_EXIT")
+    return " + ".join(reasons)
+
+def decode_entry_reason(
+    reason_int: int
+) -> str | None:
+    if reason_int == 1:
+        return "BREAKOUT & FILTER"
+    return None
+
+
+
+
+
 # ============================
 # Strategy Engine
 # ============================
 def run_strategy_with_trades(
-    df,
-    price_col="price",
-    X=0.1,
-    Y=0.1,
-    stop_loss=0.1,
-    fast=50,
-    slow=200,
-    vol_window=20,
-    target_vol=0.10,
-    max_leverage=1.0,
-    position_mode="vol_entry",
-    filter_mode="ma",
-    mom_lookback=252,
-    cash_df=None,
-    safe_rate=0.0,
-    initial_state=None,
-    warmup_df=None,
-    fund_signal=None,
-    entry_gate=None,
-    # -------------------------------------------------------
-    # ATR trailing stop parameters
-    # -------------------------------------------------------
-    use_atr_stop=False,  # False = fixed % (X), True = ATR-scaled (N_atr)
-    N_atr=0.1,  # ATR multiplier for trailing stop (used when use_atr_stop=True)
-    atr_window=20,  # Rolling window for close-only ATR estimate (days)
-    # -------------------------------------------------------
-    fast_mode=True,
-):
+    df:                pd.DataFrame,
+    price_col:         str   = "price",
+    X:                 float = 0.1,
+    Y:                 float = 0.1,
+    stop_loss:         float = 0.1,
+    fast:              int   = 50,
+    slow:              int   = 200,
+    vol_window:        int   = 20,
+    target_vol:        float = 0.10,
+    max_leverage:      float = 1.0,
+    position_mode:     str   = "vol_entry",
+    filter_mode:       str   = "ma",
+    mom_lookback:      int   = 252,
+    cash_df:           pd.DataFrame | None = None,
+    safe_rate:         float = 0.0,
+    initial_state:     dict | None = None,
+    warmup_df:         pd.DataFrame | None = None,
+    fund_signal:       pd.Series | None = None,
+    entry_gate:        pd.Series | None = None,
+    use_atr_stop:      bool  = False,
+    N_atr:             float = 0.1,
+    atr_window:        int   = 20,
+    engine_mode:       str   = "numba_full"
+) -> tuple[pd.DataFrame, dict[str, float] | None, pd.DataFrame, dict | None]:
+
     """
     Run the trend-following strategy on a single price series and return
     the equity curve, performance metrics, and trade log.
@@ -621,341 +1024,332 @@ def run_strategy_with_trades(
     # Initialise state
     # -----------------------
 
-    equity = 1.0
-    equity_curve = []
-    trades = []
+    filter_mode_map = {"ma": 0, "mom": 1, "mom_blend": 2, "fund": 3}
+    filter_mode_int = filter_mode_map.get(filter_mode, 0)
+    
+    position_mode_map = {"full": 0, "vol_dynamic": 1, "vol_entry": 2}
+    position_mode_int = position_mode_map.get(position_mode, 2)
 
-    if initial_state is not None:
-        position = initial_state["position"]
-        entry_price = initial_state["entry_price"]
-        entry_date = initial_state["entry_date"]
-        entry_reason = initial_state["entry_reason"]
-        entry_pos = initial_state["entry_pos"]
-        M = initial_state["M"]
-        m = initial_state["m"]
-        entry_carried = True
-        rebal_count = initial_state.get("rebal_count", 0)
-        rebal_cost_total = initial_state.get("rebal_cost_total", 0.0)
+    prices_arr = df["price"].to_numpy(dtype=np.float64)
+    rets_arr = df["ret"].fillna(value=0.0).to_numpy(dtype=np.float64)
+    cash_rets_arr = df["cash_ret"].fillna(value=0.0).to_numpy(dtype=np.float64)
+    trends_arr = df["trend"].fillna(value=0).to_numpy(dtype=np.int64)
+    moms_arr = df["MOM"].fillna(value=0.0).to_numpy(dtype=np.float64)
+    vols_arr = df["vol"].fillna(value=0.0).to_numpy(dtype=np.float64)
+    atrs_arr = df["atr"].to_numpy(dtype=np.float64)
+    warmups_arr = df["_warmup"].to_numpy(dtype=np.bool_)
+    if gate_aligned is not None:
+        gate_vals_arr = gate_aligned.reindex(index=df.index).fillna(value=1).to_numpy(dtype=np.int64)
     else:
-        position = 0.0
-        entry_price = None
-        entry_date = None
-        entry_reason = None
-        entry_pos = None
-        M = None
-        m = None
-        entry_carried = False
-        rebal_count = 0
-        rebal_cost_total = 0.0
-
-    if fund_signal is not None:
-        filter_mode_active = "fund"
-    elif filter_mode == "mom":
-        filter_mode_active = "mom"
-    elif filter_mode == "mom_blend":
-        filter_mode_active = "mom_blend"
+        gate_vals_arr = np.ones(shape=len(df), dtype=np.int64)
+    if "fund_filter" in df.columns:
+        fund_vals_arr = df["fund_filter"].fillna(value=1).to_numpy(dtype=np.int64)
     else:
-        filter_mode_active = "ma"
+        fund_vals_arr = np.ones(shape=len(df), dtype=np.int64)
+    dates_arr = df.index.values.astype(dtype=np.int64)
 
-    if fast_mode:
-        _prices = df["price"].to_numpy()
-        _rets = df["ret"].to_numpy()
-        _cash_rets = df["cash_ret"].to_numpy()
-        _trends = df["trend"].to_numpy()
-        _moms = df["MOM"].to_numpy()
-        _vols = df["vol"].to_numpy()
-        _atrs = df["atr"].to_numpy()  # ATR array — always extracted
-        _warmups = df["_warmup"].to_numpy(dtype=bool)
-        _gate_vals = (
-            gate_aligned.reindex(df.index).fillna(1).to_numpy().astype(int)
-            if gate_aligned is not None
-            else None
-        )
-        _fund_vals = df["fund_filter"].to_numpy() if "fund_filter" in df.columns else None
-        _index = df.index
+    init_position = float(initial_state.get("position", 0.0)) if initial_state else 0.0
+    init_entry_price = float(initial_state.get("entry_price", np.nan)) if initial_state and initial_state.get("entry_price") is not None else np.nan
+    init_entry_date = int(initial_state["entry_date"].value) if initial_state and initial_state.get("entry_date") is not None else 0
+    init_entry_pos = float(initial_state.get("entry_pos", np.nan)) if initial_state and initial_state.get("entry_pos") is not None else np.nan
+    init_M = float(initial_state.get("M", np.nan)) if initial_state and initial_state.get("M") is not None else np.nan
+    init_m = float(initial_state.get("m", np.nan)) if initial_state and initial_state.get("m") is not None else np.nan
+    init_entry_carried = True if initial_state else False
+    init_rebal_count = int(initial_state.get("rebal_count", 0)) if initial_state else 0
+    init_rebal_cost_total = float(initial_state.get("rebal_cost_total", 0.0)) if initial_state else 0.0
+    init_entry_reason_int = 1 if initial_state and initial_state.get("entry_reason") == "BREAKOUT & FILTER" else (1 if init_position > 0.0 else 0)
 
-    if fast_mode:
-        # ------------------------------------------------------------------
-        # Fast path: integer loop over pre-extracted numpy arrays.
-        # ------------------------------------------------------------------
-        for _n in range(len(_prices)):
-            i = _index[_n]
-            price = float(_prices[_n])
-            ret = float(_rets[_n])
-            cash_ret = float(_cash_rets[_n])
-            trend = int(_trends[_n])
-            mom = float(_moms[_n])
-            vol = float(_vols[_n])
-            atr_val = float(_atrs[_n])  # ATR as dimensionless fraction (daily-return ATR)
-
-            if filter_mode_active == "fund":
-                filter_on = bool(_fund_vals[_n]) if _fund_vals is not None else True
-            elif filter_mode_active == "mom" or filter_mode_active == "mom_blend":
-                filter_on = mom > 0
-            else:
-                filter_on = trend == 1
-
-            is_warmup_row = bool(_warmups[_n])
-            if is_warmup_row:
-                equity_curve.append(equity)
-                continue
-
-            if position > 0:
-                equity *= 1 + position * ret + (1 - position) * cash_ret
-            else:
-                equity *= 1 + cash_ret
-
-            exit_reasons = []
-
-            if position > 0:
-                dd = (price - entry_price) / entry_price
-                if dd < -stop_loss:
-                    exit_reasons.append("ABSOLUTE_STOP")
-
-            if position > 0 and position_mode == "vol_dynamic":
-                new_pos = calc_position(vol, position_mode, target_vol, max_leverage)
-                size_change = abs(new_pos - position)
-                if size_change > 0.1:
-                    REBAL_COST = 0.0005
-                    equity *= 1 - size_change * REBAL_COST
-                    position = new_pos
-                    rebal_count += 1
-                    rebal_cost_total += size_change * REBAL_COST
-
-            if position > 0:
-                M = max(M, price) if M is not None else price
-                # -------------------------------------------------------
-                # TRAILING STOP — branch on stop mode
-                # -------------------------------------------------------
-                if use_atr_stop:
-                    # Normalised ATR Chandelier exit.
-                    # atr_val = rolling mean of |ΔP/P| (dimensionless fraction).
-                    # stop_level = M * (1 - N_atr * atr_val)
-                    # N_atr is directly comparable to X: at typical daily vol
-                    # of 1%, N_atr=0.10 gives a ~10% stop (10 days × 1%).
-                    # In high-vol regimes the stop widens; in low-vol it tightens.
-                    # Fall back to no stop breach if ATR is NaN (window start).
-                    if np.isfinite(atr_val) and atr_val > 0:
-                        stop_level = M * (1 - N_atr * atr_val)
-                        trail_breached = price < stop_level
-                    else:
-                        trail_breached = False
-                else:
-                    # Fixed percentage trailing stop (original behaviour)
-                    trail_breached = price < (1 - X) * M
-
-                if trail_breached:
-                    if "ABSOLUTE_STOP" not in exit_reasons:
-                        exit_reasons.append("TRAIL_STOP")
-                elif not filter_on:
-                    exit_reasons.append("FILTER_EXIT")
-
-            exit_reason = " + ".join(exit_reasons) if exit_reasons else None
-
-            if position > 0 and exit_reason:
-                COST = 0.0020
-                trade_ret = price / entry_price - 1 - COST
-                days = (i - entry_date).days
-                trades.append(
-                    {
-                        "EntryDate": entry_date,
-                        "ExitDate": i,
-                        "EntryPrice": entry_price,
-                        "Position": entry_pos,
-                        "ExitPrice": price,
-                        "Return": trade_ret,
-                        "Days": days,
-                        "Entry Reason": entry_reason,
-                        "Exit Reason": exit_reason,
-                        "CrossWindow": entry_carried,
-                    },
-                )
-                position = 0
-                entry_price = None
-                entry_date = None
-                entry_reason = None
-                M = None
-                m = None
-                entry_pos = None
-                entry_carried = False
-
-            if position == 0:
-                m = price if m is None else min(m, price)
-                gate_allows = _gate_vals is None or int(_gate_vals[_n]) == 1
-                if (price > (1 + Y) * m) and filter_on and gate_allows:
-                    entry_reason = "BREAKOUT & FILTER"
-                    position = calc_position(vol, position_mode, target_vol, max_leverage)
-                    entry_price = price
-                    entry_date = i
-                    entry_pos = position
-                    M = price
-                    entry_carried = False
-
-            equity_curve.append(equity)
-
-    else:
-        # ------------------------------------------------------------------
-        # Slow path: original iterrows loop.
-        # ------------------------------------------------------------------
-        for i, row in df.iterrows():
-            price = row["price"]
-            ret = row["ret"]
-            cash_ret = row["cash_ret"]
-            trend = row["trend"]
-            mom = row["MOM"]
-            vol = row["vol"]
-            atr_val = row["atr"]  # ATR as dimensionless fraction (daily-return ATR)
-
-            if filter_mode_active == "fund":
-                filter_on = bool(row["fund_filter"])
-            elif filter_mode_active == "mom" or filter_mode_active == "mom_blend":
-                filter_on = mom > 0
-            else:
-                filter_on = trend == 1
-
-            is_warmup_row = row["_warmup"]
-            if is_warmup_row:
-                equity_curve.append(equity)
-                continue
-
-            if position > 0:
-                equity *= 1 + position * ret + (1 - position) * cash_ret
-            else:
-                equity *= 1 + cash_ret
-
-            exit_reasons = []
-
-            if position > 0:
-                dd = (price - entry_price) / entry_price
-                if dd < -stop_loss:
-                    exit_reasons.append("ABSOLUTE_STOP")
-
-            if position > 0 and position_mode == "vol_dynamic":
-                new_pos = calc_position(vol, position_mode, target_vol, max_leverage)
-                size_change = abs(new_pos - position)
-
-                if size_change > 0.1:
-                    REBAL_COST = 0.0005
-                    equity *= 1 - size_change * REBAL_COST
-                    position = new_pos
-                    rebal_count += 1
-                    rebal_cost_total += size_change * REBAL_COST
-
-            if position > 0:
-                M = max(M, price) if M is not None else price
-                # -------------------------------------------------------
-                # TRAILING STOP — branch on stop mode
-                # -------------------------------------------------------
-                if use_atr_stop:
-                    if np.isfinite(atr_val) and atr_val > 0:
-                        stop_level = M * (1 - N_atr * atr_val)
-                        trail_breached = price < stop_level
-                    else:
-                        trail_breached = False
-                else:
-                    trail_breached = price < (1 - X) * M
-
-                if trail_breached:
-                    if "ABSOLUTE_STOP" not in exit_reasons:
-                        exit_reasons.append("TRAIL_STOP")
-                elif not filter_on:
-                    exit_reasons.append("FILTER_EXIT")
-
-            exit_reason = " + ".join(exit_reasons) if exit_reasons else None
-
-            if position > 0 and exit_reason:
-                COST = 0.0020
-                trade_ret = price / entry_price - 1 - COST
-                days = (i - entry_date).days
-
-                trades.append(
-                    {
-                        "EntryDate": entry_date,
-                        "ExitDate": i,
-                        "EntryPrice": entry_price,
-                        "Position": entry_pos,
-                        "ExitPrice": price,
-                        "Return": trade_ret,
-                        "Days": days,
-                        "Entry Reason": entry_reason,
-                        "Exit Reason": exit_reason,
-                        "CrossWindow": entry_carried,
-                    },
-                )
-
-                position = 0
-                entry_price = None
-                entry_date = None
-                entry_reason = None
-                M = None
-                m = None
-                entry_pos = None
-                entry_carried = False
-
-            if position == 0:
-                m = price if m is None else min(m, price)
-                gate_allows = gate_aligned is None or gate_aligned[i] == 1
-                if (price > (1 + Y) * m) and filter_on and gate_allows:
-                    entry_reason = "BREAKOUT & FILTER"
-                    position = calc_position(vol, position_mode, target_vol, max_leverage)
-                    entry_price = price
-                    entry_date = i
-                    entry_pos = position
-                    M = price
-                    entry_carried = False
-
-            equity_curve.append(equity)
-
-    if position_mode == "vol_dynamic" and rebal_count > 0:
-        logging.debug(
-            "vol_dynamic rebalancing: %d adjustments, total cost drag %.4f%% (%.1f bps)",
-            rebal_count,
-            rebal_cost_total * 100,
-            rebal_cost_total * 10000,
-        )
-
+    trades_list =[]
     end_state = None
 
-    if position > 0 and entry_price is not None:
-        last_date = df.index[-1]
-        last_price = df["price"].iloc[-1]
-        trade_ret = last_price / entry_price - 1
-        days = (last_date - entry_date).days
+    if engine_mode == "numba_light":
+        equity_curve, position, entry_price, entry_date, entry_pos, M, m, rebal_count, rebal_cost_total = run_numba_light(
+            prices=prices_arr,
+            rets=rets_arr,
+            cash_rets=cash_rets_arr,
+            trends=trends_arr,
+            moms=moms_arr,
+            vols=vols_arr,
+            atrs=atrs_arr,
+            warmups=warmups_arr,
+            gate_vals=gate_vals_arr,
+            fund_vals=fund_vals_arr,
+            dates=dates_arr,
+            filter_mode_int=filter_mode_int,
+            position_mode_int=position_mode_int,
+            stop_loss=stop_loss,
+            target_vol=target_vol,
+            max_leverage=max_leverage,
+            use_atr_stop=use_atr_stop,
+            N_atr=N_atr,
+            X=X,
+            Y=Y,
+            init_position=init_position,
+            init_entry_price=init_entry_price,
+            init_entry_date=init_entry_date,
+            init_entry_pos=init_entry_pos,
+            init_M=init_M,
+            init_m=init_m,
+            init_rebal_count=init_rebal_count,
+            init_rebal_cost_total=init_rebal_cost_total
+        )
+        
+        if position > 0.0 and not np.isnan(entry_price):
+            end_state = {
+                "position": position,
+                "entry_price": entry_price,
+                "entry_date": pd.Timestamp(entry_date) if entry_date > 0 else None,
+                "entry_reason": "BREAKOUT & FILTER",
+                "entry_pos": entry_pos,
+                "M": M,
+                "m": m,
+                "rebal_count": rebal_count,
+                "rebal_cost_total": rebal_cost_total
+            }
 
-        if entry_date < test_start:
-            logging.debug(
-                "CARRY trade entry date %s predates test window %s — "
-                "trade return and equity curve are on different bases",
-                entry_date,
-                test_start,
-            )
-
-        trades.append(
-            {
-                "EntryDate": entry_date,
-                "ExitDate": last_date,
-                "EntryPrice": entry_price,
-                "Position": entry_pos,
-                "ExitPrice": last_price,
-                "Return": trade_ret,
-                "Days": days,
-                "Entry Reason": entry_reason,
-                "Exit Reason": "CARRY",
-                "CrossWindow": entry_carried,
-            },
+    elif engine_mode == "numba_full":
+        equity_curve, position, entry_price, entry_date, entry_pos, M, m, entry_carried, rebal_count, rebal_cost_total, entry_reason_int, out_entry_dates, out_exit_dates, out_entry_prices, out_positions, out_exit_prices, out_returns, out_days, out_entry_reasons, out_exit_reasons, out_cross_window = run_numba_full(
+            prices=prices_arr,
+            rets=rets_arr,
+            cash_rets=cash_rets_arr,
+            trends=trends_arr,
+            moms=moms_arr,
+            vols=vols_arr,
+            atrs=atrs_arr,
+            warmups=warmups_arr,
+            gate_vals=gate_vals_arr,
+            fund_vals=fund_vals_arr,
+            dates=dates_arr,
+            filter_mode_int=filter_mode_int,
+            position_mode_int=position_mode_int,
+            stop_loss=stop_loss,
+            target_vol=target_vol,
+            max_leverage=max_leverage,
+            use_atr_stop=use_atr_stop,
+            N_atr=N_atr,
+            X=X,
+            Y=Y,
+            init_position=init_position,
+            init_entry_price=init_entry_price,
+            init_entry_date=init_entry_date,
+            init_entry_pos=init_entry_pos,
+            init_M=init_M,
+            init_m=init_m,
+            init_entry_carried=init_entry_carried,
+            init_rebal_count=init_rebal_count,
+            init_rebal_cost_total=init_rebal_cost_total,
+            init_entry_reason_int=init_entry_reason_int
         )
 
-        end_state = {
-            "position": position,
-            "entry_price": entry_price,
-            "entry_date": entry_date,
-            "entry_reason": entry_reason,
-            "entry_pos": entry_pos,
-            "M": M,
-            "m": m,
-            "rebal_count": rebal_count,
-            "rebal_cost_total": rebal_cost_total,
-        }
+        for trade_idx in range(len(out_entry_dates)):
+            trades_list.append({
+                "EntryDate": pd.Timestamp(out_entry_dates[trade_idx]),
+                "ExitDate": pd.Timestamp(out_exit_dates[trade_idx]),
+                "EntryPrice": out_entry_prices[trade_idx],
+                "Position": out_positions[trade_idx],
+                "ExitPrice": out_exit_prices[trade_idx],
+                "Return": out_returns[trade_idx],
+                "Days": out_days[trade_idx],
+                "Entry Reason": decode_entry_reason(reason_int=out_entry_reasons[trade_idx]),
+                "Exit Reason": decode_exit_reasons(reasons_int=out_exit_reasons[trade_idx]),
+                "CrossWindow": bool(out_cross_window[trade_idx])
+            })
+
+        if position > 0.0 and not np.isnan(entry_price):
+            last_date_ts = df.index[-1]
+            last_price_val = df["price"].iloc[-1]
+            trade_ret_val = last_price_val / entry_price - 1.0
+            days_in = (last_date_ts - pd.Timestamp(entry_date)).days
+            
+            trades_list.append({
+                "EntryDate": pd.Timestamp(entry_date),
+                "ExitDate": last_date_ts,
+                "EntryPrice": entry_price,
+                "Position": entry_pos,
+                "ExitPrice": last_price_val,
+                "Return": trade_ret_val,
+                "Days": days_in,
+                "Entry Reason": decode_entry_reason(reason_int=entry_reason_int),
+                "Exit Reason": "CARRY",
+                "CrossWindow": entry_carried
+            })
+
+            end_state = {
+                "position": position,
+                "entry_price": entry_price,
+                "entry_date": pd.Timestamp(entry_date) if entry_date > 0 else None,
+                "entry_reason": decode_entry_reason(reason_int=entry_reason_int),
+                "entry_pos": entry_pos,
+                "M": M,
+                "m": m,
+                "rebal_count": rebal_count,
+                "rebal_cost_total": rebal_cost_total
+            }
+
+    elif engine_mode == "legacy":
+        equity = 1.0
+        equity_curve_list =[]
+        
+        position = init_position
+        entry_price = init_entry_price if not np.isnan(init_entry_price) else None
+        entry_date = pd.Timestamp(init_entry_date) if init_entry_date > 0 else None
+        entry_pos = init_entry_pos if not np.isnan(init_entry_pos) else None
+        M = init_M if not np.isnan(init_M) else None
+        m = init_m if not np.isnan(init_m) else None
+        entry_carried = init_entry_carried
+        rebal_count = init_rebal_count
+        rebal_cost_total = init_rebal_cost_total
+        entry_reason = decode_entry_reason(reason_int=init_entry_reason_int)
+
+        for arr_idx in range(len(prices_arr)):
+            current_date_ts = pd.Timestamp(dates_arr[arr_idx])
+            price = float(prices_arr[arr_idx])
+            ret = float(rets_arr[arr_idx])
+            cash_ret = float(cash_rets_arr[arr_idx])
+            trend = int(trends_arr[arr_idx])
+            mom = float(moms_arr[arr_idx])
+            vol = float(vols_arr[arr_idx])
+            atr_val = float(atrs_arr[arr_idx])
+
+            if filter_mode_int == 3:
+                filter_on = bool(fund_vals_arr[arr_idx] == 1)
+            elif filter_mode_int == 1 or filter_mode_int == 2:
+                filter_on = mom > 0.0
+            else:
+                filter_on = trend == 1
+
+            is_warmup_row = bool(warmups_arr[arr_idx])
+            if is_warmup_row:
+                equity_curve_list.append(equity)
+                continue
+
+            if position > 0.0:
+                equity *= 1.0 + position * ret + (1.0 - position) * cash_ret
+            else:
+                equity *= 1.0 + cash_ret
+
+            exit_reasons =[]
+
+            if position > 0.0:
+                dd = (price - entry_price) / entry_price
+                if dd < -stop_loss:
+                    exit_reasons.append("ABSOLUTE_STOP")
+
+            if position > 0.0 and position_mode == "vol_dynamic":
+                new_pos = calc_position(
+                    vol=vol, 
+                    position_mode=position_mode, 
+                    target_vol=target_vol, 
+                    max_leverage=max_leverage
+                )
+                size_change = abs(new_pos - position)
+                if size_change > 0.1:
+                    rebal_cost = 0.0005
+                    equity *= 1.0 - size_change * rebal_cost
+                    position = new_pos
+                    rebal_count += 1
+                    rebal_cost_total += size_change * rebal_cost
+
+            if position > 0.0:
+                M = max(M, price) if M is not None else price
+                if use_atr_stop:
+                    if np.isfinite(atr_val) and atr_val > 0.0:
+                        stop_level = M * (1.0 - N_atr * atr_val)
+                        trail_breached = price < stop_level
+                    else:
+                        trail_breached = False
+                else:
+                    trail_breached = price < (1.0 - X) * M
+
+                if trail_breached:
+                    if "ABSOLUTE_STOP" not in exit_reasons:
+                        exit_reasons.append("TRAIL_STOP")
+                elif not filter_on:
+                    exit_reasons.append("FILTER_EXIT")
+
+            exit_reason = " + ".join(exit_reasons) if exit_reasons else None
+
+            if position > 0.0 and exit_reason:
+                cost = 0.0020
+                trade_ret = price / entry_price - 1.0 - cost
+                days_in = (current_date_ts - entry_date).days
+                trades_list.append(
+                    {
+                        "EntryDate": entry_date,
+                        "ExitDate": current_date_ts,
+                        "EntryPrice": entry_price,
+                        "Position": entry_pos,
+                        "ExitPrice": price,
+                        "Return": trade_ret,
+                        "Days": days_in,
+                        "Entry Reason": entry_reason,
+                        "Exit Reason": exit_reason,
+                        "CrossWindow": entry_carried,
+                    }
+                )
+                position = 0.0
+                entry_price = None
+                entry_date = None
+                entry_reason = None
+                M = None
+                m = None
+                entry_pos = None
+                entry_carried = False
+
+            if position == 0.0:
+                m = price if m is None else min(m, price)
+                gate_allows = gate_vals_arr[arr_idx] == 1
+                if (price > (1.0 + Y) * m) and filter_on and gate_allows:
+                    entry_reason = "BREAKOUT & FILTER"
+                    position = calc_position(
+                        vol=vol, 
+                        position_mode=position_mode, 
+                        target_vol=target_vol, 
+                        max_leverage=max_leverage
+                    )
+                    entry_price = price
+                    entry_date = current_date_ts
+                    entry_pos = position
+                    M = price
+                    entry_carried = False
+
+            equity_curve_list.append(equity)
+            
+        equity_curve = np.array(object=equity_curve_list, dtype=np.float64)
+
+        if position > 0.0 and entry_price is not None:
+            last_date_ts = df.index[-1]
+            last_price_val = df["price"].iloc[-1]
+            trade_ret_val = last_price_val / entry_price - 1.0
+            days_in = (last_date_ts - entry_date).days
+            
+            trades_list.append({
+                "EntryDate": entry_date,
+                "ExitDate": last_date_ts,
+                "EntryPrice": entry_price,
+                "Position": entry_pos,
+                "ExitPrice": last_price_val,
+                "Return": trade_ret_val,
+                "Days": days_in,
+                "Entry Reason": entry_reason,
+                "Exit Reason": "CARRY",
+                "CrossWindow": entry_carried
+            })
+
+            end_state = {
+                "position": position,
+                "entry_price": entry_price,
+                "entry_date": entry_date,
+                "entry_reason": entry_reason,
+                "entry_pos": entry_pos,
+                "M": M,
+                "m": m,
+                "rebal_count": rebal_count,
+                "rebal_cost_total": rebal_cost_total
+            }
+            
+    else:
+        raise ValueError(f"Unknown engine_mode: {engine_mode}")
 
     df["equity"] = equity_curve
     df = df[~df["_warmup"]].copy()
@@ -965,22 +1359,21 @@ def run_strategy_with_trades(
         df.drop(columns=["fund_filter"], inplace=True)
 
     if df.isnull().any().any():
-        logging.warning("NaN values remain in test rows after dropna — check cash merge")
+        logging.warning(msg="NaN values remain in test rows after dropna — check cash merge")
 
     first_val = df["equity"].iloc[0]
     if initial_state is not None and abs(first_val - 1.0) > 0.001:
         logging.debug(
-            "Warmup P&L on carried position: %.2f%% — excluded from OOS equity",
-            (first_val - 1.0) * 100,
+            msg=f"Warmup P&L on carried position: {(first_val - 1.0) * 100:.2f}% — excluded from OOS equity",
         )
     if first_val != 0:
         df["equity"] = df["equity"] / first_val
 
-    metrics = compute_metrics(df["equity"], risk_free_rate=rf_rate)
-    metrics = {k: float(v) for k, v in metrics.items()}
-    trades_df = pd.DataFrame(trades)
+    metrics_dict = compute_metrics(equity=df["equity"], risk_free_rate=rf_rate)
+    metrics_dict = {k: float(v) for k, v in metrics_dict.items()}
+    trades_df = pd.DataFrame(data=trades_list)
 
-    return df, metrics, trades_df, end_state
+    return df, metrics_dict, trades_df, end_state
 
 
 # -------------------------------------------------------
@@ -989,31 +1382,30 @@ def run_strategy_with_trades(
 
 
 def evaluate_params(
-    filter_mode,
-    fund_idx,
-    fund_params,
-    X,
-    Y,
-    fast,
-    slow,
-    tv,
-    stop_loss,
-    train,
-    cash_train,
-    vol_window,
-    selected_mode,
-    funds_df,
-    train_start,
-    train_end,
-    objective="calmar",
-    mom_lookback=252,
-    entry_gate=None,
-    fast_mode=True,
-    # ATR stop parameters
-    use_atr_stop=False,
-    N_atr=3.0,
-    atr_window=20,
-):
+    filter_mode: str,
+    fund_idx: int | None,
+    fund_params: dict | None,
+    X: float,
+    Y: float,
+    fast: int,
+    slow: int,
+    tv: float,
+    stop_loss: float,
+    train: pd.DataFrame,
+    cash_train: pd.DataFrame,
+    vol_window: int,
+    selected_mode: str,
+    funds_df: pd.DataFrame | None,
+    train_start: pd.Timestamp,
+    train_end: pd.Timestamp,
+    objective: str = "calmar",
+    mom_lookback: int = 252,
+    entry_gate: pd.Series | None = None,
+    use_atr_stop: bool = False,
+    N_atr: float = 3.0,
+    atr_window: int = 20,
+    engine_mode: str = "numba_light"
+) -> tuple[tuple, float] | None:
     """
     Evaluate a single parameter combination on the training window.
 
@@ -1033,8 +1425,8 @@ def evaluate_params(
             **fund_params,
         )
 
-    bt, metrics, trades, _ = run_strategy_with_trades(
-        train,
+    bt_df, metrics_dict, trades_ignored, state_ignored = run_strategy_with_trades(
+        df=train,
         cash_df=cash_train,
         price_col="Zamkniecie",
         X=X,
@@ -1048,19 +1440,20 @@ def evaluate_params(
         filter_mode=filter_mode,
         mom_lookback=mom_lookback,
         fund_signal=train_fund_signal,
-        fast_mode=fast_mode,
+        entry_gate=entry_gate,
         use_atr_stop=use_atr_stop,
         N_atr=N_atr,
         atr_window=atr_window,
+        engine_mode=engine_mode,
     )
 
-    if metrics is None:
+    if metrics_dict is None:
         return None
 
-    max_dd = metrics.get("MaxDD", 0)
-    sharpe = metrics.get("Sharpe", 0)
-    calmar = metrics["CAGR"] / abs(max_dd) if max_dd != 0 else None
-    sortino = metrics.get("Sortino", 0)
+    max_dd = metrics_dict.get("MaxDD", 0.0)
+    sharpe = metrics_dict.get("Sharpe", 0.0)
+    calmar = metrics_dict["CAGR"] / abs(max_dd) if max_dd != 0.0 else None
+    sortino = metrics_dict.get("Sortino", 0.0)
 
     if objective == "calmar":
         if calmar is None:
@@ -1092,34 +1485,30 @@ def evaluate_params(
 
 
 def walk_forward(
-    df,
-    cash_df,
-    train_years=8,
-    test_years=2,
-    vol_window=20,
-    funds_df=None,
-    fund_params_grid=None,
-    selected_mode="full",
-    filter_modes_override=None,
-    X_grid=[0.08, 0.10, 0.12, 0.15, 0.20],
-    Y_grid=[0.02, 0.03, 0.05, 0.07, 0.10],
-    fast_grid=[50, 75, 100],
-    slow_grid=[150, 200, 250],
-    tv_grid=[0.08, 0.10, 0.12, 0.15, 0.20],
-    sl_grid=[0.05, 0.08, 0.10, 0.15],
-    mom_lookback_grid=[126, 252],
-    objective="calmar",
-    n_jobs=1,
-    entry_gate_series=None,
-    fast_mode=True,
-    # -------------------------------------------------------
-    # ATR trailing stop parameters
-    # -------------------------------------------------------
-    use_atr_stop=False,  # False = fixed % X, True = ATR-scaled N_atr
-    N_atr_grid=None,  # ATR multiplier grid; replaces X_grid when
-    # use_atr_stop=True. Default: [2.0,3.0,4.0,5.0,6.0]
-    atr_window=20,  # Rolling window for ATR estimate (days)
-):
+    df: pd.DataFrame,
+    cash_df: pd.DataFrame,
+    train_years: int = 8,
+    test_years: int = 2,
+    vol_window: int = 20,
+    funds_df: pd.DataFrame | None = None,
+    fund_params_grid: list | None = None,
+    selected_mode: str = "full",
+    filter_modes_override: list[str] | None = None,
+    X_grid: list[float] | None = None,
+    Y_grid: list[float] | None = None,
+    fast_grid: list[int] | None = None,
+    slow_grid: list[int] | None = None,
+    tv_grid: list[float] | None = None,
+    sl_grid: list[float] | None = None,
+    mom_lookback_grid: list[int] | None = None,
+    objective: str = "calmar",
+    n_jobs: int = 1,
+    entry_gate_series: pd.Series | None = None,
+    use_atr_stop: bool = False,
+    N_atr_grid: list[float] | None = None,
+    atr_window: int = 20,
+    engine_mode: str = "numba_full"
+) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame]:
     """
     Run a rolling walk-forward optimisation and return a stitched
     out-of-sample equity curve.
@@ -1139,16 +1528,30 @@ def walk_forward(
     callers that do not pass ATR parameters are completely unaffected.
     """
 
-    # Resolve ATR grid default
+    # Resolve  grid default
+    if X_grid is None:
+        X_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
+    if Y_grid is None:
+        Y_grid =[0.02, 0.03, 0.05, 0.07, 0.10]
+    if fast_grid is None:
+        fast_grid = [50, 75, 100]
+    if slow_grid is None:
+        slow_grid = [150, 200, 250]
+    if tv_grid is None:
+        tv_grid =[0.08, 0.10, 0.12, 0.15, 0.20]
+    if sl_grid is None:
+        sl_grid =[0.05, 0.08, 0.10, 0.15]
+    if mom_lookback_grid is None:
+        mom_lookback_grid = [126, 252]
     if N_atr_grid is None:
-        N_atr_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
+        N_atr_grid =[0.08, 0.10, 0.12, 0.15, 0.20]
 
     # The stop grid for neighbour_mean: X_grid in fixed mode, N_atr_grid in ATR mode
     stop_grid = N_atr_grid if use_atr_stop else X_grid
 
     data_end = df.index.max()
     logging.info(
-        "walk_forward received data from %s to %s (%d rows)", df.index.min(), data_end, len(df),
+        msg=f"walk_forward received data from {df.index.min()} to {data_end} ({len(df)} rows)", 
     )
     logging.info("Objective function: %s", objective)
     logging.info(
@@ -1165,7 +1568,7 @@ def walk_forward(
     carry_state = None
 
     if filter_modes_override is not None:
-        logging.info("filter_modes overridden to: %s", filter_modes_override)
+        logging.info(msg=f"filter_modes overridden to: {filter_modes_override}")
 
     while True:
         gate_train = None
@@ -1268,81 +1671,81 @@ def walk_forward(
                 if backend is None:
                     results_list = [
                         evaluate_params(
-                            filter_mode,
-                            fund_idx,
-                            fund_params,
-                            stop_val,
-                            Y,
-                            fast,
-                            slow,
-                            tv,
-                            stop_loss,
-                            train,
-                            cash_train,
-                            vol_window,
-                            selected_mode,
-                            funds_df,
-                            train_start,
-                            train_end,
+                            filter_mode=filter_mode_val,
+                            fund_idx=fund_idx_val,
+                            fund_params=fund_params_val,
+                            X=stop_val_val,
+                            Y=Y_val,
+                            fast=fast_val,
+                            slow=slow_val,
+                            tv=tv_val,
+                            stop_loss=stop_loss_val,
+                            train=train,
+                            cash_train=cash_train,
+                            vol_window=vol_window,
+                            selected_mode=selected_mode,
+                            funds_df=funds_df,
+                            train_start=train_start,
+                            train_end=train_end,
                             objective=objective,
-                            mom_lookback=mom_lookback,
+                            mom_lookback=mom_lookback_val,
                             entry_gate=gate_train,
-                            fast_mode=fast_mode,
                             use_atr_stop=use_atr_stop,
-                            N_atr=stop_val,
+                            N_atr=stop_val_val,
                             atr_window=atr_window,
+                            engine_mode="numba_light"
                         )
                         for (
-                            filter_mode,
-                            fund_idx,
-                            fund_params,
-                            stop_val,
-                            Y,
-                            fast,
-                            slow,
-                            tv,
-                            stop_loss,
-                            mom_lookback,
+                            filter_mode_val,
+                            fund_idx_val,
+                            fund_params_val,
+                            stop_val_val,
+                            Y_val,
+                            fast_val,
+                            slow_val,
+                            tv_val,
+                            stop_loss_val,
+                            mom_lookback_val,
                         ) in param_combinations
                     ]
                 else:
                     results_list = Parallel(n_jobs=n_jobs_inner, backend=backend)(
                         delayed(evaluate_params)(
-                            filter_mode,
-                            fund_idx,
-                            fund_params,
-                            stop_val,
-                            Y,
-                            fast,
-                            slow,
-                            tv,
-                            stop_loss,
-                            train,
-                            cash_train,
-                            vol_window,
-                            selected_mode,
-                            funds_df,
-                            train_start,
-                            train_end,
+                            filter_mode=filter_mode_val,
+                            fund_idx=fund_idx_val,
+                            fund_params=fund_params_val,
+                            X=stop_val_val,
+                            Y=Y_val,
+                            fast=fast_val,
+                            slow=slow_val,
+                            tv=tv_val,
+                            stop_loss=stop_loss_val,
+                            train=train,
+                            cash_train=cash_train,
+                            vol_window=vol_window,
+                            selected_mode=selected_mode,
+                            funds_df=funds_df,
+                            train_start=train_start,
+                            train_end=train_end,
                             objective=objective,
-                            mom_lookback=mom_lookback,
+                            mom_lookback=mom_lookback_val,
                             entry_gate=gate_train,
-                            fast_mode=fast_mode,
                             use_atr_stop=use_atr_stop,
-                            N_atr=stop_val,
+                            N_atr=stop_val_val,
                             atr_window=atr_window,
+                            engine_mode="numba_light"
                         )
                         for (
-                            filter_mode,
-                            fund_idx,
-                            fund_params,
-                            stop_val,
-                            Y,
-                            fast,
-                            slow,
-                            tv,
-                            stop_loss,
-                            mom_lookback,
+                            filter_mode_val,
+                            fund_idx_val,
+                            fund_params_val,
+                            stop_val_val,
+                            Y_val,
+                            fast_val,
+                            slow_val,
+                            tv_val,
+                            stop_loss_val,
+                            mom_lookback_val,
                         ) in param_combinations
                     )
 
@@ -1473,7 +1876,7 @@ def walk_forward(
                 )
 
         # Build kwargs for run_strategy_with_trades — exclude meta keys
-        _strategy_keys_to_exclude = {
+        strategy_keys_to_exclude = {
             "filter_mode",
             "fund_params",
             "fund_idx",
@@ -1485,22 +1888,22 @@ def walk_forward(
         }
 
         bt_oos, test_metrics, oos_trades, end_state = run_strategy_with_trades(
-            test,
+            df=test,
             price_col="Zamkniecie",
             cash_df=cash_warmup_and_test,
             position_mode=selected_mode,
             vol_window=vol_window,
             initial_state=carry_state,
             warmup_df=warmup,
-            entry_gate=gate_oos if "gate_oos" in dir() else None,
+            entry_gate=gate_oos,
             fund_signal=oos_fund_signal,
-            fast_mode=fast_mode,
             filter_mode=best_params["filter_mode"],
             mom_lookback=best_params["mom_lookback"],
             use_atr_stop=best_params["use_atr_stop"],
             N_atr=best_params["N_atr"],
             atr_window=best_params["atr_window"],
-            **{k: v for k, v in best_params.items() if k not in _strategy_keys_to_exclude},
+            engine_mode=engine_mode,
+            **{k: v for k, v in best_params.items() if k not in strategy_keys_to_exclude},
         )
 
         if test_metrics is None or bt_oos is None:
@@ -1583,8 +1986,14 @@ def walk_forward(
 # ============================================================
 
 
-def analyze_trades(trades, boundary_exits={"CARRY", "SAMPLE_END"}):
+def analyze_trades(
+    trades: pd.DataFrame, 
+    boundary_exits: set[str] | None = None
+) -> dict[str, float] | None:
 
+    if boundary_exits is None:
+        boundary_exits = {"CARRY", "SAMPLE_END"}
+        
     if trades.empty:
         return None
 
@@ -1602,13 +2011,13 @@ def analyze_trades(trades, boundary_exits={"CARRY", "SAMPLE_END"}):
     pf = np.inf if loss == 0 else (trades.loc[trades["Return"] > 0, "Return"].sum() / loss)
 
     return {
-        "Trades": len(trades),
-        "WinRate": (trades["Return"] > 0).mean(),
-        "AvgWin": trades.loc[trades["Return"] > 0, "Return"].mean(),
-        "AvgLoss": trades.loc[trades["Return"] < 0, "Return"].mean(),
-        "ProfitFactor": pf,
-        "AvgDays": trades["Days"].mean(),
-        "CrossWindow": int(n_cross),
+        "Trades": float(len(trades)),
+        "WinRate": float((trades["Return"] > 0).mean()),
+        "AvgWin": float(trades.loc[trades["Return"] > 0, "Return"].mean()),
+        "AvgLoss": float(trades.loc[trades["Return"] < 0, "Return"].mean()),
+        "ProfitFactor": float(pf),
+        "AvgDays": float(trades["Days"].mean()),
+        "CrossWindow": float(n_cross),
     }
 
 
@@ -1616,14 +2025,14 @@ def analyze_trades(trades, boundary_exits={"CARRY", "SAMPLE_END"}):
 # Report Printing Function with Best Parameters
 # ------------------------
 def print_backtest_report(
-    metrics,
-    trades,
-    trade_stats,
-    best_params=None,
-    wf_results=None,
-    position_mode=None,
-    filter_modes_override=None,
-):
+    metrics: dict[str, float],
+    trades: pd.DataFrame,
+    trade_stats: dict[str, float] | None,
+    best_params: dict | None = None,
+    wf_results: pd.DataFrame | None = None,
+    position_mode: str | None = None,
+    filter_modes_override: list[str] | None = None,
+) -> None:
 
     logging.info("=" * 80)
     logging.info(f"WALK-FORWARD OOS BACKTEST REPORT   mode = {position_mode}")
