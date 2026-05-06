@@ -1234,3 +1234,165 @@ def walk_forward(
     oos_trades_df = pd.concat(objs=all_oos_trades) if all_oos_trades else pd.DataFrame()
 
     return oos_equity, results_df, oos_trades_df
+
+# ============================================================
+# TRADE ANALYSIS
+# ============================================================
+
+
+def analyze_trades(
+    trades: pd.DataFrame, 
+    boundary_exits: set[str] | None = None
+) -> dict[str, float] | None:
+    """
+    Analizuje log transakcji, obliczając statystyki skuteczności.
+    Wyeliminowano zmienne śmieciowe i wprowadzono jawne typowanie.
+    """
+
+    if boundary_exits is None:
+        # Definicja powodów wyjścia, które nie są wynikiem sygnału rynkowego
+        boundary_exits = {"CARRY", "SAMPLE_END"}
+        
+    if trades.empty:
+        return None
+
+    # Filtrujemy tylko zamknięte, rynkowe transakcje
+    market_trades = trades[~trades["Exit Reason"].isin(boundary_exits)].copy()
+
+    if market_trades.empty:
+        return None
+
+    # Liczenie transakcji przechodzących między oknami (CrossWindow)
+    n_cross_val = market_trades["CrossWindow"].sum() if "CrossWindow" in market_trades.columns else 0
+    if n_cross_val > 0:
+        logging.info(msg=f"{n_cross_val} trades carried across window boundaries")
+
+    # Obliczanie sumy zysków i strat dla Profit Factor
+    total_gross_loss = abs(market_trades.loc[market_trades["Return"] < 0, "Return"].sum())
+    total_gross_profit = market_trades.loc[market_trades["Return"] > 0, "Return"].sum()
+
+    # Profit Factor: Zysk Brutto / Strata Brutto
+    profit_factor_val = np.inf if total_gross_loss == 0 else (total_gross_profit / total_gross_loss)
+
+    return {
+        "Trades": float(len(market_trades)),
+        "WinRate": float((market_trades["Return"] > 0).mean()),
+        "AvgWin": float(market_trades.loc[market_trades["Return"] > 0, "Return"].mean()),
+        "AvgLoss": float(market_trades.loc[market_trades["Return"] < 0, "Return"].mean()),
+        "ProfitFactor": float(profit_factor_val),
+        "AvgDays": float(market_trades["Days"].mean()),
+        "CrossWindow": float(n_cross_val),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Report Printing Function
+# ---------------------------------------------------------------------------
+
+def print_backtest_report(
+    metrics: dict[str, float],
+    trades: pd.DataFrame,
+    trade_stats: dict[str, float] | None,
+    best_params: dict | None = None,
+    wf_results: pd.DataFrame | None = None,
+    position_mode: str | None = None,
+    filter_modes_override: list[str] | None = None,
+) -> None:
+    """
+    Loguje sformatowany raport z wynikami backtestu OOS.
+    """
+
+    logging.info(msg="=" * 80)
+    logging.info(msg=f"WALK-FORWARD OOS BACKTEST REPORT   mode = {position_mode}")
+    
+    if filter_modes_override is not None:
+        logging.info(msg=f"Filter mode was forced to:    {filter_modes_override}")
+    else:
+        logging.info(msg="Filter mode selection set to automatic")
+    
+    logging.info(msg="=" * 80)
+
+    # Wyświetlanie wyników poszczególnych okien Walk-Forward
+    if wf_results is not None and not wf_results.empty:
+        # Sprawdzanie czy używamy ATR czy Fixed stop do wyświetlenia odpowiedniej kolumny
+        use_atr_active = "use_atr_stop" in wf_results.columns and wf_results["use_atr_stop"].any()
+        stop_column_label = "N_atr" if use_atr_active else "X"
+
+        columns_to_display = [
+            "TrainStart",
+            "TestStart",
+            "filter_mode",
+            stop_column_label,
+            "Y",
+            "fast",
+            "slow",
+            "target_vol",
+            "stop_loss",
+            "mom_lookback",
+        ]
+        
+        # Filtrujemy tylko te kolumny, które faktycznie istnieją w DataFrame
+        valid_columns = [col_name for col_name in columns_to_display if col_name in wf_results.columns]
+
+        if "fund_params" in wf_results.columns and wf_results["filter_mode"].eq("fund").any():
+            valid_columns.insert(3, "fund_params")
+
+        if use_atr_active and "atr_window" in wf_results.columns:
+            atr_win_val = wf_results["atr_window"].iloc[0]
+            logging.info(msg=f"ATR trailing stop mode active (atr_window={atr_win_val})")
+
+        logging.info(msg=f"\n{wf_results[valid_columns].to_string(index=False)}")
+
+    logging.info(msg="-" * 80)
+
+    # Główne metryki portfela
+    logging.info(msg="METRICS:")
+    logging.info(
+        msg=f"CAGR:  {metrics['CAGR'] * 100:.2f}% | Vol: {metrics['Vol'] * 100:.2f}% | "
+            f"Sharpe: {metrics['Sharpe']:.2f} | MaxDD: {metrics['MaxDD'] * 100:.2f}% | "
+            f"CalMAR: {metrics['CalMAR']:.2f} | Sortino: {metrics['Sortino']:.2f}"
+    )
+    logging.info(msg="-" * 80)
+
+    # Statystyki handlowe
+    if trade_stats:
+        logging.info(msg="TRADE STATISTICS:")
+        logging.info(
+            msg=f"Total Trades: {int(trade_stats['Trades'])} | Win Rate: {trade_stats['WinRate'] * 100:.1f}% | "
+                f"Avg Win: {trade_stats['AvgWin'] * 100:.2f}% | Avg Loss: {trade_stats['AvgLoss'] * 100:.2f}% | "
+                f"Profit Factor: {trade_stats['ProfitFactor']:.2f} | Avg Days: {trade_stats['AvgDays']:.1f}"
+        )
+        logging.info(msg="-" * 80)
+    else:
+        logging.info(msg="No trades executed in the backtest.")
+        logging.info(msg="-" * 80)
+
+    # Logowanie szczegółowe transakcji
+    if not trades.empty:
+        # Informacja o otwartych pozycjach (CARRY)
+        carry_trades_only = trades[trades["Exit Reason"] == "CARRY"]
+        n_carry_count = len(carry_trades_only)
+        
+        if n_carry_count > 0:
+            logging.info(
+                msg=f"Note: trade log includes {n_carry_count} CARRY boundary records excluded from statistics above.",
+            )
+
+        # Formatowanie logu transakcji do czytelnej postaci
+        trades_display_copy = trades.copy()
+        trades_display_copy["Return"] = (trades_display_copy["Return"] * 100).round(decimals=2).astype(dtype=str) + "%"
+        trades_display_copy["EntryPrice"] = trades_display_copy["EntryPrice"].round(decimals=2)
+        trades_display_copy["ExitPrice"] = trades_display_copy["ExitPrice"].round(decimals=2)
+        
+        logging.info(msg="TRADE LOG:")
+        logging.info(msg=f"\n{trades_display_copy.to_string(index=False)}")
+
+        # Szczegóły ostatniej, wciąż otwartej pozycji
+        if trades.iloc[-1]["Exit Reason"] == "CARRY":
+            last_record = trades.iloc[-1]
+            logging.info(
+                msg=f"Open position at report date: entry {last_record['EntryDate']} at {last_record['EntryPrice']:.2f}, "
+                    f"current value {last_record['ExitPrice']:.2f}, unrealised return {last_record['Return'] * 100:.1f}%"
+            )
+            
+    logging.info(msg="=" * 80)
