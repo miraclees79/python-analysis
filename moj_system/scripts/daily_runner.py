@@ -183,7 +183,7 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
     cfg = ASSET_REGISTRY["PENSION"]
     selected_stop = cfg.get("default_stop_eq", "atr") if stop_mode_arg == "auto" else stop_mode_arg
     use_atr_eq = selected_stop == "atr"
-    logging.info(f"PENSION PORTFOLIO ENGINE (WIG+TBSP+MMF) | WIG Stop: {selected_stop}")
+    logging.info(f"PENSION PORTFOLIO ENGINE (WIG+TBSP+MMF) | WIG Stop: {selected_stop} | Train years: {cfg["train"]} | Test years: {cfg["test"]}")
 
     WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
     MMF = load_local_csv("fund_2720", "MMF")
@@ -281,7 +281,7 @@ def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
     cfg = ASSET_REGISTRY[asset_key]
     mode, train_y, test_y, fx_h = cfg["mode"], cfg["train"], cfg["test"], cfg["fx_hedged"]
     folder_id = os.environ.get("GDRIVE_FOLDER_ID")
-    logging.info(f"GLOBAL PORTFOLIO ENGINE: {mode} | FX Hedged: {fx_h}")
+    logging.info(f"GLOBAL PORTFOLIO ENGINE: {mode} | FX Hedged: {fx_h} | Stop mode: {cfg["default_stop_eq"]} | Train years: {cfg["train"]} | Test years: {cfg["test"]}")
 
     WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
     TBSP = build_and_upload(
