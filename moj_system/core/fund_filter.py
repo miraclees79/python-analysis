@@ -29,38 +29,11 @@ import numpy as np
 import pandas as pd
 
 # Import funkcji, od których te moduły zależą
-from moj_system.core.strategy_engine import (  # (Zakładając, że download_csv_old jest chwilowo potrzebny)
-    download_csv_old,
-    load_csv,
+from moj_system.data.data_manager import (  # (Zakładając, że download_csv_old jest chwilowo potrzebny)
+    load_local_csv,
 )
 
 
-def download_fund_navs(fund_codes: dict, tmp_dir: str) -> dict:
-    """
-    Download fund NAV series from stooq.pl and build the FUND_FILES dict.
-    """
-    BASE_URL = "https://stooq.pl/q/d/l/?s={code}.n&i=d"
-    fund_files = {}
-
-    for code, name in fund_codes.items():
-        url = BASE_URL.format(code=code)
-        filepath = os.path.join(tmp_dir, f"fund_{code}_{name}.csv")
-
-        # UWAGA: Ta funkcja zależy od download_csv_old. Jeśli usuniesz ją z strategy_engine,
-        # musisz przenieść ją tutaj lub zastąpić nowym mechanizmem pobierania.
-        # Na razie zostawiamy, zakładając tymczasową zależność.
-        success = download_csv_old(url, filepath)
-
-        if success:
-            fund_files[name] = filepath
-            logging.info(f"Fund {name} ({code}) — downloaded to {filepath}.")
-        else:
-            logging.warning(f"Fund {name} ({code}) — download failed, will be excluded.")
-
-        time.sleep(random.uniform(0.3, 1))
-
-    logging.info(f"download_fund_navs: {len(fund_files)} of {len(fund_codes)} funds downloaded.")
-    return fund_files
 
 
 def build_funds_df(
@@ -74,7 +47,7 @@ def build_funds_df(
     excluded = []
 
     for fund_id, filepath in fund_files.items():
-        df = load_csv(filepath)
+        df = load_local_csv(filepath)
         if df is None:
             excluded.append((fund_id, "load failed"))
             continue
