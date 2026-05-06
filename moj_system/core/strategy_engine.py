@@ -478,126 +478,252 @@ def calc_position_numba(
         return min(pos, max_leverage)
     return 1.0
 
+# ============================
+# NUMBA CORE ENGINES
+# ============================
+
 @njit(cache=True, nogil=True)
 def run_numba_light(
-    prices: np.ndarray, rets: np.ndarray, cash_rets: np.ndarray, trends: np.ndarray,
-    moms: np.ndarray, vols: np.ndarray, atrs: np.ndarray, warmups: np.ndarray,
-    gate_vals: np.ndarray, fund_vals: np.ndarray, dates: np.ndarray,
-    filter_mode_int: int, position_mode_int: int, stop_loss: float,
-    target_vol: float, max_leverage: float, use_atr_stop: bool,
-    N_atr: float, X: float, Y: float,
-    init_pos: float, init_entry_px: float, init_entry_dt: int, init_M: float, init_m: float
+    prices:                np.ndarray,
+    rets:                  np.ndarray,
+    cash_rets:             np.ndarray,
+    trends:                np.ndarray,
+    moms:                  np.ndarray,
+    vols:                  np.ndarray,
+    atrs:                  np.ndarray,
+    warmups:               np.ndarray,
+    gate_vals:             np.ndarray,
+    fund_vals:             np.ndarray,
+    dates:                 np.ndarray,
+    filter_mode_int:       int,
+    position_mode_int:     int,
+    stop_loss:             float,
+    target_vol:            float,
+    max_leverage:          float,
+    use_atr_stop:          bool,
+    N_atr:                 float,
+    X:                     float,
+    Y:                     float,
+    init_pos:              float,
+    init_entry_px:         float,
+    init_entry_dt:         int,
+    init_M:                float,
+    init_m:                float,
+    init_rebal_count:      int,
+    init_rebal_cost_total: float,
+    init_carried:          bool  # Nieużywany w light, ale potrzebny do zgodności args
 ) -> tuple:
-    n = len(prices)
-    equity_curve = np.zeros(n)
-    equity = 1.0
-    position = init_pos
-    entry_price = init_entry_px
-    entry_date = init_entry_dt
-    M = init_M
-    m = init_m
-    entry_pos = init_pos
+    n_bars = len(prices)
+    equity_curve = np.zeros(shape=n_bars, dtype=np.float64)
+    equity_val = 1.0
 
-    for i in range(n):
-        if filter_mode_int == 3: filter_on = fund_vals[i] == 1
-        elif filter_mode_int in (1, 2): filter_on = moms[i] > 0.0
-        else: filter_on = trends[i] == 1
+    current_pos = init_pos
+    entry_px = init_entry_px
+    entry_dt = init_entry_dt
+    running_M = init_M
+    running_m = init_m
+    rebal_c = init_rebal_count
+    rebal_cost = init_rebal_cost_total
 
+    for i in range(n_bars):
+        # 1. Wybór filtra
+        if filter_mode_int == 3:
+            filter_on = fund_vals[i] == 1
+        elif filter_mode_int == 1 or filter_mode_int == 2:
+            filter_on = moms[i] > 0.0
+        else:
+            filter_on = trends[i] == 1
+
+        # 2. Pomiń warmup
         if warmups[i]:
-            equity_curve[i] = equity
+            equity_curve[i] = equity_val
             continue
 
-        if position > 0.0: equity *= 1.0 + position * rets[i] + (1.0 - position) * cash_rets[i]
-        else: equity *= 1.0 + cash_rets[i]
+        # 3. Naliczanie stóp zwrotu
+        if current_pos > 0.0:
+            equity_val *= 1.0 + current_pos * rets[i] + (1.0 - current_pos) * cash_rets[i]
+        else:
+            equity_val *= 1.0 + cash_rets[i]
 
+        # 4. Sprawdzanie wyjść
         exit_triggered = False
-        if position > 0.0:
-            if (prices[i] - entry_price) / entry_price < -stop_loss: exit_triggered = True
-            M = max(M, prices[i])
-            stop_lvl = M * (1.0 - N_atr * atrs[i]) if use_atr_stop else M * (1.0 - X)
-            if prices[i] < stop_lvl or not filter_on: exit_triggered = True
+        if current_pos > 0.0:
+            # Absolute Stop
+            if (prices[i] - entry_px) / entry_px < -stop_loss:
+                exit_triggered = True
             
-        if position > 0.0 and exit_triggered:
-            position = 0.0; entry_price = np.nan; M = np.nan; m = prices[i]
+            # Trailing Stop & Filter Exit
+            running_M = max(running_M, prices[i])
+            # ATR w danych jest surowy (np. 0.015 dla 1.5%), N_atr to mnożnik (np. 0.15)
+            # Stop = M * (1 - 0.15 * 0.015)
+            current_stop = running_M * (1.0 - N_atr * atrs[i]) if use_atr_stop else running_M * (1.0 - X)
+            
+            if prices[i] < current_stop or not filter_on:
+                exit_triggered = True
 
-        if position == 0.0:
-            m = min(m, prices[i]) if not np.isnan(m) else prices[i]
-            if prices[i] > (1.0 + Y) * m and filter_on and gate_vals[i] == 1:
-                position = calc_position_numba(vols[i], position_mode_int, target_vol, max_leverage)
-                entry_price = prices[i]; entry_date = dates[i]; M = prices[i]; entry_pos = position
-        
-        equity_curve[i] = equity
-        
-    return equity_curve, position, entry_price, entry_date, entry_pos, M, m
+        if current_pos > 0.0 and exit_triggered:
+            current_pos = 0.0
+            entry_px = np.nan
+            running_M = np.nan
+            running_m = prices[i]
+
+        # 5. Sprawdzanie wejść
+        if current_pos == 0.0:
+            if np.isnan(running_m):
+                running_m = prices[i]
+            else:
+                running_m = min(running_m, prices[i])
+            
+            if (prices[i] > (1.0 + Y) * running_m) and filter_on and gate_vals[i] == 1:
+                # Obliczanie pozycji (vol_entry / vol_dynamic)
+                if position_mode_int == 0:
+                    current_pos = 1.0
+                elif not np.isnan(vols[i]) and vols[i] > 0.0:
+                    current_pos = min(target_vol / vols[i], max_leverage)
+                else:
+                    current_pos = 1.0
+                
+                entry_px = prices[i]
+                entry_dt = dates[i]
+                running_M = prices[i]
+
+        equity_curve[i] = equity_val
+
+    return equity_curve, current_pos, entry_px, entry_dt, running_M, running_m, rebal_c, rebal_cost
+
 
 @njit(cache=True, nogil=True)
 def run_numba_full(
-    prices: np.ndarray, rets: np.ndarray, cash_rets: np.ndarray, trends: np.ndarray,
-    moms: np.ndarray, vols: np.ndarray, atrs: np.ndarray, warmups: np.ndarray,
-    gate_vals: np.ndarray, fund_vals: np.ndarray, dates: np.ndarray,
-    filter_mode_int: int, position_mode_int: int, stop_loss: float,
-    target_vol: float, max_leverage: float, use_atr_stop: bool,
-    N_atr: float, X: float, Y: float,
-    init_pos: float, init_entry_px: float, init_entry_dt: int, init_M: float, init_m: float, init_carried: bool
+    prices:                np.ndarray,
+    rets:                  np.ndarray,
+    cash_rets:             np.ndarray,
+    trends:                np.ndarray,
+    moms:                  np.ndarray,
+    vols:                  np.ndarray,
+    atrs:                  np.ndarray,
+    warmups:               np.ndarray,
+    gate_vals:             np.ndarray,
+    fund_vals:             np.ndarray,
+    dates:                 np.ndarray,
+    filter_mode_int:       int,
+    position_mode_int:     int,
+    stop_loss:             float,
+    target_vol:            float,
+    max_leverage:          float,
+    use_atr_stop:          bool,
+    N_atr:                 float,
+    X:                     float,
+    Y:                     float,
+    init_pos:              float,
+    init_entry_px:         float,
+    init_entry_dt:         int,
+    init_M:                float,
+    init_m:                float,
+    init_rebal_count:      int,
+    init_rebal_cost_total: float,
+    init_carried:          bool
 ) -> tuple:
-    n = len(prices)
-    equity_curve = np.zeros(n)
-    equity = 1.0
-    position = init_pos
-    entry_price = init_entry_px
-    entry_date = init_entry_dt
-    entry_pos = init_pos
-    M = init_M
-    m = init_m
-    is_carried = init_carried
-    entry_reason_int = 1 if init_pos > 0.0 else 0
+    n_bars = len(prices)
+    equity_curve = np.zeros(shape=n_bars, dtype=np.float64)
+    equity_val = 1.0
 
-    out_en_dt, out_ex_dt = np.zeros(n, dtype=np.int64), np.zeros(n, dtype=np.int64)
-    out_en_px, out_ex_px, out_rets, out_pos = np.zeros(n), np.zeros(n), np.zeros(n), np.zeros(n)
-    out_ex_rs, out_days = np.zeros(n, dtype=np.int64), np.zeros(n, dtype=np.int64)
-    out_cross = np.zeros(n, dtype=np.bool_)
-    t_idx = 0
+    current_pos = init_pos
+    entry_px = init_entry_px
+    entry_dt = init_entry_dt
+    running_M = init_M
+    running_m = init_m
+    is_carried_flag = init_carried
+    rebal_c = init_rebal_count
+    rebal_cost = init_rebal_cost_total
 
-    for i in range(n):
-        if filter_mode_int == 3: filter_on = fund_vals[i] == 1
-        elif filter_mode_int in (1, 2): filter_on = moms[i] > 0.0
-        else: filter_on = trends[i] == 1
+    # Logi transakcji (pre-alokacja)
+    out_en_dt = np.zeros(shape=n_bars, dtype=np.int64)
+    out_ex_dt = np.zeros(shape=n_bars, dtype=np.int64)
+    out_en_px = np.zeros(shape=n_bars, dtype=np.float64)
+    out_ex_px = np.zeros(shape=n_bars, dtype=np.float64)
+    out_rets  = np.zeros(shape=n_bars, dtype=np.float64)
+    out_pos   = np.zeros(shape=n_bars, dtype=np.float64)
+    out_ex_rs = np.zeros(shape=n_bars, dtype=np.int64)
+    out_cross = np.zeros(shape=n_bars, dtype=np.bool_)
+    trade_idx = 0
+
+    for i in range(n_bars):
+        if filter_mode_int == 3:
+            filter_on = fund_vals[i] == 1
+        elif filter_mode_int == 1 or filter_mode_int == 2:
+            filter_on = moms[i] > 0.0
+        else:
+            filter_on = trends[i] == 1
 
         if warmups[i]:
-            equity_curve[i] = equity
+            equity_curve[i] = equity_val
             continue
 
-        if position > 0.0: equity *= 1.0 + position * rets[i] + (1.0 - position) * cash_rets[i]
-        else: equity *= 1.0 + cash_rets[i]
+        if current_pos > 0.0:
+            equity_val *= 1.0 + current_pos * rets[i] + (1.0 - current_pos) * cash_rets[i]
+        else:
+            equity_val *= 1.0 + cash_rets[i]
 
         exit_code = 0
-        if position > 0.0:
-            if (prices[i] - entry_price) / entry_price < -stop_loss: exit_code |= 1
-            M = max(M, prices[i])
-            stop_lvl = M * (1.0 - N_atr * atrs[i]) if use_atr_stop else M * (1.0 - X)
-            if prices[i] < stop_lvl: exit_code |= 2
-            if not filter_on: exit_code |= 4
+        if current_pos > 0.0:
+            if (prices[i] - entry_px) / entry_px < -stop_loss:
+                exit_code |= 1
+            
+            running_M = max(running_M, prices[i])
+            current_stop = running_M * (1.0 - N_atr * atrs[i]) if use_atr_stop else running_M * (1.0 - X)
+            
+            if prices[i] < current_stop:
+                exit_code |= 2
+            if not filter_on:
+                exit_code |= 4
 
-        if position > 0.0 and exit_code > 0:
-            out_en_dt[t_idx] = entry_date; out_ex_dt[t_idx] = dates[i]
-            out_en_px[t_idx] = entry_price; out_ex_px[t_idx] = prices[i]
-            out_pos[t_idx] = entry_pos; out_rets[t_idx] = (prices[i] / entry_price - 1.0 - 0.0020)
-            out_ex_rs[t_idx] = exit_code; out_cross[t_idx] = is_carried
-            out_days[t_idx] = (dates[i] - entry_date) // 86400000000000
-            t_idx += 1
-            position = 0.0; entry_price = np.nan; M = np.nan; m = prices[i]; is_carried = False; entry_reason_int = 0
+        if current_pos > 0.0 and exit_code > 0:
+            # Zamykanie transakcji
+            cost_fixed = 0.0020
+            trade_return = prices[i] / entry_px - 1.0 - cost_fixed
+            
+            out_en_dt[trade_idx] = entry_dt
+            out_ex_dt[trade_idx] = dates[i]
+            out_en_px[trade_idx] = entry_px
+            out_ex_px[trade_idx] = prices[i]
+            out_pos[trade_idx]   = current_pos
+            out_rets[trade_idx]  = trade_return
+            out_ex_rs[trade_idx] = exit_code
+            out_cross[trade_idx] = is_carried_flag
+            trade_idx += 1
 
-        if position == 0.0:
-            m = min(m, prices[i]) if not np.isnan(m) else prices[i]
-            if prices[i] > (1.0 + Y) * m and filter_on and gate_vals[i] == 1:
-                position = calc_position_numba(vols[i], position_mode_int, target_vol, max_leverage)
-                entry_price = prices[i]; entry_date = dates[i]; M = prices[i]; entry_pos = position; is_carried = False; entry_reason_int = 1
+            current_pos = 0.0
+            entry_px = np.nan
+            running_M = np.nan
+            running_m = prices[i]
+            is_carried_flag = False
 
-        equity_curve[i] = equity
+        if current_pos == 0.0:
+            if np.isnan(running_m):
+                running_m = prices[i]
+            else:
+                running_m = min(running_m, prices[i])
+            
+            if (prices[i] > (1.0 + Y) * running_m) and filter_on and gate_vals[i] == 1:
+                if position_mode_int == 0:
+                    current_pos = 1.0
+                elif not np.isnan(vols[i]) and vols[i] > 0.0:
+                    current_pos = min(target_vol / vols[i], max_leverage)
+                else:
+                    current_pos = 1.0
+                
+                entry_px = prices[i]
+                entry_dt = dates[i]
+                running_M = prices[i]
+                is_carried_flag = False
 
-    return (equity_curve, position, entry_price, entry_date, entry_pos, M, m, is_carried, entry_reason_int,
-            out_en_dt[:t_idx], out_ex_dt[:t_idx], out_en_px[:t_idx], out_pos[:t_idx], 
-            out_ex_px[:t_idx], out_rets[:t_idx], out_days[:t_idx], out_ex_rs[:t_idx], out_cross[:t_idx])
+        equity_curve[i] = equity_val
+
+    return (
+        equity_curve, current_pos, entry_px, entry_dt, running_M, running_m, is_carried_flag,
+        out_en_dt[:trade_idx], out_ex_dt[:trade_idx], out_en_px[:trade_idx], out_pos[:trade_idx],
+        out_ex_px[:trade_idx], out_rets[:trade_idx], out_ex_rs[:trade_idx], out_cross[:trade_idx]
+    )
 
 
 def decode_exit_reasons(
@@ -624,10 +750,10 @@ def decode_entry_reason(
 
 
 
+# ============================
+# Strategy Engine Wrapper
+# ============================
 
-# ============================
-# Strategy Engine
-# ============================
 def run_strategy_with_trades(
     df:                pd.DataFrame,
     price_col:         str   = "price",
@@ -653,410 +779,119 @@ def run_strategy_with_trades(
     atr_window:        int   = 20,
     engine_mode:       str   = "numba_full"
 ) -> tuple[pd.DataFrame, dict[str, float] | None, pd.DataFrame, dict | None]:
-    """
-    Zrefaktoryzowany silnik strategii. 
-    Poprawiono logikę skalowania ATR oraz obsługę stanów początkowych.
-    """
 
-    df = df.copy()
-    df["price"] = df[price_col]
-
-    # Detekcja kolumn High/Low
-    has_hl = (
-        "Najwyzszy" in df.columns
-        and "Najnizszy" in df.columns
-        and not df["Najwyzszy"].isna().all()
-        and not df["Najnizszy"].isna().all()
-    )
-    if has_hl:
-        df["high"] = df["Najwyzszy"]
-        df["low"] = df["Najnizszy"]
-
-    # Przygotowanie danych rozgrzewkowych (warmup)
+    # 1. Przygotowanie DataFrame roboczego
+    work_df = df.copy()
+    work_df["price"] = work_df[price_col]
+    
     if warmup_df is not None:
-        warmup = warmup_df.copy()
-        warmup["price"] = warmup[price_col]
-        warmup_has_hl = (
-            "Najwyzszy" in warmup.columns
-            and "Najnizszy" in warmup.columns
-            and not warmup["Najwyzszy"].isna().all()
-            and not warmup["Najnizszy"].isna().all()
-        )
-        if warmup_has_hl:
-            warmup["high"] = warmup["Najwyzszy"]
-            warmup["low"] = warmup["Najnizszy"]
-
-        warmup["_warmup"] = True
-        df["_warmup"] = False
-        df = pd.concat(
-            objs=[warmup, df]
-        )
+        warmup_copy = warmup_df.copy()
+        warmup_copy["price"] = warmup_copy[price_col]
+        warmup_copy["_warmup"] = True
+        work_df["_warmup"] = False
+        work_df = pd.concat(objs=[warmup_copy, work_df])
     else:
-        df["_warmup"] = False
+        work_df["_warmup"] = False
 
-    # Bramka wejścia (entry gate)
-    if entry_gate is not None:
-        gate_aligned = entry_gate.reindex(
-            index=df.index, 
-            method="ffill"
-        ).fillna(
-            value=1
-        ).astype(
-            dtype=int
-        )
-    else:
-        gate_aligned = None
-
-    test_start = df[~df["_warmup"]].index[0]
-
-    # Przygotowanie stóp zwrotu z gotówki (cash)
-    if cash_df is not None:
-        cash = prepare_cash_returns(
-            cash_df=cash_df
-        )
-        df = df.merge(
-            right=cash, 
-            left_index=True, 
-            right_index=True, 
-            how="left"
-        )
-        if df["cash_ret"].isna().any():
-            df["cash_ret"] = df["cash_ret"].ffill()
-    else:
-        df["cash_ret"] = safe_rate / 252
-
-    if df["cash_ret"].isna().all():
-        logging.info(msg="Cash series missing — falling back to flat safe_rate")
-        df["cash_ret"] = safe_rate / 252
-
-    # Obliczanie stopy wolnej od ryzyka dla OOS
-    oos_cash = df.loc[~df["_warmup"], "cash_ret"]
-    if len(oos_cash) > 0 and oos_cash.notna().any():
-        cumulative_cash_return = (1 + oos_cash).prod()
-        n_years_oos = max(len(oos_cash) / 252, 0.01)
-        rf_rate = cumulative_cash_return ** (1 / n_years_oos) - 1
-    else:
-        rf_rate = safe_rate
-
-    # Sygnał funduszowy (fund breadth)
-    if fund_signal is not None:
-        df = df.merge(
-            right=fund_signal.rename("fund_filter"),
-            left_index=True,
-            right_index=True,
-            how="left",
-        )
-        df["fund_filter"] = df["fund_filter"].ffill().fillna(value=0)
-    else:
-        df["fund_filter"] = 1
-
-    # Obliczanie wskaźników technicznych
-    df["ret"] = df["price"].pct_change()
-    vol_series = df["ret"].rolling(window=vol_window).std() * np.sqrt(252)
-    df["vol"] = vol_series.shift(periods=1)
-    df["ma_fast"] = df["price"].rolling(window=fast).mean().shift(periods=1)
-    df["ma_slow"] = df["price"].rolling(window=slow).mean().shift(periods=1)
-    df["trend"] = (df["ma_fast"] > df["ma_slow"]).astype(dtype=int)
-
-    if filter_mode == "mom":
-        df["MOM"] = compute_momentum(
-            series=df["price"], 
+    # 2. Obliczanie wskaźników
+    work_df["ret"] = work_df["price"].pct_change()
+    work_df["vol"] = work_df["ret"].rolling(window=vol_window).std() * np.sqrt(252)
+    work_df["ma_fast"] = work_df["price"].rolling(window=fast).mean().shift(1)
+    work_df["ma_slow"] = work_df["price"].rolling(window=slow).mean().shift(1)
+    work_df["trend"] = (work_df["ma_fast"] > work_df["ma_slow"]).astype(int)
+    
+    if filter_mode.startswith("mom"):
+        work_df["MOM"] = compute_momentum(
+            series=work_df["price"], 
             lookback=mom_lookback, 
-            blend=False
-        ).shift(periods=1)
-    elif filter_mode == "mom_blend":
-        df["MOM"] = compute_momentum(
-            series=df["price"], 
-            blend=True
-        ).shift(periods=1)
+            blend=(filter_mode == "mom_blend")
+        ).shift(1)
     else:
-        df["MOM"] = 1
-
-    # ATR: Zunifikowano do postaci ułamka dziesiętnego (usunięto * 100 tam, gdzie występowało)
-    if has_hl:
-        prev_close_prices = df["price"].shift(periods=1)
-        true_range = np.maximum(df["high"], prev_close_prices) - np.minimum(df["low"], prev_close_prices)
-        df["relative_tr"] = true_range / prev_close_prices
-        df["atr"] = df["relative_tr"].rolling(window=atr_window).mean().shift(periods=1)
-    else:
-        df["atr"] = (df["price"].diff().abs() / df["price"].shift(periods=1)).rolling(
-            window=atr_window,
-        ).mean().shift(periods=1)
-
-    df.dropna(inplace=True)
-
-    # Przygotowanie danych do silników Numba (mapowanie trybów)
-    filter_mode_map = {"ma": 0, "mom": 1, "mom_blend": 2, "fund": 3}
-    filter_mode_int = filter_mode_map.get(filter_mode, 0)
+        work_df["MOM"] = 1.0
     
-    position_mode_map = {"full": 0, "vol_dynamic": 1, "vol_entry": 2}
-    position_mode_int = position_mode_map.get(position_mode, 2)
+    # ATR Fix: Surowy ułamek bez mnożenia przez 100
+    work_df["atr"] = (
+        work_df["price"].diff().abs() / work_df["price"].shift(1)
+    ).rolling(window=atr_window).mean().shift(1)
 
-    # Konwersja na tablice NumPy
-    prices_arr = df["price"].to_numpy(dtype=np.float64)
-    rets_arr = df["ret"].fillna(value=0.0).to_numpy(dtype=np.float64)
-    cash_rets_arr = df["cash_ret"].fillna(value=0.0).to_numpy(dtype=np.float64)
-    trends_arr = df["trend"].fillna(value=0).to_numpy(dtype=np.int64)
-    moms_arr = df["MOM"].fillna(value=0.0).to_numpy(dtype=np.float64)
-    vols_arr = df["vol"].fillna(value=0.0).to_numpy(dtype=np.float64)
-    atrs_arr = df["atr"].to_numpy(dtype=np.float64)
-    warmups_arr = df["_warmup"].to_numpy(dtype=np.bool_)
+    if cash_df is not None:
+        c_ret = prepare_cash_returns(cash_df, price_col)["cash_ret"]
+        work_df = work_df.merge(c_ret, left_index=True, right_index=True, how="left").ffill()
+    else:
+        work_df["cash_ret"] = 0.0
+
+    work_df.dropna(subset=["price", "ret", "ma_slow", "atr"], inplace=True)
+    if work_df.empty:
+        return pd.DataFrame(), None, pd.DataFrame(), None
+
+    # 3. Przygotowanie wejść dla Numba
+    gate_arr = entry_gate.reindex(work_df.index).ffill().fillna(1).to_numpy(int) if entry_gate is not None else np.ones(len(work_df), int)
+    fund_arr = fund_signal.reindex(work_df.index).ffill().fillna(1).to_numpy(int) if fund_signal is not None else np.ones(len(work_df), int)
     
-    if gate_aligned is not None:
-        gate_vals_arr = gate_aligned.reindex(index=df.index).fillna(value=1).to_numpy(dtype=np.int64)
-    else:
-        gate_vals_arr = np.ones(shape=len(df), dtype=np.int64)
-        
-    if "fund_filter" in df.columns:
-        fund_vals_arr = df["fund_filter"].fillna(value=1).to_numpy(dtype=np.int64)
-    else:
-        fund_vals_arr = np.ones(shape=len(df), dtype=np.int64)
-        
-    dates_arr = df.index.values.astype(dtype=np.int64)
+    f_map = {"ma":0, "mom":1, "mom_blend":2, "fund":3}
+    p_map = {"full":0, "vol_dynamic":1, "vol_entry":2}
+    
+    # Pancerne daty (int64 ns)
+    i_pos = float(initial_state.get("position", 0.0)) if initial_state else 0.0
+    i_px  = float(initial_state.get("entry_price", np.nan)) if initial_state else np.nan
+    i_dt  = int(pd.Timestamp(initial_state["entry_date"]).value) if (initial_state and initial_state.get("entry_date")) else 0
+    i_M   = float(initial_state.get("M", np.nan)) if initial_state else np.nan
+    i_m   = float(initial_state.get("m", np.nan)) if initial_state else np.nan
+    i_rc  = int(initial_state.get("rebal_count", 0)) if initial_state else 0
+    i_rct = float(initial_state.get("rebal_cost_total", 0.0)) if initial_state else 0.0
+    i_car = bool(initial_state)
 
-    # Inicjalizacja stanu (pancerne rzutowanie typów dla Numba)
-    init_position = float(initial_state.get("position", 0.0)) if initial_state else 0.0
-    init_entry_price = float(initial_state.get("entry_price", np.nan)) if initial_state and initial_state.get("entry_price") is not None else np.nan
-    init_entry_date = int(pd.Timestamp(initial_state["entry_date"]).value) if (initial_state and initial_state.get("entry_date") is not None) else 0
-    init_entry_pos = float(initial_state.get("entry_pos", np.nan)) if initial_state and initial_state.get("entry_pos") is not None else np.nan
-    init_M = float(initial_state.get("M", np.nan)) if initial_state and initial_state.get("M") is not None else np.nan
-    init_m = float(initial_state.get("m", np.nan)) if initial_state and initial_state.get("m") is not None else np.nan
-    init_entry_carried = True if initial_state else False
-    init_rebal_count = int(initial_state.get("rebal_count", 0)) if initial_state else 0
-    init_rebal_cost_total = float(initial_state.get("rebal_cost_total", 0.0)) if initial_state else 0.0
-    init_entry_reason_int = 1 if initial_state and initial_state.get("entry_reason") == "BREAKOUT & FILTER" else (1 if init_position > 0.0 else 0)
+    # 28 Argumentów w numba_args (Synchronizacja z light i full)
+    numba_args = (
+        work_df["price"].to_numpy(), work_df["ret"].to_numpy(), work_df["cash_ret"].to_numpy(),
+        work_df["trend"].to_numpy(), work_df["MOM"].to_numpy(), work_df["vol"].to_numpy(),
+        work_df["atr"].to_numpy(), work_df["_warmup"].to_numpy(), gate_arr, fund_arr, 
+        work_df.index.values.astype(np.int64), f_map.get(filter_mode, 0), p_map.get(position_mode, 2), 
+        stop_loss, target_vol, max_leverage, use_atr_stop, N_atr, X, Y,
+        i_pos, i_px, i_dt, i_M, i_m, i_rc, i_rct, i_car
+    )
 
-    trades_list = []
-    end_state = None
+    # 4. Wykonanie silnika
+    resulting_end_state = None
+    trades_df = pd.DataFrame()
 
     if engine_mode == "numba_light":
-        # Silnik Light - tylko krzywa kapitału i stan końcowy
-        equity_curve, pos_res, px_res, dt_res, epos_res, M_res, m_res, reb_c_res, reb_cost_res = run_numba_light(
-            prices=prices_arr,
-            rets=rets_arr,
-            cash_rets=cash_rets_arr,
-            trends=trends_arr,
-            moms=moms_arr,
-            vols=vols_arr,
-            atrs=atrs_arr,
-            warmups=warmups_arr,
-            gate_vals=gate_vals_arr,
-            fund_vals=fund_vals_arr,
-            dates=dates_arr,
-            filter_mode_int=filter_mode_int,
-            position_mode_int=position_mode_int,
-            stop_loss=stop_loss,
-            target_vol=target_vol,
-            max_leverage=max_leverage,
-            use_atr_stop=use_atr_stop,
-            N_atr=N_atr,
-            X=X,
-            Y=Y,
-            init_position=init_position,
-            init_entry_price=init_entry_price,
-            init_entry_date=init_entry_date,
-            init_entry_pos=init_entry_pos,
-            init_M=init_M,
-            init_m=init_m,
-            init_rebal_count=init_rebal_count,
-            init_rebal_cost_total=init_rebal_cost_total
-        )
-        
-        if pos_res > 0.0 and not np.isnan(px_res):
-            end_state = {
-                "position": pos_res,
-                "entry_price": px_res,
-                "entry_date": pd.Timestamp(dt_res) if dt_res > 0 else None,
-                "entry_reason": "BREAKOUT & FILTER",
-                "entry_pos": epos_res,
-                "M": M_res,
-                "m": m_res,
-                "rebal_count": reb_c_res,
-                "rebal_cost_total": reb_cost_res
-            }
-
-    elif engine_mode == "numba_full":
-        # Silnik Full - pełna historia transakcji
-        (
-            equity_curve, pos_res, px_res, dt_res, epos_res, M_res, m_res, carried_res, reb_c_res, reb_cost_res, reason_int_res, 
-            en_dts, ex_dts, en_pxs, poss, ex_pxs, rets, days, ex_rss, cross
-        ) = run_numba_full(
-            prices=prices_arr,
-            rets=rets_arr,
-            cash_rets=cash_rets_arr,
-            trends=trends_arr,
-            moms=moms_arr,
-            vols=vols_arr,
-            atrs=atrs_arr,
-            warmups=warmups_arr,
-            gate_vals=gate_vals_arr,
-            fund_vals=fund_vals_arr,
-            dates=dates_arr,
-            filter_mode_int=filter_mode_int,
-            position_mode_int=position_mode_int,
-            stop_loss=stop_loss,
-            target_vol=target_vol,
-            max_leverage=max_leverage,
-            use_atr_stop=use_atr_stop,
-            N_atr=N_atr,
-            X=X,
-            Y=Y,
-            init_position=init_position,
-            init_entry_price=init_entry_price,
-            init_entry_date=init_entry_date,
-            init_entry_pos=init_entry_pos,
-            init_M=init_M,
-            init_m=init_m,
-            init_entry_carried=init_entry_carried,
-            init_rebal_count=init_rebal_count,
-            init_rebal_cost_total=init_rebal_cost_total,
-            init_entry_reason_int=init_entry_reason_int
-        )
-
-        for j in range(len(en_dts)):
-            trades_list.append({
-                "EntryDate": pd.Timestamp(en_dts[j]),
-                "ExitDate": pd.Timestamp(ex_dts[j]),
-                "EntryPrice": en_pxs[j],
-                "Position": poss[j],
-                "ExitPrice": ex_pxs[j],
-                "Return": rets[j],
-                "Days": days[j],
-                "Entry Reason": decode_entry_reason(reason_int=1),
-                "Exit Reason": decode_exit_reasons(reasons_int=ex_rss[j]),
-                "CrossWindow": bool(cross[j])
-            })
-        
-        if pos_res > 0.0 and not np.isnan(px_res):
-            last_date_oos = df.index[-1]
-            last_price_oos = df["price"].iloc[-1]
-            unrealised_return = last_price_oos / px_res - 1.0
-            days_in_trade = (last_date_oos - pd.Timestamp(dt_res)).days
-            
-            trades_list.append({
-                "EntryDate": pd.Timestamp(dt_res),
-                "ExitDate": last_date_oos,
-                "EntryPrice": px_res,
-                "Position": epos_res,
-                "ExitPrice": last_price_oos,
-                "Return": unrealised_return,
-                "Days": days_in_trade,
-                "Entry Reason": decode_entry_reason(reason_int=reason_int_res),
-                "Exit Reason": "CARRY",
-                "CrossWindow": carried_res
-            })
-
-            end_state = {
-                "position": pos_res,
-                "entry_price": px_res,
-                "entry_date": pd.Timestamp(dt_res) if dt_res > 0 else None,
-                "entry_reason": decode_entry_reason(reason_int=reason_int_res),
-                "entry_pos": epos_res,
-                "M": M_res,
-                "m": m_res,
-                "rebal_count": reb_c_res,
-                "rebal_cost_total": reb_cost_res
-            }
-
-    elif engine_mode == "legacy":
-        # Silnik Legacy - pętla Python (nie zmieniając nazw zmiennych)
-        equity = 1.0
-        equity_curve_list = []
-        position = init_position
-        entry_price = init_entry_price if not np.isnan(init_entry_price) else None
-        entry_date = pd.Timestamp(init_entry_date) if init_entry_date > 0 else None
-        entry_pos = init_entry_pos if not np.isnan(init_entry_pos) else None
-        M = init_M if not np.isnan(init_M) else None
-        m = init_m if not np.isnan(init_m) else None
-        entry_carried = init_entry_carried
-        rebal_count = init_rebal_count
-        rebal_cost_total = init_rebal_cost_total
-        entry_reason = decode_entry_reason(reason_int=init_entry_reason_int)
-
-        for k in range(len(prices_arr)):
-            loop_date = pd.Timestamp(dates_arr[k])
-            loop_price = float(prices_arr[k])
-            loop_ret = float(rets_arr[k])
-            loop_cash_ret = float(cash_rets_arr[k])
-            loop_trend = int(trends_arr[k])
-            loop_mom = float(moms_arr[k])
-            loop_vol = float(vols_arr[k])
-            loop_atr = float(atrs_arr[k])
-
-            if filter_mode_int == 3:
-                filter_on = bool(fund_vals_arr[k] == 1)
-            elif filter_mode_int in (1, 2):
-                filter_on = loop_mom > 0.0
-            else:
-                filter_on = loop_trend == 1
-
-            if bool(warmups_arr[k]):
-                equity_curve_list.append(equity)
-                continue
-
-            if position > 0.0:
-                equity *= 1.0 + position * loop_ret + (1.0 - position) * loop_cash_ret
-            else:
-                equity *= 1.0 + loop_cash_ret
-
-            exit_reasons = []
-            if position > 0.0:
-                if (loop_price - entry_price) / entry_price < -stop_loss:
-                    exit_reasons.append("ABSOLUTE_STOP")
-                M = max(M, loop_price)
-                
-                # Poprawiona logika ATR: stop = M * (1 - N_atr * atr)
-                current_stop_level = M * (1.0 - N_atr * loop_atr) if use_atr_stop else M * (1.0 - X)
-                if loop_price < current_stop_level:
-                    exit_reasons.append("TRAIL_STOP")
-                if not filter_on:
-                    exit_reasons.append("FILTER_EXIT")
-
-            if position > 0.0 and exit_reasons:
-                trade_pnl = loop_price / entry_price - 1.0 - 0.0020
-                trades_list.append({
-                    "EntryDate": entry_date, "ExitDate": loop_date, "EntryPrice": entry_price,
-                    "Position": entry_pos, "ExitPrice": loop_price, "Return": trade_pnl,
-                    "Days": (loop_date - entry_date).days, "Entry Reason": entry_reason,
-                    "Exit Reason": " + ".join(exit_reasons), "CrossWindow": entry_carried
-                })
-                position, entry_price, entry_date, M, m, entry_pos, entry_carried = 0.0, None, None, None, None, None, False
-
-            if position == 0.0:
-                m = loop_price if m is None else min(m, loop_price)
-                if loop_price > (1.0 + Y) * m and filter_on and gate_vals_arr[k] == 1:
-                    position = calc_position(vol=loop_vol, position_mode=position_mode, target_vol=target_vol, max_leverage=max_leverage)
-                    entry_price, entry_date, entry_pos, M, entry_carried, entry_reason = loop_price, loop_date, position, loop_price, False, "BREAKOUT & FILTER"
-
-            equity_curve_list.append(equity)
-        
-        equity_curve = np.array(object=equity_curve_list)
-        if position > 0.0:
-            end_state = {"position": position, "entry_price": entry_price, "entry_date": entry_date, "M": M, "m": m, "entry_pos": entry_pos, "rebal_count": rebal_count, "rebal_cost_total": rebal_cost_total}
-
+        eq_curve, p_f, px_f, dt_f, M_f, m_f, rc_f, rct_f = run_numba_light(*numba_args)
+        if p_f > 0.0:
+            resulting_end_state = {"position": p_f, "entry_price": px_f, "entry_date": pd.Timestamp(dt_f), "M": M_f, "m": m_f}
     else:
-        raise ValueError(f"Unknown engine_mode: {engine_mode}")
+        # numba_full
+        (
+            eq_curve, p_f, px_f, dt_f, M_f, m_f, car_f,
+            en_dts, ex_dts, en_pxs, poss, ex_pxs, rets, ex_rss, cross
+        ) = run_numba_full(*numba_args)
+        
+        trades_list = [{
+                "EntryDate": pd.Timestamp(en_dts[j]), "ExitDate": pd.Timestamp(ex_dts[j]),
+                "EntryPrice": en_pxs[j], "Position": poss[j], "ExitPrice": ex_pxs[j], "Return": rets[j],
+                "Days": (ex_dts[j] - en_dts[j]) // 86400000000000, "Entry Reason": "BREAKOUT & FILTER",
+                "Exit Reason": decode_exit_reasons(ex_rss[j]), "CrossWindow": cross[j]
+            } for j in range(len(en_dts))]
+        trades_df = pd.DataFrame(data=trades_list)
+        
+        if p_f > 0.0:
+            resulting_end_state = {"position": p_f, "entry_price": px_f, "entry_date": pd.Timestamp(dt_f), "M": M_f, "m": m_f}
+            last_carry = {
+                "EntryDate": pd.Timestamp(dt_f), "ExitDate": work_df.index[-1], "EntryPrice": px_f,
+                "Position": p_f, "ExitPrice": work_df["price"].iloc[-1], 
+                "Return": (work_df["price"].iloc[-1] / px_f - 1.0), "Days": (work_df.index[-1] - pd.Timestamp(dt_f)).days,
+                "Entry Reason": "BREAKOUT & FILTER", "Exit Reason": "CARRY", "CrossWindow": car_f
+            }
+            trades_df = pd.concat(objs=[trades_df, pd.DataFrame(data=[last_carry])], ignore_index=True)
 
-    # Post-processing wyników
-    df["equity"] = equity_curve
-    df = df[~df["_warmup"]].copy()
-    df.drop(columns=["_warmup"], inplace=True)
-    if "fund_filter" in df.columns:
-        df.drop(columns=["fund_filter"], inplace=True)
+    # 5. Budowa wyniku
+    work_df["equity"] = eq_curve
+    result_df = work_df[~work_df["_warmup"]].copy()
+    result_df.drop(columns=["_warmup"], inplace=True)
+    if not result_df.empty:
+        result_df["equity"] /= result_df["equity"].iloc[0]
 
-    if not df.empty:
-        df["equity"] = df["equity"] / df["equity"].iloc[0]
-
-    metrics_dict = compute_metrics(
-        equity=df["equity"], 
-        risk_free_rate=rf_rate
-    )
-    
-    trades_df = pd.DataFrame(
-        data=trades_list
-    )
-
-    return df, metrics_dict, trades_df, end_state
+    return result_df, compute_metrics(result_df["equity"]), trades_df, resulting_end_state
 
 
 # -------------------------------------------------------
