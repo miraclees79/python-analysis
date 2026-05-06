@@ -272,7 +272,7 @@ class SweepManager:
             N_atr_grid=grids["N_ATR_GRID"] if use_atr else None,
             entry_gate_series=entry_gate,
             n_jobs=get_n_jobs(),
-            engine_mode="numba_full",
+            
         )
         self.wf_cache[cache_key] = (wf_equity, wf_results, wf_trades)
         return wf_equity, wf_results, wf_trades
@@ -351,7 +351,7 @@ class SweepManager:
             fast_grid=grids["FAST_GRID"],
             slow_grid=grids["SLOW_GRID"],
             filter_modes_override=["ma"] if grid_type == "BOND" else None,
-            engine_mode="numba_full",
+            
         )
         result = analyze_bootstrap(
             results_df=bb_df, baseline_metrics=compute_metrics(base_equity), thresholds=thresholds,
