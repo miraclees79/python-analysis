@@ -183,7 +183,7 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
     cfg = ASSET_REGISTRY["PENSION"]
     selected_stop = cfg.get("default_stop_eq", "atr") if stop_mode_arg == "auto" else stop_mode_arg
     use_atr_eq = selected_stop == "atr"
-    logging.info(f"PENSION PORTFOLIO ENGINE (WIG+TBSP+MMF) | WIG Stop: {selected_stop} | Train years: {cfg["train"]} | Test years: {cfg["test"]}")
+    logging.info(f"PENSION PORTFOLIO ENGINE (WIG+TBSP+MMF) | WIG Stop: {selected_stop} | Train years: {cfg['train']} | Test years: {cfg['test']}")
 
     WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
     MMF = load_local_csv("fund_2720", "MMF")
