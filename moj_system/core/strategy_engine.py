@@ -457,7 +457,7 @@ def run_strategy_with_trades(
     # ATR trailing stop parameters
     # -------------------------------------------------------
     use_atr_stop=False,  # False = fixed % (X), True = ATR-scaled (N_atr)
-    N_atr=3.0,  # ATR multiplier for trailing stop (used when use_atr_stop=True)
+    N_atr=0.1,  # ATR multiplier for trailing stop (used when use_atr_stop=True)
     atr_window=20,  # Rolling window for close-only ATR estimate (days)
     # -------------------------------------------------------
     fast_mode=True,
