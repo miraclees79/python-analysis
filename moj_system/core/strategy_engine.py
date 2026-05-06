@@ -546,14 +546,15 @@ def run_strategy_with_trades(
     if work_df.empty: return pd.DataFrame(), None, pd.DataFrame(), None
 
     # 3. Numba Preparation
-    gate_arr = entry_gate.reindex(index=work_df.index).ffill().fillna(value=1).to_numpy(dtype=int) if entry_gate is not None else np.ones(len(work_df), int)
-    fund_arr = fund_signal.reindex(index=work_df.index).ffill().fillna(value=1).to_numpy(dtype=int) if fund_signal is not None else np.ones(len(work_df), int)
-    
-    # Precyzyjna konwersja dat na int64 nanosekundy
-    dates_arr = work_df.index.astype(dtype="datetime64[ns]").astype(dtype=np.int64)
+    gate_arr = entry_gate.reindex(index=work_df.index).ffill().fillna(value=1).to_numpy(dtype=np.int64) if entry_gate is not None else np.ones(shape=len(work_df), dtype=np.int64)
+    fund_arr = fund_signal.reindex(index=work_df.index).ffill().fillna(value=1).to_numpy(dtype=np.int64) if fund_signal is not None else np.ones(shape=len(work_df), dtype=np.int64)
+    dates_arr = work_df.index.astype(np.int64).to_numpy(dtype=np.int64) # Poprawione na .to_numpy()
     
     f_map = {"ma": 0, "mom": 1, "mom_blend": 2, "fund": 3}
     p_map = {"full": 0, "vol_dynamic": 1, "vol_entry": 2}
+    
+    filter_mode_int = f_map.get(filter_mode, 0)
+    position_mode_int = p_map.get(position_mode, 2)
     
     i_pos = float(initial_state.get("position", 0.0)) if initial_state else 0.0
     i_px  = float(initial_state.get("entry_price", np.nan)) if initial_state else np.nan
@@ -564,16 +565,45 @@ def run_strategy_with_trades(
     i_rc  = int(initial_state.get("rebal_count", 0)) if initial_state else 0
     i_rct = float(initial_state.get("rebal_cost_total", 0.0)) if initial_state else 0.0
     i_car = bool(initial_state)
-    i_rsn = 1 if initial_state and initial_state.get("entry_reason") == "BREAKOUT & FILTER" else (1 if i_pos > 0.0 else 0)
+    init_entry_reason_int = 0
+    if initial_state is not None:
+        if initial_state.get("entry_reason") == "BREAKOUT & FILTER":
+            init_entry_reason_int = 1
+        else:
+            init_entry_reason_int = 0 # Domyślnie 0 jeśli nie ma powodu lub jest inny
 
-    # DOKŁADNIE 30 ARGUMENTÓW
+    # 30 Argumentów - Upewnij się, że są to TYLKO ndarray i float/int/bool
     numba_args = (
-        work_df["price"].to_numpy(dtype=np.float64), work_df["ret"].to_numpy(dtype=np.float64), work_df["cash_ret"].to_numpy(dtype=np.float64),
-        work_df["trend"].to_numpy(dtype=np.int64), work_df["MOM"].to_numpy(dtype=np.float64), work_df["vol"].to_numpy(dtype=np.float64),
-        work_df["atr"].to_numpy(dtype=np.float64), work_df["_warmup"].to_numpy(dtype=np.bool_), gate_arr, fund_arr, dates_arr,
-        f_map.get(filter_mode, 0), p_map.get(position_mode, 2), float(stop_loss), float(target_vol), float(max_leverage),
-        bool(use_atr_stop), float(N_atr), float(X), float(Y),
-        i_pos, i_px, i_dt, i_epos, i_M, i_m, i_rc, i_rct, i_car, i_rsn
+        work_df["price"].to_numpy(dtype=np.float64),                    # 1
+        work_df["ret"].to_numpy(dtype=np.float64),                      # 2
+        work_df["cash_ret"].to_numpy(dtype=np.float64),                 # 3
+        work_df["trend"].to_numpy(dtype=np.int64),                      # 4
+        work_df["MOM"].to_numpy(dtype=np.float64),                      # 5
+        work_df["vol"].to_numpy(dtype=np.float64),                      # 6
+        work_df["atr"].to_numpy(dtype=np.float64),                      # 7
+        work_df["_warmup"].to_numpy(dtype=np.bool_),                    # 8
+        gate_arr,                                                       # 9
+        fund_arr,                                                       # 10
+        dates_arr,                                                      # 11
+        filter_mode_int,                                                # 12
+        position_mode_int,                                              # 13
+        float(stop_loss),                                               # 14
+        float(target_vol) if target_vol is not None else 0.10,          # 15
+        float(max_leverage),                                            # 16
+        bool(use_atr_stop),                                             # 17
+        float(N_atr),                                                   # 18
+        float(X),                                                       # 19
+        float(Y),                                                       # 20
+        i_pos,                                                          # 21
+        i_px,                                                           # 22
+        i_dt,                                                           # 23
+        i_epos,                                                         # 24
+        i_M,                                                            # 25
+        i_m,                                                            # 26
+        i_rc,                                                           # 27
+        i_rct,                                                          # 28
+        i_car,                                                          # 29
+        init_entry_reason_int                                           # 30 - Dodany poprawny argument
     )
 
     # 4. Engines
