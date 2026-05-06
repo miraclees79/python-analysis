@@ -58,3 +58,7 @@ moj_system_do_przegladu.txt
 /analiza wynikow
 moj_system/run_batch_validation.py
 top50ruff.py
+*.nbc
+*.nbi
+/moj_system/data
+/moj_system/zips
