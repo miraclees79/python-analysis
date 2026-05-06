@@ -18,7 +18,7 @@ matplotlib.use("Agg")
 
 # --- Path Setup ---
 # --- New, Clean Imports ---
-from moj_system.config import ASSET_REGISTRY, BASE_GRIDS, OUTPUT_DIR
+from moj_system.config import ASSET_REGISTRY, BASE_GRIDS, BOND_GRIDS, OUTPUT_DIR
 from moj_system.core.global_engine import (
     allocation_walk_forward_n,
     build_price_df_from_returns,
@@ -178,7 +178,6 @@ def run_single_asset(asset_name, stop_mode_arg, creds_path):
         gdrive_credentials=creds_path if os.path.exists(creds_path) else None,
     )
 
-
 def run_pension_portfolio(stop_mode_arg, creds_path):
     cfg = ASSET_REGISTRY["PENSION"]
     selected_stop = cfg.get("default_stop_eq", "atr") if stop_mode_arg == "auto" else stop_mode_arg
@@ -203,18 +202,43 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
     n_jobs = get_n_jobs()
 
     logging.info("================ WIG ================")
+    # --- POPRAWKA: Jawne przekazanie BASE_GRIDS oraz fast_mode=True ---
     wf_eq, wf_res_eq, wf_tr_eq = walk_forward(
-        WIG, derived["mmf_ext"], cfg["train"], cfg["test"], use_atr_stop=use_atr_eq, n_jobs=n_jobs,
+        df=WIG, 
+        cash_df=derived["mmf_ext"], 
+        train_years=cfg["train"], 
+        test_years=cfg["test"], 
+        X_grid=BASE_GRIDS["X_GRID"], 
+        Y_grid=BASE_GRIDS["Y_GRID"],
+        fast_grid=BASE_GRIDS["FAST_GRID"], 
+        slow_grid=BASE_GRIDS["SLOW_GRID"],
+        tv_grid=BASE_GRIDS.get("TV_GRID"),
+        sl_grid=BASE_GRIDS.get("SL_GRID"),
+        mom_lookback_grid=BASE_GRIDS.get("MOM_LB_GRID"),
+        use_atr_stop=use_atr_eq, 
+        N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr_eq else None,
+        atr_window=BASE_GRIDS.get("ATR_WINDOW", 20),
+        n_jobs=n_jobs,
+        fast_mode=True
     )
+    
     logging.info("================ TBSP ================")
+    # --- POPRAWKA: Jawne przekazanie BOND_GRIDS oraz fast_mode=True ---
     wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
-        TBSP,
-        derived["mmf_ext"],
-        cfg["train"],
-        cfg["test"],
+        df=TBSP,
+        cash_df=derived["mmf_ext"],
+        train_years=cfg["train"],
+        test_years=cfg["test"],
         filter_modes_override=["ma"],
+        X_grid=BOND_GRIDS["X_GRID"], 
+        Y_grid=BOND_GRIDS["Y_GRID"],
+        fast_grid=BOND_GRIDS["FAST_GRID"], 
+        slow_grid=BOND_GRIDS["SLOW_GRID"],
+        sl_grid=BOND_GRIDS.get("SL_GRID"),
+        use_atr_stop=False, # Obligacje testowaliśmy zawsze na Fixed Stop
         n_jobs=n_jobs,
         entry_gate_series=derived["bond_gate"],
+        fast_mode=True
     )
 
     sig_eq, sig_bd = build_signal_series(wf_eq, wf_tr_eq), build_signal_series(wf_bd, wf_tr_bd)
@@ -247,30 +271,33 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
 
     # Raportowanie reżimów
     regime_inputs = prepare_regime_inputs(WIG, wf_res_eq, port_eq, bh_eq)
-    raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
-    regime_metrics = extract_flat_regime_stats(raw_regimes)
-    print_live_regime_report(regime_metrics)
+    if regime_inputs:
+        raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
+        regime_metrics = extract_flat_regime_stats(raw_regimes)
+        print_live_regime_report(regime_metrics)
+    else:
+        regime_metrics = extract_flat_regime_stats({})
 
     # Wysyłanie (wewnętrznie wywołuje upload na GDrive)
     build_multiasset_outputs(
-        wf_eq,
-        wf_tr_eq,
-        wf_res_eq,
-        wf_bd,
-        wf_tr_bd,
-        wf_res_bd,
-        port_eq,
-        m_p,
-        w_s,
-        realloc,
-        bh_eq,
-        bh_m_eq,
-        bh_bd,
-        bh_m_bd,
-        WIG,
-        TBSP,
-        sig_eq_oos,
-        sig_bd_oos,
+        wf_equity_eq=wf_eq,
+        wf_trades_eq=wf_tr_eq,
+        wf_results_eq=wf_res_eq,
+        wf_equity_bd=wf_bd,
+        wf_trades_bd=wf_tr_bd,
+        wf_results_bd=wf_res_bd,
+        portfolio_equity=port_eq,
+        portfolio_metrics=m_p,
+        weights_series=w_s,
+        reallocation_log=realloc,
+        bh_eq_equity=bh_eq,
+        bh_eq_metrics=bh_m_eq,
+        bh_bd_equity=bh_bd,
+        bh_bd_metrics=bh_m_bd,
+        WIG=WIG,
+        TBSP=TBSP,
+        sig_eq_oos=sig_eq_oos,
+        sig_bd_oos=sig_bd_oos,
         output_dir=str(OUTPUT_DIR / "pension"),
         asset_name="PENSION",  # [Ważne]
         run_date=None,
