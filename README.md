@@ -61,6 +61,34 @@ Walk-forward OOS → Monte Carlo parameter perturbation → block bootstrap → 
 
 ---
 
+
+## GitHub Actions Workflows
+
+| Workflow | Schedule | Trigger |
+|---|---|---|
+| `daily_strategy.yml` | 00:00 UTC daily | All assets in matrix |
+| `ocr_download.yml` | 23:00 UTC daily | PPE PDF OCR |
+| `fund_reviewer.yml` | Monday 04:00 UTC | TFI fund ranking |
+| `refresh_knf.yml` | Monday 01:00 UTC | KNF subfund matching |
+| `research_sweep.yml` | Manual only | Parameter sweeps |
+| `keepalive` | 1st of month | Repository activity |
+
+---
+
+## Required Secrets
+
+| Secret | Purpose |
+|---|---|
+| `GDRIVE_FOLDER_ID` | Google Drive output folder |
+| `GOOGLE_CREDENTIALS` | Service account JSON |
+| `ZIP_URL` | PPE data source URL |
+| `ZIP_PASSWORD` | PPE archive password |
+| `INT_FILE_NAME` | PDF filename inside PPE archive |
+| `FOLDER_NAME` | Drive folder for OCR output |
+
+---
+
+
 ## Quick Start (CLI)
 
 ```bash
@@ -91,31 +119,6 @@ All strategy parameters are in `moj_system/config.py`:
 
 ---
 
-## GitHub Actions Workflows
-
-| Workflow | Schedule | Trigger |
-|---|---|---|
-| `daily_strategy.yml` | 00:00 UTC daily | All assets in matrix |
-| `ocr_download.yml` | 23:00 UTC daily | PPE PDF OCR |
-| `fund_reviewer.yml` | Monday 04:00 UTC | TFI fund ranking |
-| `refresh_knf.yml` | Monday 01:00 UTC | KNF subfund matching |
-| `research_sweep.yml` | Manual only | Parameter sweeps |
-| `keepalive` | 1st of month | Repository activity |
-
----
-
-## Required Secrets
-
-| Secret | Purpose |
-|---|---|
-| `GDRIVE_FOLDER_ID` | Google Drive output folder |
-| `GOOGLE_CREDENTIALS` | Service account JSON |
-| `ZIP_URL` | PPE data source URL |
-| `ZIP_PASSWORD` | PPE archive password |
-| `INT_FILE_NAME` | PDF filename inside PPE archive |
-| `FOLDER_NAME` | Drive folder for OCR output |
-
----
 
 ## System Requirements
 
