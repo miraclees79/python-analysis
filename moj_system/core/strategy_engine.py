@@ -1246,7 +1246,7 @@ def run_strategy_with_trades(
     if initial_state is not None and abs(first_val - 1.0) > 0.001:
         logging.debug(
             msg=f"Warmup P&L on carried position: {(first_val - 1.0) * 100.0:.2f}% — excluded from OOS equity"
-        ))
+        )
     if first_val != 0.0:
         df["equity"] = df["equity"] / first_val
 
