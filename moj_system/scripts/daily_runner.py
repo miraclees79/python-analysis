@@ -335,7 +335,9 @@ def run_global_portfolio(
         ticker="fund_2720",
         label="MMF"
     )
-
+    PL10Y, DE10Y = load_local_csv("pl10y", "PL10Y"), load_local_csv("de10y", "DE10Y")
+    WIBOR = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
+    derived = build_standard_two_asset_data(WIG, TBSP, MMF, WIBOR, PL10Y, DE10Y, "1995-01-02")
     fx_map = {
         curr: load_local_csv(
             ticker=f"{curr.lower()}pln", 
@@ -466,6 +468,7 @@ def run_global_portfolio(
         test_years=test_y, 
         filter_modes_override=["ma"], 
         n_jobs=n_jobs,
+        entry_gate_series=derived["bond_gate"],
     )
     rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
     sigs_full["TBSP"] = build_signal_series(

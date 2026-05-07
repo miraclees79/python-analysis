@@ -242,6 +242,7 @@ class ValidationManager:
             fast_grid=BOND_GRIDS["FAST_GRID"],
             slow_grid=BOND_GRIDS["SLOW_GRID"],
             n_jobs=get_n_jobs(),
+            entry_gate_series=derived["bond_gate"],
 
         )
         if self.n_mc > 0:
@@ -356,6 +357,19 @@ class ValidationManager:
             extension_source="stooq",
             credentials_path=self.creds_path,
         )
+        PL10Y, DE10Y = (
+            load_local_csv(ticker="pl10y", label="PL10Y"),
+            load_local_csv(ticker="de10y", label="DE10Y"),
+        )
+        derived = build_standard_two_asset_data(
+            wig=WIG,
+            tbsp=TBSP,
+            mmf=MMF,
+            wibor1m=WIBOR1M,
+            pl10y=PL10Y,
+            de10y=DE10Y,
+            mmf_floor="1995-01-02",
+        )
         fx_map = {
             c: load_local_csv(ticker=f"{c.lower()}pln", label=f"{c}PLN")["Zamkniecie"]
             for c in ["USD", "EUR", "JPY"]
@@ -463,6 +477,7 @@ class ValidationManager:
             fast_grid=BOND_GRIDS["FAST_GRID"],
             slow_grid=BOND_GRIDS["SLOW_GRID"],
             n_jobs=get_n_jobs(),
+            entry_gate_series=derived["bond_gate"],
 
         )
         rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
