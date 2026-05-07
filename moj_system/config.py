@@ -58,6 +58,8 @@ SWEEP_WINDOW_CONFIGS = [
 # Smoke test run only
 SWEEP_WINDOW_CONFIGS_TEST = [(6, 2)]
 
+# Flag to turn on numba engine in evaluate params
+USE_NUMBA_ENGINE = True
 
 # ---------------------------------------------------------------------------
 # Asset-class threshold presets

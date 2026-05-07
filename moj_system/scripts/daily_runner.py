@@ -18,7 +18,7 @@ matplotlib.use("Agg")
 
 # --- Path Setup ---
 # --- New, Clean Imports ---
-from moj_system.config import ASSET_REGISTRY, BASE_GRIDS, BOND_GRIDS, OUTPUT_DIR
+from moj_system.config import ASSET_REGISTRY, BASE_GRIDS, OUTPUT_DIR
 from moj_system.core.global_engine import (
     allocation_walk_forward_n,
     build_price_df_from_returns,
@@ -81,7 +81,7 @@ def run_single_asset(asset_name, stop_mode_arg, creds_path):
         cfg.get("default_stop", "fixed") if stop_mode_arg == "auto" else stop_mode_arg
     )
     use_atr_stop = selected_stop_mode == "atr"
-    logging.info(f"SINGLE ASSET ENGINE: {asset_name} | Stop Mode: {selected_stop_mode}")
+    logging.info(f"SINGLE ASSET ENGINE: {asset_name} | Stop Mode: {selected_stop_mode} | Train: {cfg["train"]} y | Test: {cfg["test"]} y")
 
     MMF = load_local_csv("fund_2720", "MMF")
     WIBOR1M = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
@@ -123,10 +123,10 @@ def run_single_asset(asset_name, stop_mode_arg, creds_path):
         mom_lookback_grid=grids["MOM_LB_GRID"],
         objective="calmar",
         n_jobs=get_n_jobs(),
+        fast_mode=True,
         use_atr_stop=use_atr_stop,
         N_atr_grid=grids["N_ATR_GRID"] if use_atr_stop else None,
         atr_window=grids["ATR_WINDOW"],
-        
     )
     if wf_equity.empty:
         sys.exit(f"Walk-forward returned no results for {asset_name}.")
@@ -178,11 +178,12 @@ def run_single_asset(asset_name, stop_mode_arg, creds_path):
         gdrive_credentials=creds_path if os.path.exists(creds_path) else None,
     )
 
+
 def run_pension_portfolio(stop_mode_arg, creds_path):
     cfg = ASSET_REGISTRY["PENSION"]
     selected_stop = cfg.get("default_stop_eq", "atr") if stop_mode_arg == "auto" else stop_mode_arg
     use_atr_eq = selected_stop == "atr"
-    logging.info(f"PENSION PORTFOLIO ENGINE (WIG+TBSP+MMF) | WIG Stop: {selected_stop} | Train years: {cfg['train']} | Test years: {cfg['test']}")
+    logging.info(f"PENSION PORTFOLIO ENGINE (WIG+TBSP+MMF) | WIG Stop: {selected_stop} | Train: {cfg["train"]} y | Test: {cfg["test"]} y")
 
     WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
     MMF = load_local_csv("fund_2720", "MMF")
@@ -201,44 +202,37 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
     derived = build_standard_two_asset_data(WIG, TBSP, MMF, WIBOR, PL10Y, DE10Y, "1995-01-02")
     n_jobs = get_n_jobs()
 
-    logging.info("================ WIG ================")
-    # --- POPRAWKA: Jawne przekazanie BASE_GRIDS oraz fast_mode=True ---
+    logging.info(f"========== RUNNING: WIG ==========")
+
     wf_eq, wf_res_eq, wf_tr_eq = walk_forward(
-        df=WIG, 
-        cash_df=derived["mmf_ext"], 
-        train_years=cfg["train"], 
-        test_years=cfg["test"], 
-        X_grid=BASE_GRIDS["X_GRID"], 
-        Y_grid=BASE_GRIDS["Y_GRID"],
-        fast_grid=BASE_GRIDS["FAST_GRID"], 
-        slow_grid=BASE_GRIDS["SLOW_GRID"],
-        tv_grid=BASE_GRIDS.get("TV_GRID"),
-        sl_grid=BASE_GRIDS.get("SL_GRID"),
-        mom_lookback_grid=BASE_GRIDS.get("MOM_LB_GRID"),
-        use_atr_stop=use_atr_eq, 
-        N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr_eq else None,
-        atr_window=BASE_GRIDS.get("ATR_WINDOW", 20),
-        n_jobs=n_jobs,
-        
+        WIG, derived["mmf_ext"], cfg["train"], cfg["test"], use_atr_stop=use_atr_eq, n_jobs=n_jobs,
     )
-    
-    logging.info("================ TBSP ================")
-    # --- POPRAWKA: Jawne przekazanie BOND_GRIDS oraz fast_mode=True ---
+    if wf_eq.empty:
+        sys.exit(f"Walk-forward returned no results for {asset_name}.")
+
+    wf_eq = wf_eq.loc[~wf_eq.index.duplicated(keep="last")]
+
+    wf_metrics = {k: float(v) for k, v in compute_metrics(wf_eq).items()}
+    trade_stats = analyze_trades(wf_tr_eq)
+    print_backtest_report(
+        metrics=wf_metrics,
+        trades=wf_tr_eq,
+        trade_stats=trade_stats,
+        wf_results=wf_res_eq,
+        position_mode="full",
+        filter_modes_override=None,
+    )    
+
+    logging.info(f"========== RUNNING: TBSP ==========")
+
     wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
-        df=TBSP,
-        cash_df=derived["mmf_ext"],
-        train_years=cfg["train"],
-        test_years=cfg["test"],
+        TBSP,
+        derived["mmf_ext"],
+        cfg["train"],
+        cfg["test"],
         filter_modes_override=["ma"],
-        X_grid=BOND_GRIDS["X_GRID"], 
-        Y_grid=BOND_GRIDS["Y_GRID"],
-        fast_grid=BOND_GRIDS["FAST_GRID"], 
-        slow_grid=BOND_GRIDS["SLOW_GRID"],
-        sl_grid=BOND_GRIDS.get("SL_GRID"),
-        use_atr_stop=False, # Obligacje testowaliśmy zawsze na Fixed Stop
         n_jobs=n_jobs,
         entry_gate_series=derived["bond_gate"],
-        
     )
 
     sig_eq, sig_bd = build_signal_series(wf_eq, wf_tr_eq), build_signal_series(wf_bd, wf_tr_bd)
@@ -271,33 +265,30 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
 
     # Raportowanie reżimów
     regime_inputs = prepare_regime_inputs(WIG, wf_res_eq, port_eq, bh_eq)
-    if regime_inputs:
-        raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
-        regime_metrics = extract_flat_regime_stats(raw_regimes)
-        print_live_regime_report(regime_metrics)
-    else:
-        regime_metrics = extract_flat_regime_stats({})
+    raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
+    regime_metrics = extract_flat_regime_stats(raw_regimes)
+    print_live_regime_report(regime_metrics)
 
     # Wysyłanie (wewnętrznie wywołuje upload na GDrive)
     build_multiasset_outputs(
-        wf_equity_eq=wf_eq,
-        wf_trades_eq=wf_tr_eq,
-        wf_results_eq=wf_res_eq,
-        wf_equity_bd=wf_bd,
-        wf_trades_bd=wf_tr_bd,
-        wf_results_bd=wf_res_bd,
-        portfolio_equity=port_eq,
-        portfolio_metrics=m_p,
-        weights_series=w_s,
-        reallocation_log=realloc,
-        bh_eq_equity=bh_eq,
-        bh_eq_metrics=bh_m_eq,
-        bh_bd_equity=bh_bd,
-        bh_bd_metrics=bh_m_bd,
-        WIG=WIG,
-        TBSP=TBSP,
-        sig_eq_oos=sig_eq_oos,
-        sig_bd_oos=sig_bd_oos,
+        wf_eq,
+        wf_tr_eq,
+        wf_res_eq,
+        wf_bd,
+        wf_tr_bd,
+        wf_res_bd,
+        port_eq,
+        m_p,
+        w_s,
+        realloc,
+        bh_eq,
+        bh_m_eq,
+        bh_bd,
+        bh_m_bd,
+        WIG,
+        TBSP,
+        sig_eq_oos,
+        sig_bd_oos,
         output_dir=str(OUTPUT_DIR / "pension"),
         asset_name="PENSION",  # [Ważne]
         run_date=None,
@@ -305,17 +296,15 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
         gdrive_credentials=creds_path,
     )
 
+
 def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
     cfg = ASSET_REGISTRY[asset_key]
-    mode, train_y, test_y, fx_h = cfg["mode"], cfg["train"], cfg["test"], cfg.get("fx_hedged", True)
-    folder_id = os.environ.get("GDRIVE_FOLDER_ID")
-    
-    #[POPRAWKA 1] Ustalenie trybu stopu (podobnie jak w PENSION)
+    mode, train_y, test_y, fx_h = cfg["mode"], cfg["train"], cfg["test"], cfg["fx_hedged"]
     selected_stop = cfg.get("default_stop_eq", "atr") if stop_mode_arg == "auto" else stop_mode_arg
-    use_atr_eq = (selected_stop == "atr")
-    
-    # [POPRAWKA 2] Naprawione cudzysłowy w f-stringu, aby uniknąć SyntaxError
-    logging.info(f"GLOBAL PORTFOLIO ENGINE: {mode} | FX Hedged: {fx_h} | Stop mode: {selected_stop} | Train years: {train_y} | Test years: {test_y}")
+    use_atr_eq = selected_stop == "atr"
+
+    folder_id = os.environ.get("GDRIVE_FOLDER_ID")
+    logging.info(f"GLOBAL PORTFOLIO ENGINE: {mode} | Equity Stop: {selected_stop} | FX Hedged: {fx_h} | Train: {cfg["train"]} y | Test: {cfg["test"]} y")
 
     WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
     TBSP = build_and_upload(
@@ -363,27 +352,36 @@ def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
         ret_s = build_return_series(px_df, fx_series=fx_s, hedged=fx_h)
         rets_dict[lbl] = ret_s.dropna()
         proc_px = px_df if fx_h or fx_s is None else build_price_df_from_returns(ret_s, lbl)
-        logging.info(f"================ {lbl} ================")
-        #[POPRAWKA 3] Jawne przekazanie parametrów stopu, siatek i fast_mode
-        wf_e, wf_r, wf_t = walk_forward(
-            proc_px, MMF, train_y, test_y, 
-            X_grid=BASE_GRIDS["X_GRID"], Y_grid=BASE_GRIDS["Y_GRID"],
-            fast_grid=BASE_GRIDS["FAST_GRID"], slow_grid=BASE_GRIDS["SLOW_GRID"],
-            use_atr_stop=use_atr_eq, 
-            N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr_eq else None,
-            n_jobs=n_jobs, 
-        )
-        
+
+        logging.info(f"========== RUNNING: {lbl} ==========")
+
+        wf_e, wf_r, wf_t = walk_forward(proc_px, MMF, train_y, test_y, use_atr_stop=use_atr_eq, n_jobs=n_jobs)
+
+        if wf_e.empty:
+            sys.exit(f"Walk-forward returned no results for {asset_name}.")
+
+        wf_e = wf_e.loc[~wf_e.index.duplicated(keep="last")]
+
+        wf_metrics = {k: float(v) for k, v in compute_metrics(wf_e).items()}
+        trade_stats = analyze_trades(wf_t)
+
+        print_backtest_report(
+            metrics=wf_metrics,
+            trades=wf_t,
+            trade_stats=trade_stats,
+            wf_results=wf_r,
+            position_mode="full",
+            filter_modes_override=None,
+            )  
+
         sigs_full[lbl] = build_signal_series(wf_e, wf_t)
         if lbl == "WIG":
             wig_wf_res = wf_r
-    logging.info("================ TBSP ================")
-    # [POPRAWKA 4] Dodanie odpowiednich siatek również dla obligacji
+    
+    logging.info(f"========== RUNNING: TBSP ==========")
+
     wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
-        TBSP, MMF, train_y, test_y, filter_modes_override=["ma"], 
-        X_grid=BOND_GRIDS["X_GRID"], Y_grid=BOND_GRIDS["Y_GRID"],
-        fast_grid=BOND_GRIDS["FAST_GRID"], slow_grid=BOND_GRIDS["SLOW_GRID"],
-        n_jobs=n_jobs, 
+        TBSP, MMF, train_y, test_y, filter_modes_override=["ma"], n_jobs=n_jobs,
     )
     rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
     sigs_full["TBSP"] = build_signal_series(wf_bd, wf_tr_bd)
@@ -420,17 +418,17 @@ def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
 
     # Wysyłanie (wewnętrznie wywołuje upload na GDrive)
     build_global_outputs(
-        wf_results_dict={},
-        portfolio_equity=p_e,
-        portfolio_metrics=m,
-        weights_series=w_s,
-        reallocation_log=realloc,
-        bh_metrics_dict=bh_metrics_all,
-        returns_dict=rets_dict,
-        signals_oos_dict=sigs_full,
-        asset_keys=list(rets_dict.keys()),
-        portfolio_mode=mode,
-        fx_hedged=fx_h,
+        {},
+        p_e,
+        m,
+        w_s,
+        realloc,
+        bh_metrics_all,
+        rets_dict,
+        sigs_full,
+        list(rets_dict.keys()),
+        mode,
+        fx_h,
         output_dir=str(OUTPUT_DIR / asset_key.lower()),
         asset_name=asset_key,  # [Ważne] - czyli np. GLOBAL_A lub GLOBAL_B
         run_date=None,

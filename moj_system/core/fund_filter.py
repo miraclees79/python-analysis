@@ -28,136 +28,36 @@ import time
 import numpy as np
 import pandas as pd
 
-# Import funkcji, od których te moduły zależą
-from moj_system.data.data_manager import (  # (Zakładając, że download_csv_old jest chwilowo potrzebny)
-    load_local_csv,
-)
-
-"""
-
-# -------------------------------------------------------
-# Fund NAV downloads for breadth filter
-# -------------------------------------------------------
-
-FUND_CODES = {
-    "2718": "GS_Akcji",
-    "3872": "Skarbiec_Akcji",
-    "2847": "Investor_FundamentalnyDywWzr",
-    "1422": "Allianz_Selektywny",
-    "1626": "Rockbridge_Akcji",
-    "4650": "Uniqa_Selektywny",
-    "2869": "Ipopema_MiS",
-    "4544": "Uniqa_Akcji",
-    "3165": "Rockbridge_NeoAkcji",
-    "3199": "Millenium_Akcji",
-    "3959": "GenKorona_Akcji",
-    "1056": "Superfund_Akcji",
-    "3396": "PKO_Akcji",
-    "3187": "Rockbridge_NeoAkcjiPL",
-    "3360": "Pekao_AkcjiAktywna",
-    "1137": "PZU_AkcjiPL",
-    "1140": "PZU_AkcjiKrak",
-    "1656": "Santander_AkcjiPL",
-    "1621": "INPZU_AkcjiPL",
-    "2159": "CA_Akcji",
-    "1692": "SantanderPR_AkcjiPL",
-    "2719": "GS_POI",
-    "3151": "Esaliens_Akcji",
-    "3166": "Rockbridge_NeoMid",
-    "3306": "Velo_AkcjiPL",
-    "3441": "Quercus_Agr",
-    "1043": "Alior_Akcji"
-    }
-
-# Check for duplicate codes before downloading
-seen_codes = {}
-for code, name in FUND_CODES.items():
-    if code in seen_codes:
-        logging.warning(
-            "Duplicate fund code %s — '%s' overwrites '%s'. Check FUND_CODES.",
-            code, name, seen_codes[code]
-        )
-    seen_codes[code] = name
-
-# Check for duplicate names
-seen_names = {}
-for code, name in FUND_CODES.items():
-    if name in seen_names:
-        logging.warning(
-            "Duplicate fund name '%s' — code %s overwrites code %s. Check FUND_CODES.",
-            name, code, seen_names[name]
-        )
-    seen_names[name] = code
+# Import funkcji, od których te moduły zależą - do dopracowania
 
 
+def download_fund_navs(fund_codes: dict, tmp_dir: str) -> dict:
+    """
+    Download fund NAV series from stooq.pl and build the FUND_FILES dict.
+    """
+    BASE_URL = "https://stooq.pl/q/d/l/?s={code}.n&i=d"
+    fund_files = {}
 
-if FORCE_FILTER_MODE is None or "fund" in FORCE_FILTER_MODE:
-    FUND_FILES = download_fund_navs(FUND_CODES, tmp_dir)
+    for code, name in fund_codes.items():
+        url = BASE_URL.format(code=code)
+        filepath = os.path.join(tmp_dir, f"fund_{code}_{name}.csv")
 
-    FUNDS = build_funds_df(
-        fund_files=FUND_FILES,
-        price_col="Zamkniecie",
-        min_history_years=10
-    ) if FUND_FILES else None
+        # UWAGA: Ta funkcja zależy od download_csv_old. Jeśli usuniesz ją z strategy_engine,
+        # musisz przenieść ją tutaj lub zastąpić nowym mechanizmem pobierania.
+        # Na razie zostawiamy, zakładając tymczasową zależność.
+        success = download_csv_old(url, filepath)
 
-    if FUNDS is None or FUNDS.empty:
-        logging.warning(
-            "Fund panel unavailable — fund breadth filter will not be used."
-        )
-        FUNDS      = None
-        FUND_PARAMS_GRID = None
-    else:
+        if success:
+            fund_files[name] = filepath
+            logging.info(f"Fund {name} ({code}) — downloaded to {filepath}.")
+        else:
+            logging.warning(f"Fund {name} ({code}) — download failed, will be excluded.")
 
- 
-        FUND_PARAMS_GRID = [    
-            {
-            "lookback_days":      30,   # medium asymmetric
-            "entry_roll_thresh":  0.05,
-            "entry_since_thresh": 0.08,
-            "exit_roll_thresh":  -0.06,
-            "exit_since_thresh": -0.10
-            },
-            {
-            "lookback_days":      30, #strong asymmetric tight entry loose exit
-            "entry_roll_thresh":  0.03,
-            "entry_since_thresh": 0.05,
-            "exit_roll_thresh":  -0.10,
-            "exit_since_thresh": -0.15
-            },
-            {
-            "lookback_days":      30, #original idea
-            "entry_roll_thresh":  0.10,
-            "entry_since_thresh": 0.15,
-            "exit_roll_thresh":  -0.10,
-            "exit_since_thresh": -0.15
-            }
-        ]
-        #============================
-        # Fund correlation check
+        time.sleep(random.uniform(0.3, 1))
 
-        funds_df=FUNDS
+    logging.info(f"download_fund_navs: {len(fund_files)} of {len(fund_codes)} funds downloaded.")
+    return fund_files
 
-        corr_matrix = funds_df.corr()
-        high_corr_pairs = []
-        for i in range(len(corr_matrix.columns)):
-            for j in range(i+1, len(corr_matrix.columns)):
-                r = corr_matrix.iloc[i, j]
-                if r > 0.98:
-                    high_corr_pairs.append((
-                    corr_matrix.columns[i],
-                    corr_matrix.columns[j],
-                    round(r, 4)
-            ))
-
-        if high_corr_pairs:
-            logging.info("High correlation fund pairs (r>0.98):")
-            for f1, f2, r in sorted(high_corr_pairs, key=lambda x: -x[2]):
-                logging.info("  %s / %s  r=%.4f", f1, f2, r)
-else:
-    FUNDS      = None 
-    FUND_PARAMS_GRID = None
-    
-"""
 
 def build_funds_df(
     fund_files: dict, price_col: str = "Zamkniecie", min_history_years: int = 10,
@@ -170,7 +70,7 @@ def build_funds_df(
     excluded = []
 
     for fund_id, filepath in fund_files.items():
-        df = load_local_csv(filepath)
+        df = load_csv(filepath)
         if df is None:
             excluded.append((fund_id, "load failed"))
             continue
