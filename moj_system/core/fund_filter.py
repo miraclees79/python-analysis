@@ -28,11 +28,7 @@ import time
 import numpy as np
 import pandas as pd
 
-# Import funkcji, od których te moduły zależą
-from moj_system.core.strategy_engine import (  # (Zakładając, że download_csv_old jest chwilowo potrzebny)
-    download_csv_old,
-    load_csv,
-)
+# Import funkcji, od których te moduły zależą - do dopracowania
 
 
 def download_fund_navs(fund_codes: dict, tmp_dir: str) -> dict:
