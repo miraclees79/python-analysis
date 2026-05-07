@@ -210,7 +210,7 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
     if wf_eq.empty:
         sys.exit(f"Walk-forward returned no results for {asset_name}.")
 
-    wf_eq = wf_eq.loc[~wf_equity.index.duplicated(keep="last")]
+    wf_eq = wf_eq.loc[~wf_eq.index.duplicated(keep="last")]
 
     wf_metrics = {k: float(v) for k, v in compute_metrics(wf_eq).items()}
     trade_stats = analyze_trades(wf_tr_eq)
@@ -360,7 +360,7 @@ def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
         if wf_e.empty:
             sys.exit(f"Walk-forward returned no results for {asset_name}.")
 
-        wf_e = wf_e.loc[~wf_equity.index.duplicated(keep="last")]
+        wf_e = wf_e.loc[~wf_e.index.duplicated(keep="last")]
 
         wf_metrics = {k: float(v) for k, v in compute_metrics(wf_e).items()}
         trade_stats = analyze_trades(wf_t)
