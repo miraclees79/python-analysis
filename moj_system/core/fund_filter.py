@@ -7,6 +7,14 @@ Created on Thu Apr 23 19:03:12 2026
 
 # moj_system/core/fund_filter.py
 
+import logging
+import os
+import random
+import time
+
+import numpy as np
+import pandas as pd
+
 """
 moj_system/core/fund_filter.py
 ==============================
@@ -20,13 +28,7 @@ Funkcjonalność ta została wydzielona z `strategy_engine.py` w celu odizolowan
 jej od głównego, aktywnego silnika strategii. Jest przeznaczona do dalszych badań.
 """
 
-import logging
-import os
-import random
-import time
 
-import numpy as np
-import pandas as pd
 
 # Import funkcji, od których te moduły zależą - do dopracowania
 

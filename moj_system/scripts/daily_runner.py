@@ -297,73 +297,141 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
     )
 
 
-def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
+def run_global_portfolio(
+    asset_key: str,
+    stop_mode_arg: str,
+    creds_path: str
+) -> None:
+    
     cfg = ASSET_REGISTRY[asset_key]
-    mode, train_y, test_y, fx_h = cfg["mode"], cfg["train"], cfg["test"], cfg["fx_hedged"]
+    mode = cfg["mode"]
+    train_y = cfg["train"]
+    test_y = cfg["test"]
+    fx_h = cfg["fx_hedged"]
+    
     selected_stop = cfg.get("default_stop_eq", "atr") if stop_mode_arg == "auto" else stop_mode_arg
     use_atr_eq = selected_stop == "atr"
 
     folder_id = os.environ.get("GDRIVE_FOLDER_ID")
-    logging.info(f"GLOBAL PORTFOLIO ENGINE: {mode} | Equity Stop: {selected_stop} | FX Hedged: {fx_h} | Train: {cfg["train"]} y | Test: {cfg["test"]} y")
-
-    WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
-    TBSP = build_and_upload(
-        folder_id,
-        "tbsp_extended_full.csv",
-        "tbsp_extended_combined.csv",
-        "^tbsp",
-        "stooq",
-        creds_path,
+    logging.info(
+        msg=f"GLOBAL PORTFOLIO ENGINE: {mode} | Equity Stop: {selected_stop} | FX Hedged: {fx_h} | Train: {train_y} y | Test: {test_y} y"
     )
-    MMF = load_local_csv("fund_2720", "MMF")
+
+    WIG = load_local_csv(
+        ticker="wig",
+        label="WIG"
+    ).loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
+    
+    TBSP = build_and_upload(
+        folder_id=folder_id,
+        raw_filename="tbsp_extended_full.csv",
+        combined_filename="tbsp_extended_combined.csv",
+        extension_ticker="^tbsp",
+        extension_source="stooq",
+        credentials_path=creds_path,
+    )
+    
+    MMF = load_local_csv(
+        ticker="fund_2720",
+        label="MMF"
+    )
 
     fx_map = {
-        curr: load_local_csv(f"{curr.lower()}pln", f"{curr}PLN")["Zamkniecie"]
-        for curr in ["USD", "EUR", "JPY"]
+        curr: load_local_csv(
+            ticker=f"{curr.lower()}pln", 
+            label=f"{curr}PLN"
+        )["Zamkniecie"]
+        for curr in["USD", "EUR", "JPY"]
     }
 
     if mode == "global_equity":
         stoxx = build_and_upload(
-            folder_id, "stoxx600.csv", "stoxx600_combined.csv", "^STOXX", "yfinance", creds_path,
+            folder_id=folder_id, 
+            raw_filename="stoxx600.csv", 
+            combined_filename="stoxx600_combined.csv", 
+            extension_ticker="^STOXX", 
+            extension_source="yfinance", 
+            credentials_path=creds_path,
         )
         assets = {
             "WIG": (WIG, None),
-            "SP500": (load_local_csv("sp500", "SP500"), fx_map["USD"]),
+            "SP500": (
+                load_local_csv(
+                    ticker="sp500", 
+                    label="SP500"
+                ), 
+                fx_map["USD"]
+            ),
             "STOXX600": (stoxx, fx_map["EUR"]),
-            "Nikkei225": (load_local_csv("nikkei225", "Nikkei225"), fx_map["JPY"]),
+            "Nikkei225": (
+                load_local_csv(
+                    ticker="nikkei225", 
+                    label="Nikkei225"
+                ), 
+                fx_map["JPY"]
+            ),
         }
     else:  # msci_world
         msciw = build_and_upload(
-            folder_id,
-            "msci_world_wsj_raw.csv",
-            "msci_world_combined.csv",
-            "URTH",
-            "yfinance",
-            creds_path,
+            folder_id=folder_id,
+            raw_filename="msci_world_wsj_raw.csv",
+            combined_filename="msci_world_combined.csv",
+            extension_ticker="URTH",
+            extension_source="yfinance",
+            credentials_path=creds_path,
             is_msci_world=True,
         )
-        assets = {"WIG": (WIG, None), "MSCI_World": (msciw, fx_map["USD"])}
+        assets = {
+            "WIG": (WIG, None), 
+            "MSCI_World": (msciw, fx_map["USD"])
+        }
 
-    rets_dict, sigs_full, bh_metrics_all = {}, {}, {}
+    rets_dict = {}
+    sigs_full = {}
+    bh_metrics_all = {}
+    
+    # === NOWE SŁOWNIKI NA POTRZEBY SZCZEGÓŁOWEGO RAPORTOWANIA ===
+    wf_results_dict = {}
+    wf_trades_dict = {}
+    price_df_dict = {}
+    
     n_jobs = get_n_jobs()
 
     wig_wf_res = None
     for lbl, (px_df, fx_s) in assets.items():
-        ret_s = build_return_series(px_df, fx_series=fx_s, hedged=fx_h)
+        ret_s = build_return_series(
+            price_df=px_df, 
+            fx_series=fx_s, 
+            hedged=fx_h
+        )
         rets_dict[lbl] = ret_s.dropna()
-        proc_px = px_df if fx_h or fx_s is None else build_price_df_from_returns(ret_s, lbl)
+        proc_px = px_df if fx_h or fx_s is None else build_price_df_from_returns(
+            ret=ret_s, 
+            label=lbl
+        )
 
-        logging.info(f"========== RUNNING: {lbl} ==========")
+        logging.info(
+            msg=f"========== RUNNING: {lbl} =========="
+        )
 
-        wf_e, wf_r, wf_t = walk_forward(proc_px, MMF, train_y, test_y, use_atr_stop=use_atr_eq, n_jobs=n_jobs)
+        wf_e, wf_r, wf_t = walk_forward(
+            df=proc_px, 
+            cash_df=MMF, 
+            train_years=train_y, 
+            test_years=test_y, 
+            use_atr_stop=use_atr_eq, 
+            n_jobs=n_jobs
+        )
 
         if wf_e.empty:
             sys.exit(f"Walk-forward returned no results for {lbl}.")
 
         wf_e = wf_e.loc[~wf_e.index.duplicated(keep="last")]
 
-        wf_metrics = {k: float(v) for k, v in compute_metrics(wf_e).items()}
-        trade_stats = analyze_trades(wf_t)
+        wf_metrics = {k: float(v) for k, v in compute_metrics(equity=wf_e).items()}
+        trade_stats = analyze_trades(
+            trades=wf_t
+        )
 
         print_backtest_report(
             metrics=wf_metrics,
@@ -372,65 +440,111 @@ def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
             wf_results=wf_r,
             position_mode="full",
             filter_modes_override=None,
-            )
+        )
 
-        sigs_full[lbl] = build_signal_series(wf_e, wf_t)
+        sigs_full[lbl] = build_signal_series(
+            wf_equity=wf_e, 
+            wf_trades=wf_t
+        )
+        
+        # Zapis do nowych struktur
+        wf_results_dict[lbl] = wf_r
+        wf_trades_dict[lbl] = wf_t
+        price_df_dict[lbl] = proc_px
+        
         if lbl == "WIG":
             wig_wf_res = wf_r
 
-    logging.info("========== RUNNING: TBSP ==========")
+    logging.info(
+        msg="========== RUNNING: TBSP =========="
+    )
 
     wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
-        TBSP, MMF, train_y, test_y, filter_modes_override=["ma"], n_jobs=n_jobs,
+        df=TBSP, 
+        cash_df=MMF, 
+        train_years=train_y, 
+        test_years=test_y, 
+        filter_modes_override=["ma"], 
+        n_jobs=n_jobs,
     )
     rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
-    sigs_full["TBSP"] = build_signal_series(wf_bd, wf_tr_bd)
+    sigs_full["TBSP"] = build_signal_series(
+        wf_equity=wf_bd, 
+        wf_trades=wf_tr_bd
+    )
+    
+    # Dodanie TBSP do nowych struktur
+    wf_results_dict["TBSP"] = wf_res_bd
+    wf_trades_dict["TBSP"] = wf_tr_bd
+    price_df_dict["TBSP"] = TBSP
 
     p_e, w_s, realloc, a_df = allocation_walk_forward_n(
-        rets_dict,
-        sigs_full,
-        sigs_full,
-        MMF["Zamkniecie"].pct_change().dropna(),
-        wf_res_bd,
-        list(rets_dict.keys()),
+        returns_dict=rets_dict,
+        signals_full_dict=sigs_full,
+        signals_oos_dict=sigs_full,
+        mmf_returns=MMF["Zamkniecie"].pct_change().dropna(),
+        wf_results_ref=wf_res_bd,
+        asset_keys=list(rets_dict.keys()),
         train_years=train_y,
     )
 
     # --- PANCERNE USUWANIE DUPLIKATÓW DAT ---
     p_e = p_e.loc[~p_e.index.duplicated(keep="last")]
 
-    m = {k: float(v) for k, v in compute_metrics(p_e).items()}
+    m = {k: float(v) for k, v in compute_metrics(equity=p_e).items()}
     for lbl in rets_dict.keys():
-        aligned_rets = rets_dict[lbl].reindex(p_e.index).fillna(0.0)
-        bh_curve = (1 + aligned_rets).cumprod()
-        bh_metrics_all[lbl] = compute_metrics(bh_curve)
+        aligned_rets = rets_dict[lbl].reindex(index=p_e.index).fillna(value=0.0)
+        bh_curve = (1.0 + aligned_rets).cumprod()
+        bh_metrics_all[lbl] = compute_metrics(equity=bh_curve)
 
     print_global_equity_report(
-        m, bh_metrics_all, a_df, realloc, sigs_full, p_e.index.min(), p_e.index.max(), mode, fx_h,
+        portfolio_metrics=m, 
+        bh_metrics_dict=bh_metrics_all, 
+        alloc_results_df=a_df, 
+        reallocation_log=realloc, 
+        signals_oos_dict=sigs_full, 
+        oos_start=p_e.index.min(), 
+        oos_end=p_e.index.max(), 
+        portfolio_mode=mode, 
+        fx_hedged=fx_h,
     )
 
     # Raportowanie reżimów (Z użyciem WIG jako rynkowego kontekstu odniesienia)
-    bh_wig = (1 + rets_dict["WIG"].reindex(p_e.index).fillna(0.0)).cumprod()
-    regime_inputs = prepare_regime_inputs(WIG, wig_wf_res, p_e, bh_wig)
-    raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
-    regime_metrics = extract_flat_regime_stats(raw_regimes)
-    print_live_regime_report(regime_metrics)
+    bh_wig = (1.0 + rets_dict["WIG"].reindex(index=p_e.index).fillna(value=0.0)).cumprod()
+    regime_inputs = prepare_regime_inputs(
+        df=WIG, 
+        wf_results=wig_wf_res, 
+        wf_equity=p_e, 
+        bh_equity=bh_wig
+    )
+    raw_regimes = run_regime_decomposition(
+        inputs=regime_inputs, 
+        generate_plots=False
+    )
+    regime_metrics = extract_flat_regime_stats(
+        regime_results=raw_regimes
+    )
+    print_live_regime_report(
+        regime_metrics=regime_metrics
+    )
 
-    # Wysyłanie (wewnętrznie wywołuje upload na GDrive)
+    # Wysyłanie (wewnętrznie wywołuje upload na GDrive) - z nowymi argumentami
     build_global_outputs(
-        {},
-        p_e,
-        m,
-        w_s,
-        realloc,
-        bh_metrics_all,
-        rets_dict,
-        sigs_full,
-        list(rets_dict.keys()),
-        mode,
-        fx_h,
+        wf_results_dict=wf_results_dict,
+        wf_trades_dict=wf_trades_dict,
+        price_df_dict=price_df_dict,
+        portfolio_equity=p_e,
+        portfolio_metrics=m,
+        weights_series=w_s,
+        reallocation_log=realloc,
+        bh_metrics_dict=bh_metrics_all,
+        returns_dict=rets_dict,
+        signals_oos_dict=sigs_full,
+        asset_keys=list(rets_dict.keys()),
+        portfolio_mode=mode,
+        fx_hedged=fx_h,
         output_dir=str(OUTPUT_DIR / asset_key.lower()),
-        asset_name=asset_key,  # [Ważne] - czyli np. GLOBAL_A lub GLOBAL_B
+        asset_name=asset_key,  
         run_date=None,
         gdrive_folder_id=folder_id,
         gdrive_credentials=creds_path,

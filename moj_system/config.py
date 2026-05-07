@@ -103,15 +103,31 @@ ASSET_REGISTRY = {
         "test": 2,
         "default_stop": "fixed",
     },
-    # None of the configs below are active
-    # "MWIG40TR": {"type": "single", "source": "stooq", "ticker": "mwig40tr", "yf_ticker": "MWIG40TR.WA", "train": 8, "test": 2, "default_stop": "fixed", "grids": {"MOM_LB_GRID": [252]}},
-    # "SWIG80TR": {"type": "single", "source": "stooq", "ticker": "swig80tr", "yf_ticker": "SWIG80TR.WA", "train": 9, "test": 2, "default_stop": "atr"},
-    # "SP500":    {"type": "single", "source": "stooq", "ticker": "^spx", "yf_ticker": "^GSPC", "train": 6, "test": 2, "default_stop": "fixed"},
-    # "NASDAQ100":{"type": "single", "source": "stooq", "ticker": "^ndq", "yf_ticker": "^NDX", "train": 6, "test": 2, "default_stop": "fixed"},
-    # "Nikkei225":{"type": "single", "source": "stooq", "ticker": "^nkx", "yf_ticker": "^N225", "train": 6, "test": 2, "default_stop": "fixed"},
-    # "MSCI_World":{"type": "single", "source": "drive", "ticker": "URTH", "yf_ticker": "URTH", "train": 9, "test": 1, "default_stop": "atr"},
-    # "STOXX600": {"type": "single", "source": "drive", "ticker": "^STOXX", "yf_ticker": "^STOXX", "train": 7, "test": 1, "default_stop": "atr"},
-
+    """
+    None of the configs in the commented part are active
+    "MWIG40TR": {"type": "single", "source": "stooq", "ticker": "mwig40tr", 
+                    "yf_ticker": "MWIG40TR.WA", "train": 8, "test": 2, 
+                    "default_stop": "fixed", 
+                    "grids": {"MOM_LB_GRID": [252]}},
+    "SWIG80TR": {"type": "single", "source": "stooq", "ticker": "swig80tr", 
+                 "yf_ticker": "SWIG80TR.WA", "train": 9, "test": 2, 
+                 "default_stop": "atr"},
+    "SP500":    {"type": "single", "source": "stooq", "ticker": "^spx", 
+                 "yf_ticker": "^GSPC", "train": 6, "test": 2, 
+                 "default_stop": "fixed"},
+    "NASDAQ100":{"type": "single", "source": "stooq", "ticker": "^ndq", 
+                 "yf_ticker": "^NDX", "train": 6, "test": 2, 
+                 "default_stop": "fixed"},
+    "Nikkei225":{"type": "single", "source": "stooq", "ticker": "^nkx", 
+                 "yf_ticker": "^N225", "train": 6, "test": 2, 
+                 "default_stop": "fixed"},
+    "MSCI_World":{"type": "single", "source": "drive", "ticker": "URTH", 
+                  "yf_ticker": "URTH", "train": 9, "test": 1, 
+                  "default_stop": "atr"},
+    "STOXX600": {"type": "single", "source": "drive", "ticker": "^STOXX", 
+                 yf_ticker": "^STOXX", "train": 7, "test": 1, 
+                 "default_stop": "atr"},
+    """
     # Portfolio Templates
     "PENSION": {"type": "portfolio_pension",
                 "train": 7,
@@ -119,7 +135,12 @@ ASSET_REGISTRY = {
                 "default_stop_eq": "atr"},
 
     # GLOBAL_A config inactive
-    "GLOBAL_A": {"type": "portfolio_global", "mode": "global_equity", "train": 7, "test": 2, "fx_hedged": True},
+    "GLOBAL_A": {"type": "portfolio_global", 
+                 "mode": "global_equity", 
+                 "train": 7, 
+                 "test": 2, 
+                 "fx_hedged": True
+                 },
 
     "GLOBAL_B": {
         "type": "portfolio_global",
