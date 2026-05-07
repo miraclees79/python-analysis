@@ -6,6 +6,7 @@ import sys
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
+from moj_system.config import USE_NUMBA_ENGINE
 
 # ============================================================
 # CANONICAL N_JOBS CALCULATION
