@@ -104,8 +104,7 @@ def load_csv(
 
     df.columns = df.columns.str.strip()
     logging.debug(
-        msg="Available columns after stripping:",
-        *df.columns
+        msg=f"Available columns after stripping: {list(df.columns)}"
     )
 
     date_column = "Data"
@@ -1182,9 +1181,8 @@ def run_strategy_with_trades(
 
     if position_mode == "vol_dynamic" and rebal_count > 0:
         logging.debug(
-            msg="vol_dynamic rebalancing: %d adjustments, total cost drag %.4f%% (%.1f bps)",
-            * (rebal_count, rebal_cost_total * 100.0, rebal_cost_total * 10000.0)
-        )
+            msg=f"vol_dynamic rebalancing: {rebal_count} adjustments, total cost drag {rebal_cost_total * 100.0:.4f}% ({rebal_cost_total * 10000.0:.1f} bps)"
+        ))
 
     end_state = None
 
@@ -1196,8 +1194,7 @@ def run_strategy_with_trades(
 
         if entry_date < test_start:
             logging.debug(
-                msg="CARRY trade entry date %s predates test window %s — trade return and equity curve are on different bases",
-                * (entry_date, test_start)
+                msg=f"CARRY trade entry date {entry_date} predates test window {test_start} — trade return and equity curve are on different bases"
             )
 
         trades.append(
@@ -1248,9 +1245,8 @@ def run_strategy_with_trades(
     first_val = df["equity"].iloc[0]
     if initial_state is not None and abs(first_val - 1.0) > 0.001:
         logging.debug(
-            msg="Warmup P&L on carried position: %.2f%% — excluded from OOS equity",
-            * ((first_val - 1.0) * 100.0,)
-        )
+            msg=f"Warmup P&L on carried position: {(first_val - 1.0) * 100.0:.2f}% — excluded from OOS equity"
+        ))
     if first_val != 0.0:
         df["equity"] = df["equity"] / first_val
 
@@ -1432,16 +1428,13 @@ def walk_forward(
 
     data_end = df.index.max()
     logging.info(
-        msg="walk_forward received data from %s to %s (%d rows)",
-        *(df.index.min(), data_end, len(df))
+        msg=f"walk_forward received data from {df.index.min()} to {data_end} ({len(df)} rows)"
     )
     logging.info(
-        msg="Objective function: %s",
-        *(objective,)
+        msg=f"Objective function: {objective}"
     )
     logging.info(
-        msg="Trailing stop mode: %s  (ATR window=%d)",
-        *("ATR-scaled (Chandelier)" if use_atr_stop else "fixed percentage", atr_window)
+        msg=f"Trailing stop mode: {'ATR-scaled (Chandelier)' if use_atr_stop else 'fixed percentage'}  (ATR window={atr_window})"
     )
 
     oos_equity_slices = []
@@ -1453,8 +1446,7 @@ def walk_forward(
 
     if filter_modes_override is not None:
         logging.info(
-            msg="filter_modes overridden to: %s",
-            *(filter_modes_override,)
+            msg=f"filter_modes overridden to: {filter_modes_override}"
         )
 
     while True:
@@ -1634,15 +1626,13 @@ def walk_forward(
                     )
 
                 logging.info(
-                    msg="Grid search completed using %s backend (%d jobs).",
-                    *(label, n_jobs_inner)
+                    msg=f"Grid search completed using {label} backend ({n_jobs_inner} jobs)."
                 )
                 break
 
             except Exception as e:
                 logging.warning(
-                    msg="Grid search backend '%s' failed: %s — trying next option.",
-                    *(label, e)
+                    msg=f"Grid search backend '{label}' failed: {e} — trying next option."
                 )
                 results_list = None
 
@@ -1709,22 +1699,7 @@ def walk_forward(
                 f"N_atr={best_params['N_atr']:.2f}" if use_atr_stop else f"X={best_params['X']:.2f}"
             )
             logging.info(
-                msg="Window %s: best raw_%s=%.4f | penalised_%s=%.4f | filter=%s | %s Y=%.2f fast=%d slow=%d sl=%.2f tv=%s mom_lookback=%s",
-                *(
-                    train_start.date(),
-                    objective,
-                    best_raw_score,
-                    objective,
-                    best_score,
-                    best_params["filter_mode"],
-                    stop_label,
-                    best_params["Y"],
-                    best_params["fast"],
-                    best_params["slow"],
-                    best_params["stop_loss"],
-                    best_params.get("target_vol", "N/A"),
-                    best_params["mom_lookback"]
-                )
+                msg=f"Window {train_start.date()}: best raw_{objective}={best_raw_score:.4f} | penalised_{objective}={best_score:.4f} | filter={best_params['filter_mode']} | {stop_label} Y={best_params['Y']:.2f} fast={best_params['fast']} slow={best_params['slow']} sl={best_params['stop_loss']:.2f} tv={best_params.get('target_vol', 'N/A')} mom_lookback={best_params['mom_lookback']}"
             )
 
         WARMUP_BARS = best_params["slow"] + vol_window + 10
@@ -1890,8 +1865,7 @@ def analyze_trades(
     n_cross = trades["CrossWindow"].sum() if "CrossWindow" in trades.columns else 0
     if n_cross > 0:
         logging.info(
-            msg="%d trades carried across window boundaries",
-            *(n_cross,)
+            msg=f"{n_cross} trades carried across window boundaries"
         )
 
     loss = abs(trades.loc[trades["Return"] < 0, "Return"].sum())
@@ -1961,13 +1935,11 @@ def print_backtest_report(
         if use_atr and "atr_window" in wf_results.columns:
             aw = wf_results["atr_window"].iloc[0]
             logging.info(
-                msg="ATR trailing stop mode active (atr_window=%d)",
-                *(aw,)
+                msg=f"ATR trailing stop mode active (atr_window={aw})"
             )
 
         logging.info(
-            msg="\n%s",
-            *(wf_results[cols].to_string(index=False),)
+            msg=f"\n{wf_results[cols].to_string(index=False)}"
         )
 
     logging.info(
@@ -1978,16 +1950,9 @@ def print_backtest_report(
         msg="METRICS:"
     )
     logging.info(
-        msg="CAGR:  %.2f%% | Vol: %.2f%% | Sharpe: %.2f | MaxDD: %.2f%% | CalMAR: %.2f | Sortino: %.2f",
-        *(
-            metrics["CAGR"] * 100.0,
-            metrics["Vol"] * 100.0,
-            metrics["Sharpe"],
-            metrics["MaxDD"] * 100.0,
-            metrics["CalMAR"],
-            metrics["Sortino"]
-        )
+        msg=f"CAGR:  {metrics['CAGR'] * 100.0:.2f}% | Vol: {metrics['Vol'] * 100.0:.2f}% | Sharpe: {metrics['Sharpe']:.2f} | MaxDD: {metrics['MaxDD'] * 100.0:.2f}% | CalMAR: {metrics['CalMAR']:.2f} | Sortino: {metrics['Sortino']:.2f}"
     )
+    
     logging.info(
         msg="-" * 80
     )
@@ -1997,15 +1962,7 @@ def print_backtest_report(
             msg="TRADE STATISTICS:"
         )
         logging.info(
-            msg="Total Trades: %d | Win Rate: %.1f%% | Avg Win: %.2f%% | Avg Loss: %.2f%% | Profit Factor: %.2f | Avg Days: %.1f",
-            *(
-                int(trade_stats["Trades"]),
-                trade_stats["WinRate"] * 100.0,
-                trade_stats["AvgWin"] * 100.0,
-                trade_stats["AvgLoss"] * 100.0,
-                trade_stats["ProfitFactor"],
-                trade_stats["AvgDays"]
-            )
+            msg=f"Total Trades: {int(trade_stats['Trades'])} | Win Rate: {trade_stats['WinRate'] * 100.0:.1f}% | Avg Win: {trade_stats['AvgWin'] * 100.0:.2f}% | Avg Loss: {trade_stats['AvgLoss'] * 100.0:.2f}% | Profit Factor: {trade_stats['ProfitFactor']:.2f} | Avg Days: {trade_stats['AvgDays']:.1f}"
         )
         logging.info(
             msg="-" * 80
@@ -2024,8 +1981,7 @@ def print_backtest_report(
         n_carry = len(carry_trades)
         if n_carry > 0:
             logging.info(
-                msg="Note: trade log includes %d CARRY boundary records excluded from statistics above.",
-                *(n_carry,)
+                msg=f"Note: trade log includes {n_carry} CARRY boundary records excluded from statistics above."
             )
 
         trades_fmt = trades.copy()
@@ -2036,20 +1992,13 @@ def print_backtest_report(
             msg="TRADE LOG:"
         )
         logging.info(
-            msg="\n%s",
-            *(trades_fmt.to_string(index=False),)
+            msg=f"\n{trades_fmt.to_string(index=False)}"
         )
 
     if not trades.empty and trades.iloc[-1]["Exit Reason"] == "CARRY":
         last_carry = trades.iloc[-1]
         logging.info(
-            msg="Open position at report date: entry %s at %.2f, current value %.2f, unrealised return %.1f%%",
-            *(
-                last_carry["EntryDate"],
-                last_carry["EntryPrice"],
-                last_carry["ExitPrice"],
-                last_carry["Return"] * 100.0
-            )
+            msg=f"Open position at report date: entry {last_carry['EntryDate']} at {last_carry['EntryPrice']:.2f}, current value {last_carry['ExitPrice']:.2f}, unrealised return {last_carry['Return'] * 100.0:.1f}%"
         )
     logging.info(
         msg="=" * 80
