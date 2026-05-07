@@ -202,13 +202,13 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
     derived = build_standard_two_asset_data(WIG, TBSP, MMF, WIBOR, PL10Y, DE10Y, "1995-01-02")
     n_jobs = get_n_jobs()
 
-    logging.info(f"========== RUNNING: WIG ==========")
+    logging.info("========== RUNNING: WIG ==========")
 
     wf_eq, wf_res_eq, wf_tr_eq = walk_forward(
         WIG, derived["mmf_ext"], cfg["train"], cfg["test"], use_atr_stop=use_atr_eq, n_jobs=n_jobs,
     )
     if wf_eq.empty:
-        sys.exit(f"Walk-forward returned no results for {asset_name}.")
+        sys.exit("Walk-forward returned no results for WIG.")
 
     wf_eq = wf_eq.loc[~wf_eq.index.duplicated(keep="last")]
 
@@ -221,9 +221,9 @@ def run_pension_portfolio(stop_mode_arg, creds_path):
         wf_results=wf_res_eq,
         position_mode="full",
         filter_modes_override=None,
-    )    
+    )
 
-    logging.info(f"========== RUNNING: TBSP ==========")
+    logging.info("========== RUNNING: TBSP ==========")
 
     wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
         TBSP,
@@ -358,7 +358,7 @@ def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
         wf_e, wf_r, wf_t = walk_forward(proc_px, MMF, train_y, test_y, use_atr_stop=use_atr_eq, n_jobs=n_jobs)
 
         if wf_e.empty:
-            sys.exit(f"Walk-forward returned no results for {asset_name}.")
+            sys.exit(f"Walk-forward returned no results for {lbl}.")
 
         wf_e = wf_e.loc[~wf_e.index.duplicated(keep="last")]
 
@@ -372,13 +372,13 @@ def run_global_portfolio(asset_key, stop_mode_arg, creds_path):
             wf_results=wf_r,
             position_mode="full",
             filter_modes_override=None,
-            )  
+            )
 
         sigs_full[lbl] = build_signal_series(wf_e, wf_t)
         if lbl == "WIG":
             wig_wf_res = wf_r
-    
-    logging.info(f"========== RUNNING: TBSP ==========")
+
+    logging.info("========== RUNNING: TBSP ==========")
 
     wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
         TBSP, MMF, train_y, test_y, filter_modes_override=["ma"], n_jobs=n_jobs,

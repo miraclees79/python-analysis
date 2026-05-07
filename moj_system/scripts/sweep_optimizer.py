@@ -210,19 +210,19 @@ class SweepManager:
         self.wf_cache = {}
         self.mc_cache = {}
         self.boot_cache = {}
-    
-    
+
+
     def _create_portfolio_wf_results(self, wf_results_ref, port_eq):
         """Helper to compute aggregate portfolio metrics per window and apply the Stub Rule."""
         portfolio_wf_results = wf_results_ref.copy()
-        
+
         for row_index, row in portfolio_wf_results.iterrows():
             w_start = row["TestStart"]
             w_end   = row["TestEnd"]
-            
+
             # Slice the portfolio equity curve for this specific window
             window_equity_slice = port_eq.loc[w_start:w_end]
-            
+
             # STUB RULE: Mute stats if window is too short
             if len(window_equity_slice) < 60:
                 m_win = {"CAGR": np.nan, "Sharpe": np.nan, "MaxDD": np.nan, "CalMAR": np.nan, "Sortino": np.nan}
@@ -231,16 +231,16 @@ class SweepManager:
                 m_win = compute_metrics(equity=window_equity_norm)
             else:
                 m_win = {"CAGR": np.nan, "Sharpe": np.nan, "MaxDD": np.nan, "CalMAR": np.nan, "Sortino": np.nan}
-                
+
             portfolio_wf_results.loc[row_index, "CAGR"]   = m_win.get("CAGR", np.nan)
             portfolio_wf_results.loc[row_index, "Sharpe"] = m_win.get("Sharpe", np.nan)
             portfolio_wf_results.loc[row_index, "MaxDD"]  = m_win.get("MaxDD", np.nan)
             portfolio_wf_results.loc[row_index, "CalMAR"] = m_win.get("CalMAR", np.nan)
             portfolio_wf_results.loc[row_index, "Sortino"] = m_win.get("Sortino", np.nan)
             portfolio_wf_results.loc[row_index, "filter_mode"] = "PORTFOLIO"
-            
+
         return portfolio_wf_results
-    
+
     def get_cached_wf(
         self, asset_name, df, train_y, test_y, stop_type, grid_type="EQUITY", entry_gate=None,
     ):
@@ -272,7 +272,7 @@ class SweepManager:
             N_atr_grid=grids["N_ATR_GRID"] if use_atr else None,
             entry_gate_series=entry_gate,
             n_jobs=get_n_jobs(),
-            
+
         )
         self.wf_cache[cache_key] = (wf_equity, wf_results, wf_trades)
         return wf_equity, wf_results, wf_trades
@@ -351,7 +351,7 @@ class SweepManager:
             fast_grid=grids["FAST_GRID"],
             slow_grid=grids["SLOW_GRID"],
             filter_modes_override=["ma"] if grid_type == "BOND" else None,
-            
+
         )
         result = analyze_bootstrap(
             results_df=bb_df, baseline_metrics=compute_metrics(base_equity), thresholds=thresholds,
@@ -644,9 +644,9 @@ class SweepManager:
             print_live_regime_report(regime_metrics)
         else:
             regime_metrics = extract_flat_regime_stats({})
-        
+
         portfolio_wf_res = self._create_portfolio_wf_results(wf_results_ref=wf_res_eq, port_eq=port_eq)
-        
+
         return self._compile_full_result(
             strat_name="PENSION",
             train_y=train_y,
