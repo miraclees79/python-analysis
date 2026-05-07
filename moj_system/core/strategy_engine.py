@@ -1182,7 +1182,7 @@ def run_strategy_with_trades(
     if position_mode == "vol_dynamic" and rebal_count > 0:
         logging.debug(
             msg=f"vol_dynamic rebalancing: {rebal_count} adjustments, total cost drag {rebal_cost_total * 100.0:.4f}% ({rebal_cost_total * 10000.0:.1f} bps)"
-        ))
+        )
 
     end_state = None
 
