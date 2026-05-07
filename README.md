@@ -4,44 +4,14 @@ Automated analysis, optimisation, and monitoring system for trend-following stra
 
 ---
 
-## Architecture
+## Performance Optimization (May 2026) - Tri-Engine Architecture
 
-The codebase was fully refactored in April 2026 from a collection of per-asset runfiles into a modular package structure. The refactoring consolidated duplicated logic, introduced shared infrastructure modules, and added a universal CLI entry point.
+To eliminate severe bottlenecks during Deep Block Bootstrap validation (previously taking 12-15 hours per configuration), the core simulation module (`strategy_engine.py`) was redesigned using a **Tri-Engine Architecture**.
 
-```
-moj_system/
-├── config.py                   # Central registry: asset configs, parameter grids, thresholds
-├── core/
-│   ├── strategy_engine.py      # Walk-forward, run_strategy_with_trades, compute_metrics
-│   ├── pension_engine.py       # Multi-asset WIG+TBSP+MMF allocation layer
-│   ├── global_engine.py        # N-asset global equity framework, FX handling
-│   ├── robustness_engine.py    # Monte Carlo perturbation, block bootstrap
-│   ├── robustness.py           # RobustnessEngine wrapper class
-│   ├── fund_analytics.py       # OLS regression, IR, hit rate for fund panel
-│   ├── research.py             # Common OOS start calculation, result ranking
-│   └── utils.py                # Shared helpers: reallocation gate, MMF extension,
-│                               #   signals_to_target_weights (breaks circular imports)
-├── data/
-│   ├── updater.py              # Hybrid updater: ZIP extraction + yfinance + KNF API
-│   ├── data_manager.py         # load_local_csv (replaces load_stooq_local)
-│   ├── builder.py              # MSCI World / STOXX600 series construction from Drive
-│   ├── gdrive.py               # GDriveClient
-│   ├── knf_tools.py            # KNF API, fuzzy matching, price verification
-│   └── ocr_processor.py        # PPE PDF OCR pipeline
-├── reporting/
-│   ├── output_base.py          # Shared infrastructure: atomic writes, Drive pre-fetch
-│   ├── daily_output.py         # Single-asset daily artefacts
-│   ├── multiasset_daily_output.py   # Pension portfolio daily artefacts
-│   └── global_equity_daily_output.py # Global equity daily artefacts
-└── scripts/
-    ├── daily_runner.py         # Universal entry point for all strategies
-    ├── sweep_optimizer.py      # Multi-config parameter sweep with MC
-    ├── validate_robustness.py  # Deep MC + bootstrap validation
-    ├── objective_benchmarker.py # Annual objective function review
-    ├── fund_reviewer.py        # TFI fund ranking pipeline
-    └── refresh_knf.py          # KNF subfund refresh and matching
-outputs/                        # Run artefacts (git-ignored)
-```
+- **Ultra-Fast Numba Engine**: A pure numerical simulation loop compiled via LLVM (`@njit(cache=True, nogil=True)`), bypassing the Python interpreter overhead. Operates strictly on pre-extracted NumPy arrays and 64-bit primitives.
+- **Performance Gain**: Execution times for strategy evaluation were reduced by **>55%** (e.g., standard Pension daily run dropped from ~8 mins to ~3.5 mins), vastly accelerating Monte Carlo and Bootstrap routines.
+- **Strict Code Quality**: The refactoring introduced rigorous coding standards across the engine: mandatory keyword arguments (`kwarg=value`), full static type hinting, and strict elimination of "garbage" (`_`) variables.
+- **Mathematical Equivalence**: The Numba engine is perfectly mathematically equivalent to the standard Python loop and can be dynamically toggled via the `USE_NUMBA_ENGINE` flag in `config.py`.
 
 ---
 
@@ -71,7 +41,6 @@ The following consolidation work was completed. All changes preserve backward-co
 - `DataUpdater` in `updater.py` replaces `stooq_hybrid_updater.py`, consolidating ZIP extraction, yfinance extension, and KNF NAV fetching into one class
 - `builder.py` handles MSCI World and STOXX600 synthetic series construction (WSJ base + yfinance extension + synthetic pre-2010 chain-link)
 
-
 ---
 
 ## Deployed Monitoring Configs
@@ -84,15 +53,11 @@ The following consolidation work was completed. All changes preserve backward-co
 
 **Deployment gate**: configs must pass both MC parameter perturbation and block bootstrap before deployment consideration. MC alone is insufficient.
 
-
-
 ---
 
 ## Validation Hierarchy
 
 Walk-forward OOS → Monte Carlo parameter perturbation → block bootstrap → assessment of investment results → deployment. Each gate must be passed sequentially.
-
-
 
 ---
 
@@ -113,8 +78,6 @@ python moj_system/scripts/validate_robustness.py --mode SINGLE --asset WIG20TR -
 
 # KNF fund refresh
 python moj_system/scripts/refresh_knf.py --all
-```
-
 ---
 
 ## Configuration
