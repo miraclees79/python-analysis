@@ -50,6 +50,7 @@ from moj_system.core.research import (
     prepare_regime_inputs,
     print_live_regime_report,
     run_regime_decomposition,
+    analyze_production_candidates, 
 )
 from moj_system.core.robustness import RobustnessEngine
 from moj_system.core.robustness_engine import analyze_bootstrap, analyze_robustness
@@ -903,17 +904,22 @@ class SweepManager:
 
 
 def print_sweep_report(
-    results_df:   pd.DataFrame, 
-    common_start: dt.date,
+    results_df:    pd.DataFrame, 
+    common_start:  dt.date,
+    candidates_df: pd.DataFrame | None = None,
 ) -> None:
-
+    
     if results_df.empty:
         return
     sep = "=" * 120
-    logging.info(f"\n{sep}\nSWEEP OPTIMIZER REPORT (Common OOS Start: {common_start})\n{sep}")
-    logging.info("\n--- 1. PERFORMANCE & ROBUSTNESS LEADERBOARD ---")
+    logging.info(
+        msg=f"\n{sep}\nSWEEP OPTIMIZER REPORT (Common OOS Start: {common_start})\n{sep}"
+    )
+    logging.info(
+        msg="\n--- 1. PERFORMANCE & ROBUSTNESS LEADERBOARD ---"
+    )
 
-    display_cols = [
+    display_cols =[
         "Strategy",
         "train_years",
         "test_years",
@@ -927,31 +933,32 @@ def print_sweep_report(
     if "MC_p05_CAGR" in results_df.columns:
         display_cols.append("MC_p05_CAGR")
 
-    existing_cols = [c for c in display_cols if c in results_df.columns]
+    existing_cols =[c for c in display_cols if c in results_df.columns]
     format_df = results_df[existing_cols].copy()
-    # Słownik kolumn do sformatowania jako % (mnożymy przez 100 i dodajemy %)
-    pct_cols = ["oos_cagr", "oos_maxdd", "MC_p05_CAGR"]
+    
+    pct_cols =["oos_cagr", "oos_maxdd", "MC_p05_CAGR"]
 
     for col in pct_cols:
         if col in format_df.columns:
             format_df[col] = format_df[col].apply(
-                func=lambda x: f"{x * 100:+.2f}%" if pd.notna(x) else "N/A",
+                func=lambda x: f"{x * 100.0:+.2f}%" if pd.notna(x) else "N/A"
             )
 
-    # Kolumny numeryczne (tylko zaokrąglenie)
     if "oos_calmar" in format_df.columns:
         format_df["oos_calmar"] = format_df["oos_calmar"].apply(
-            func=lambda x: round(x, 3) if pd.notna(x) else "N/A",
+            func=lambda x: round(number=x, ndigits=3) if pd.notna(x) else "N/A"
         )
 
-    logging.info("\n" + format_df.to_string(index=False))
+    logging.info(
+        msg=f"\n{format_df.to_string(index=False)}"
+    )
 
-    regime_cols = [c for c in results_df.columns if "adx_" in c or "vol_" in c]
+    regime_cols =[c for c in results_df.columns if "adx_" in c or "vol_" in c]
     if regime_cols:
         logging.info(
-            f"\n{sep}\n--- 2. REGIME DECOMPOSITION: CAGR in Specific Market Conditions ---",
+            msg=f"\n{sep}\n--- 2. REGIME DECOMPOSITION: CAGR in Specific Market Conditions ---"
         )
-        key_regime_cols = [
+        key_regime_cols =[
             "Strategy",
             "train_years",
             "test_years",
@@ -963,15 +970,54 @@ def print_sweep_report(
             "adx_sideways_strat_cagr",
             "adx_sideways_bh_cagr",
         ]
-        avail_regime_cols = [c for c in key_regime_cols if c in results_df.columns]
+        avail_regime_cols =[c for c in key_regime_cols if c in results_df.columns]
         regime_df = results_df[avail_regime_cols].copy()
         for col in avail_regime_cols:
             if "cagr" in col:
                 regime_df[col] = regime_df[col].apply(
-                    lambda x: f"{x:.2f}%" if pd.notna(x) else "N/A",
+                    func=lambda x: f"{x:.2f}%" if pd.notna(x) else "N/A"
                 )
-        logging.info("\n" + regime_df.to_string(index=False))
-    logging.info(sep)
+        logging.info(
+            msg=f"\n{regime_df.to_string(index=False)}"
+        )
+
+    # --- NOWA SEKCJA: PRODUCTION CANDIDATES ---
+    if candidates_df is not None and not candidates_df.empty:
+        logging.info(
+            msg=f"\n{sep}\n--- 3. PRODUCTION CANDIDATES (Ranked by Weighted Score) ---"
+        )
+        cand_cols =[
+            "Strategy",
+            "train_years",
+            "test_years",
+            "stop_mode",
+            "ranking_score",
+            "score_protection",
+            "score_uptrend",
+            "score_excess",
+        ]
+        avail_cand_cols =[c for c in cand_cols if c in candidates_df.columns]
+        cand_format_df = candidates_df[avail_cand_cols].copy()
+        
+        # Zaokrąglenie punktacji (scores) do 3 miejsc po przecinku
+        for score_col in["ranking_score", "score_protection", "score_uptrend", "score_excess"]:
+            if score_col in cand_format_df.columns:
+                cand_format_df[score_col] = cand_format_df[score_col].apply(
+                    func=lambda x: round(number=x, ndigits=3) if pd.notna(x) else "N/A"
+                )
+        
+        logging.info(
+            msg=f"\n{cand_format_df.to_string(index=False)}"
+        )
+    elif candidates_df is not None:
+        logging.info(
+            msg=f"\n{sep}\n--- 3. PRODUCTION CANDIDATES ---"
+        )
+        logging.info(
+            msg="No configurations passed all mandatory production gates."
+        )
+
+    logging.info(msg=sep)
 
 
 def main() -> None:
@@ -1093,15 +1139,68 @@ def main() -> None:
 
     # 5. Saving
     if results:
-        final_df = pd.DataFrame(results).sort_values("oos_calmar", ascending=False)
-        print_sweep_report(final_df, common_start.date())
+        final_df = pd.DataFrame(
+            data=results
+        ).sort_values(
+            by="oos_calmar", 
+            ascending=False
+        )
+        
+        # --- GENEROWANIE KANDYDATÓW ---
+        require_boot_flag = args.n_boot > 0
+        candidates_df = analyze_production_candidates(
+            results_df=final_df,
+            require_bootstrap=require_boot_flag,
+        )
+
+        print_sweep_report(
+            results_df=final_df, 
+            common_start=common_start.date(),
+            candidates_df=candidates_df,
+        )
+        
         ts = dt.datetime.now().strftime("%Y%m%d_%H%M")
-        final_df.to_csv(OUTPUT_DIR / f"sweep_results_{ts}.csv", index=False, sep=";")
-        final_df.to_csv(OUTPUT_DIR / "sweep_results_latest.csv", index=False, sep=";")
+        
+        # Zapisywanie głównych wyników
+        final_df.to_csv(
+            path_or_buf=OUTPUT_DIR / f"sweep_results_{ts}.csv", 
+            index=False, 
+            sep=";"
+        )
+        final_df.to_csv(
+            path_or_buf=OUTPUT_DIR / "sweep_results_latest.csv", 
+            index=False, 
+            sep=";"
+        )
+        
+        # Zapisywanie kandydatów (jeśli jacyś są)
+        if not candidates_df.empty:
+            candidates_df.to_csv(
+                path_or_buf=OUTPUT_DIR / f"sweep_candidates_{ts}.csv", 
+                index=False, 
+                sep=";"
+            )
+            candidates_df.to_csv(
+                path_or_buf=OUTPUT_DIR / "sweep_candidates_latest.csv", 
+                index=False, 
+                sep=";"
+            )
+            
+        # Zapisywanie okienek
         if manager.all_windows:
-            win_df = pd.DataFrame(manager.all_windows)
-            win_df.to_csv(OUTPUT_DIR / f"sweep_windows_{ts}.csv", index=False, sep=";")
-            win_df.to_csv(OUTPUT_DIR / "sweep_windows_latest.csv", index=False, sep=";")
+            win_df = pd.DataFrame(
+                data=manager.all_windows
+            )
+            win_df.to_csv(
+                path_or_buf=OUTPUT_DIR / f"sweep_windows_{ts}.csv", 
+                index=False, 
+                sep=";"
+            )
+            win_df.to_csv(
+                path_or_buf=OUTPUT_DIR / "sweep_windows_latest.csv", 
+                index=False, 
+                sep=";"
+            )
 
 
 if __name__ == "__main__":
