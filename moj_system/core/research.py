@@ -18,7 +18,11 @@ import numpy as np
 import pandas as pd
 
 
-def get_common_oos_start(assets_data: dict, window_configs: list) -> pd.Timestamp:
+def get_common_oos_start(
+    assets_data:    dict[str, pd.DataFrame], 
+    window_configs: list[tuple[int, int]],
+) -> pd.Timestamp:
+
     """
     Calculates the latest possible start date for Out-Of-Sample period
     to ensure all tested configurations cover the exact same time range.
@@ -64,7 +68,11 @@ def get_common_oos_start(assets_data: dict, window_configs: list) -> pd.Timestam
     return common_start
 
 
-def rank_research_results(results_df: pd.DataFrame, objective: str = "CalMAR") -> pd.DataFrame:
+def rank_research_results(
+    results_df: pd.DataFrame, 
+    objective:  str = "CalMAR",
+) -> pd.DataFrame:
+
     """Ranks sweep results based on primary objective and robustness."""
     if results_df.empty:
         return results_df
@@ -79,7 +87,13 @@ def rank_research_results(results_df: pd.DataFrame, objective: str = "CalMAR") -
 # --- REGIME DECOMPOSITION FUNCTIONS ---
 
 
-def prepare_regime_inputs(df, wf_results, wf_equity, bh_equity):
+def prepare_regime_inputs(
+    df:         pd.DataFrame, 
+    wf_results: pd.DataFrame | None, 
+    wf_equity:  pd.Series, 
+    bh_equity:  pd.Series,
+) -> dict[str, pd.Series]:
+
     """
     Przygotowuje zsynchronizowane serie danych dla analizy reżimów.
     Odporna na zduplikowane etykiety dat.
@@ -128,7 +142,13 @@ def prepare_regime_inputs(df, wf_results, wf_equity, bh_equity):
     )
 
 
-def compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period=20) -> tuple:
+def compute_adx(
+    high:   pd.Series, 
+    low:    pd.Series, 
+    close:  pd.Series, 
+    period: int = 20,
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+
     delta_high = high.diff()
     delta_low = -low.diff()
     plus_dm = np.where((delta_high > delta_low) & (delta_high > 0), delta_high, 0.0)
@@ -154,8 +174,14 @@ def compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period=20) ->
 
 
 def label_regime_adx(
-    close: pd.Series, high: pd.Series, low: pd.Series, period=20, trend_thresh=25, chop_thresh=20,
+    close:        pd.Series, 
+    high:         pd.Series, 
+    low:          pd.Series, 
+    period:       int   = 20, 
+    trend_thresh: float = 25.0, 
+    chop_thresh:  float = 20.0,
 ) -> pd.Series:
+
     adx, plus_di, minus_di = compute_adx(high, low, close, period)
     regime = pd.Series("sideways", index=close.index)
     regime[adx > trend_thresh] = np.where(
@@ -167,7 +193,12 @@ def label_regime_adx(
     return regime.rename("regime_adx")
 
 
-def label_regime_momentum(close: pd.Series, window=63, thresh=0.03) -> pd.Series:
+def label_regime_momentum(
+    close:  pd.Series, 
+    window: int   = 63, 
+    thresh: float = 0.03,
+) -> pd.Series:
+
     ret = close.pct_change(window)
     regime = pd.Series("sideways", index=close.index)
     regime[ret > thresh] = "uptrend"
@@ -175,7 +206,13 @@ def label_regime_momentum(close: pd.Series, window=63, thresh=0.03) -> pd.Series
     return regime.rename("regime_mom")
 
 
-def label_regime_vol(close: pd.Series, window=21, hi_pct=0.67, lo_pct=0.33) -> pd.Series:
+def label_regime_vol(
+    close:  pd.Series, 
+    window: int   = 21, 
+    hi_pct: float = 0.67, 
+    lo_pct: float = 0.33,
+) -> pd.Series:
+
     rv = close.pct_change().rolling(window).std() * np.sqrt(252)
     rolling_med = rv.rolling(252, min_periods=60).median()
     regime = pd.Series("normal_vol", index=close.index)
@@ -186,10 +223,11 @@ def label_regime_vol(close: pd.Series, window=21, hi_pct=0.67, lo_pct=0.33) -> p
 
 def regime_stats(
     daily_returns_strat: pd.Series,
-    daily_returns_bh: pd.Series,
-    regime_series: pd.Series,
-    label="regime",
+    daily_returns_bh:    pd.Series,
+    regime_series:       pd.Series,
+    label:               str = "regime",
 ) -> pd.DataFrame:
+
     df = pd.DataFrame(
         {
             "strat": daily_returns_strat,
@@ -238,7 +276,10 @@ def regime_stats(
     return pd.DataFrame(rows).set_index(label)
 
 
-def regime_transition_matrix(regime_series: pd.Series) -> pd.DataFrame:
+def regime_transition_matrix(
+    regime_series: pd.Series,
+) -> pd.DataFrame:
+
     s = regime_series.dropna()
     regimes = sorted(s.unique())
     mat = pd.DataFrame(0.0, index=regimes, columns=regimes)
@@ -248,7 +289,11 @@ def regime_transition_matrix(regime_series: pd.Series) -> pd.DataFrame:
     return mat.round(3)
 
 
-def run_regime_decomposition(inputs: dict, generate_plots: bool = False) -> dict:
+def run_regime_decomposition(
+    inputs:         dict[str, pd.Series], 
+    generate_plots: bool = False,
+) -> dict[str, dict[str, pd.DataFrame]]:
+
     """
     Główna funkcja wykonująca dekompozycję reżimów (ADX, Mom, Vol).
     Jeśli generate_plots=False (np. w Sweep), zwraca tylko statystyki (bardzo szybkie).
@@ -282,7 +327,10 @@ def run_regime_decomposition(inputs: dict, generate_plots: bool = False) -> dict
     return results
 
 
-def extract_flat_regime_stats(regime_results: dict) -> dict:
+def extract_flat_regime_stats(
+    regime_results: dict[str, dict[str, pd.DataFrame]],
+) -> dict[str, float]:
+
     """Zawsze zwraca pełny zestaw kluczy, nawet jeśli dane są puste (NaN)."""
     out = {}
     # Definicja wszystkich metryk, które chcemy mieć w słowniku/pliku CSV
@@ -333,7 +381,10 @@ def extract_flat_regime_stats(regime_results: dict) -> dict:
     return out
 
 
-def print_live_regime_report(regime_metrics: dict):
+def print_live_regime_report(
+    regime_metrics: dict[str, float],
+) -> None:
+
     if not regime_metrics:
         logging.warning("No regime metrics available to print.")
         return
@@ -376,7 +427,10 @@ def print_live_regime_report(regime_metrics: dict):
 # moj_system/core/research.py (dodaj na końcu pliku)
 
 
-def get_current_adx_regime(df: pd.DataFrame) -> str:
+def get_current_adx_regime(
+    df: pd.DataFrame,
+) -> str:
+
     """
     Oblicza i zwraca bieżący reżim rynkowy (ADX) na podstawie najnowszych danych.
 
@@ -414,8 +468,10 @@ def get_current_adx_regime(df: pd.DataFrame) -> str:
 
 
 def analyze_production_candidates(
-    results_df: pd.DataFrame, require_bootstrap: bool = False,
+    results_df:        pd.DataFrame, 
+    require_bootstrap: bool = False,
 ) -> pd.DataFrame:
+
     """
     Filters sweep results based on mandatory production gates and
     calculates a weighted Ranking Score.

@@ -72,7 +72,11 @@ FINAL_COLS = [
 
 
 class FundReviewer:
-    def __init__(self, update_data=True):
+    def __init__(
+        self, 
+        update_data: bool = True,
+    ) -> None:
+
         self.creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
         self.gdrive = GDriveClient(credentials_path=self.creds_path)
         self.folder_id = os.environ.get("GDRIVE_FOLDER_ID")
@@ -89,7 +93,8 @@ class FundReviewer:
             if df is not None and "Zamkniecie" in df.columns:
                 self.benchmarks[name] = df["Zamkniecie"].squeeze()
 
-    def load_confirmed_funds(self):
+    def load_confirmed_funds(self) -> tuple[pd.DataFrame, dict[str, pd.Series]]:
+
         """Loads confirmed list and merges with ALL metadata from knf_summary.csv"""
         if not self.folder_id:
             sys.exit("GDRIVE_FOLDER_ID not set.")
@@ -157,7 +162,12 @@ class FundReviewer:
         logging.info(f"Loaded {len(fund_prices)} price histories.")
         return df_funds, fund_prices
 
-    def build_category_benchmarks(self, df_funds, fund_prices):
+    def build_category_benchmarks(
+        self, 
+        df_funds:    pd.DataFrame, 
+        fund_prices: dict[str, pd.Series],
+    ) -> dict[str, pd.Series]:
+
         """Builds synthetic benchmarks for each KNF category."""
         logging.info("Building synthetic category benchmarks...")
         category_rets = defaultdict(list)
@@ -188,7 +198,13 @@ class FundReviewer:
                 benchmarks[cat] = pd.concat(objs=rets, axis=1, sort=True).mean(axis=1)
         return benchmarks
 
-    def evaluate_fund(self, fund_row, prices, cat_benchmarks):
+    def evaluate_fund(
+        self, 
+        fund_row:       pd.Series, 
+        prices:         pd.Series, 
+        cat_benchmarks: dict[str, pd.Series],
+    ) -> list[dict]:
+
         """Calculates performance and regression metrics including Hit Rates."""
         category = fund_row.get("category")
         cat_bench_ret = cat_benchmarks.get(category)
@@ -250,7 +266,8 @@ class FundReviewer:
             results.append(row_data)
         return results
 
-    def generate_reports(self):
+    def generate_reports(self) -> None:
+
         df_funds, fund_prices = self.load_confirmed_funds()
         category_benchmarks = self.build_category_benchmarks(df_funds, fund_prices)
 
@@ -322,7 +339,7 @@ class FundReviewer:
             self.gdrive.upload_csv(self.folder_id, rank_path)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="TFI Comprehensive Reviewer")
     parser.add_argument("--update", action="store_true")
     args = parser.parse_args()

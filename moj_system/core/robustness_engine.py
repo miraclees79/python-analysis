@@ -34,8 +34,10 @@ from moj_system.core.strategy_engine import compute_metrics, run_strategy_with_t
 
 
 # Hack for legacy code compatibility
-def compute_fund_breadth_signal(*args, **kwargs):
-    return None
+def compute_fund_breadth_signal(
+    *args:  object, 
+    **kwargs: object,
+) -> pd.Series | None:
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +69,11 @@ MIN_VALUES = {
 # ---------------------------------------------------------------------------
 
 
-def build_perturbation_grid(base_params, pct=0.20):
+def build_perturbation_grid(
+    base_params: dict, 
+    pct:         float = 0.20,
+) -> list[dict]:
+
     """
     Build the cartesian product of ±pct perturbations around base_params.
 
@@ -141,7 +147,11 @@ def build_perturbation_grid(base_params, pct=0.20):
 # ---------------------------------------------------------------------------
 
 
-def build_all_perturbation_grids(best_params, pct=0.20):
+def build_all_perturbation_grids(
+    best_params: dict[int, dict], 
+    pct:         float = 0.20,
+) -> dict[int, list[dict]]:
+
     return {w_id: build_perturbation_grid(params, pct=pct) for w_id, params in best_params.items()}
 
 
@@ -150,7 +160,11 @@ def build_all_perturbation_grids(best_params, pct=0.20):
 # ---------------------------------------------------------------------------
 
 
-def sample_universe(window_variants, rng):
+def sample_universe(
+    window_variants: dict[int, list[dict]], 
+    rng:             random.Random,
+) -> dict[int, dict]:
+
     return {w_id: rng.choice(variants) for w_id, variants in window_variants.items()}
 
 
@@ -160,8 +174,16 @@ def sample_universe(window_variants, rng):
 
 
 def run_universe(
-    universe, windows, df, cash_df, vol_window, selected_mode, funds_df=None, price_col="Zamkniecie",
-):
+    universe:      dict[int, dict], 
+    windows:       list[dict], 
+    df:            pd.DataFrame, 
+    cash_df:       pd.DataFrame, 
+    vol_window:    int, 
+    selected_mode: str, 
+    funds_df:      pd.DataFrame | None = None, 
+    price_col:     str = "Zamkniecie",
+) -> tuple[pd.Series | None, list[dict]]:
+
     """
     Stitch the full OOS equity curve using perturbed params — no retraining.
 
@@ -254,8 +276,17 @@ def run_universe(
 
 
 def _run_single_sample(
-    seed, window_variants, windows, df, cash_df, vol_window, selected_mode, funds_df, price_col,
-):
+    seed:            int, 
+    window_variants: dict[int, list[dict]], 
+    windows:         list[dict], 
+    df:              pd.DataFrame, 
+    cash_df:         pd.DataFrame, 
+    vol_window:      int, 
+    selected_mode:   str, 
+    funds_df:        pd.DataFrame | None, 
+    price_col:       str,
+) -> dict | None:
+
     rng = random.Random(seed)
     universe = sample_universe(window_variants, rng)
 
@@ -285,19 +316,20 @@ def _run_single_sample(
 
 
 def run_monte_carlo_robustness(
-    best_params,
-    windows,
-    df,
-    cash_df,
-    vol_window,
-    selected_mode,
-    funds_df=None,
-    n_samples=1000,
-    n_jobs=1,
-    perturb_pct=0.20,
-    seed=42,
-    price_col="Zamkniecie",
-):
+    best_params:   dict[int, dict],
+    windows:       list[dict],
+    df:            pd.DataFrame,
+    cash_df:       pd.DataFrame,
+    vol_window:    int,
+    selected_mode: str,
+    funds_df:      pd.DataFrame | None = None,
+    n_samples:     int   = 1000,
+    n_jobs:        int   = 1,
+    perturb_pct:   float = 0.20,
+    seed:          int   = 42,
+    price_col:     str   = "Zamkniecie",
+) -> pd.DataFrame:
+
     """
     Run the full Monte Carlo robustness test.
 
@@ -414,7 +446,12 @@ def run_monte_carlo_robustness(
 # ---------------------------------------------------------------------------
 
 
-def analyze_robustness(results_df, baseline_metrics, thresholds=None):
+def analyze_robustness(
+    results_df:       pd.DataFrame, 
+    baseline_metrics: dict[str, float], 
+    thresholds:       dict | None = None,
+) -> dict:
+
     if thresholds is None:
         thresholds = {
             "CAGR": {"p05_min": 0.00, "label": "p05 CAGR > 0%"},
@@ -554,7 +591,11 @@ def analyze_robustness(results_df, baseline_metrics, thresholds=None):
 # ---------------------------------------------------------------------------
 
 
-def extract_windows_from_wf_results(wf_results, train_years=8):
+def extract_windows_from_wf_results(
+    wf_results:  pd.DataFrame, 
+    train_years: int = 8,
+) -> list[dict]:
+
     windows = []
     for i, row in wf_results.iterrows():
         test_start = pd.Timestamp(row["TestStart"])
@@ -572,7 +613,10 @@ def extract_windows_from_wf_results(wf_results, train_years=8):
     return windows
 
 
-def extract_best_params_from_wf_results(wf_results):
+def extract_best_params_from_wf_results(
+    wf_results: pd.DataFrame,
+) -> dict[int, dict]:
+
     """
     Extract best_params dict from the wf_results DataFrame.
 
@@ -606,7 +650,14 @@ def extract_best_params_from_wf_results(wf_results):
 # =====================================================================
 
 
-def block_bootstrap_history(df, price_col, cash_col, block_size=250, seed=None):
+def block_bootstrap_history(
+    df:         pd.DataFrame, 
+    price_col:  str, 
+    cash_col:   str, 
+    block_size: int = 250, 
+    seed:       int | None = None,
+) -> pd.DataFrame:
+
     """
     Reshuffle (index_return, cash_return) pairs in blocks.
     """
@@ -640,15 +691,15 @@ def block_bootstrap_history(df, price_col, cash_col, block_size=250, seed=None):
 
 
 def _bootstrap_single_sample(
-    i,
-    combined,
-    df,
-    cash_df,
-    price_col,
-    cash_price_col,
-    block_size,
-    wf_kwargs,
-):
+    i:              int,
+    combined:       pd.DataFrame,
+    df:             pd.DataFrame,
+    cash_df:        pd.DataFrame,
+    price_col:      str,
+    cash_price_col: str,
+    block_size:     int,
+    wf_kwargs:      dict,
+) -> dict | None:
     """
     Single bootstrap sample — designed for joblib.Parallel dispatch.
     ATR parameters are forwarded via wf_kwargs transparently.
@@ -708,14 +759,14 @@ def _bootstrap_single_sample(
 
 
 def run_block_bootstrap_robustness(
-    df,
-    cash_df,
-    price_col="Zamkniecie",
-    cash_price_col="Zamkniecie",
-    n_samples=500,
-    block_size=250,
-    **wf_kwargs,
-):
+    df:             pd.DataFrame,
+    cash_df:        pd.DataFrame,
+    price_col:      str = "Zamkniecie",
+    cash_price_col: str = "Zamkniecie",
+    n_samples:      int = 500,
+    block_size:     int = 250,
+    **wf_kwargs:    object,
+) -> pd.DataFrame:
     """
     Run full walk-forward re-optimisation on n_samples block-bootstrapped
     synthetic histories. ATR parameters are forwarded via wf_kwargs.
@@ -904,7 +955,12 @@ def run_block_bootstrap_robustness(
 # ---------------------------------------------------------------------------
 
 
-def analyze_bootstrap(results_df, baseline_metrics, thresholds=None):
+def analyze_bootstrap(
+    results_df:       pd.DataFrame, 
+    baseline_metrics: dict[str, float], 
+    thresholds:       dict | None = None,
+) -> dict:
+
     if thresholds is None:
         thresholds = {
             "CAGR": {"p05_min": -0.01, "label": "p05 CAGR > -1%"},

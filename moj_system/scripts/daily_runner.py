@@ -58,7 +58,10 @@ from moj_system.reporting.multiasset_daily_output import (
 )
 
 
-def setup_logging(output_prefix):
+def setup_logging(
+    output_prefix: str,
+) -> None:
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     # Użycie operatora / z biblioteki pathlib
     log_file = OUTPUT_DIR / f"{output_prefix}.log"
@@ -74,7 +77,12 @@ def setup_logging(output_prefix):
     )
 
 
-def run_single_asset(asset_name, stop_mode_arg, creds_path):
+def run_single_asset(
+    asset_name:    str, 
+    stop_mode_arg: str, 
+    creds_path:    str,
+) -> None:
+
     cfg = ASSET_REGISTRY[asset_name]
     output_prefix = asset_name.lower()
     selected_stop_mode = (
@@ -179,7 +187,11 @@ def run_single_asset(asset_name, stop_mode_arg, creds_path):
     )
 
 
-def run_pension_portfolio(stop_mode_arg, creds_path):
+def run_pension_portfolio(
+    stop_mode_arg: str, 
+    creds_path:    str,
+) -> None:
+
     cfg = ASSET_REGISTRY["PENSION"]
     selected_stop = cfg.get("default_stop_eq", "atr") if stop_mode_arg == "auto" else stop_mode_arg
     use_atr_eq = selected_stop == "atr"
@@ -554,7 +566,7 @@ def run_global_portfolio(
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Universal Daily Strategy Runner")
     parser.add_argument(
         "--asset", type=str, required=True, help="Asset key: WIG20TR, PENSION, GLOBAL_A, etc.",

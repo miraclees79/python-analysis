@@ -72,14 +72,15 @@ from moj_system.data.updater import DataUpdater
 
 
 def _extract_window_rows(
-    asset_name: str,
-    train_years: int,
-    test_years: int,
-    wf_results: pd.DataFrame,
-    stop_mode: str,
-    alloc_df: pd.DataFrame = None,  # Optymalne wagi (IS)
-    weights_series: pd.Series = None,  # Faktyczne wagi (OOS)
+    asset_name:     str,
+    train_years:    int,
+    test_years:     int,
+    wf_results:     pd.DataFrame,
+    stop_mode:      str,
+    alloc_df:       pd.DataFrame | None = None,
+    weights_series: pd.Series | None    = None,
 ) -> list[dict]:
+
     rows = []
     prev_params = None
     use_atr = stop_mode == "atr"
@@ -161,7 +162,10 @@ def _extract_window_rows(
     return rows
 
 
-def _compile_window_stats(window_rows: list) -> dict:
+def _compile_window_stats(
+    window_rows:    list[dict],
+) -> dict:
+
     summary = {}
     if window_rows:
         win_cagrs = [w["win_cagr"] for w in window_rows if pd.notna(w["win_cagr"])]
@@ -199,7 +203,13 @@ def _compile_window_stats(window_rows: list) -> dict:
 
 
 class SweepManager:
-    def __init__(self, n_mc, n_boot, data_map):
+    def __init__(
+        self, 
+        n_mc:     int, 
+        n_boot:   int, 
+        data_map: dict[str, pd.DataFrame],
+    ) -> None:
+
         self.n_mc = n_mc
         self.n_boot = n_boot
         self.data_map = data_map
@@ -212,7 +222,12 @@ class SweepManager:
         self.boot_cache = {}
 
 
-    def _create_portfolio_wf_results(self, wf_results_ref, port_eq):
+    def _create_portfolio_wf_results(
+        self, 
+        wf_results_ref: pd.DataFrame, 
+        port_eq:        pd.Series,
+    ) -> pd.DataFrame:
+
         """Helper to compute aggregate portfolio metrics per window and apply the Stub Rule."""
         portfolio_wf_results = wf_results_ref.copy()
 
@@ -242,8 +257,16 @@ class SweepManager:
         return portfolio_wf_results
 
     def get_cached_wf(
-        self, asset_name, df, train_y, test_y, stop_type, grid_type="EQUITY", entry_gate=None,
-    ):
+        self, 
+        asset_name: str, 
+        df:         pd.DataFrame, 
+        train_y:    int, 
+        test_y:     int, 
+        stop_type:  str, 
+        grid_type:  str = "EQUITY", 
+        entry_gate: pd.Series | None = None,
+    ) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame]:
+
         gate_id = "GATED" if entry_gate is not None else "RAW"
         cache_key = (asset_name, train_y, test_y, stop_type, gate_id)
         if cache_key in self.wf_cache:
@@ -279,18 +302,19 @@ class SweepManager:
 
     def get_cached_mc(
         self,
-        asset_name,
-        wf_results,
-        df,
-        cash_df,
-        n_samples,
-        thresholds,
-        train_y,
-        test_y,
-        stop_type,
-        gate_id,
-        base_equity,
-    ):
+        asset_name:  str,
+        wf_results:  pd.DataFrame,
+        df:          pd.DataFrame,
+        cash_df:     pd.DataFrame,
+        n_samples:   int,
+        thresholds:  dict,
+        train_y:     int,
+        test_y:      int,
+        stop_type:   str,
+        gate_id:     str,
+        base_equity: pd.Series,
+    ) -> dict:
+
         cache_key = (asset_name, train_y, test_y, stop_type, gate_id, n_samples)
         if cache_key in self.mc_cache:
             logging.info(
@@ -313,18 +337,19 @@ class SweepManager:
 
     def get_cached_boot(
         self,
-        asset_name,
-        df,
-        cash_df,
-        n_samples,
-        train_y,
-        test_y,
-        stop_type,
-        grid_type,
-        entry_gate,
-        thresholds,
-        base_equity,
-    ):
+        asset_name:  str,
+        df:          pd.DataFrame,
+        cash_df:     pd.DataFrame,
+        n_samples:   int,
+        train_y:     int,
+        test_y:      int,
+        stop_type:   str,
+        grid_type:   str,
+        entry_gate:  pd.Series | None,
+        thresholds:  dict,
+        base_equity: pd.Series,
+    ) -> dict:
+
         gate_id = "GATED" if entry_gate is not None else "RAW"
         cache_key = (asset_name, train_y, test_y, stop_type, gate_id, n_samples)
         if cache_key in self.boot_cache:
@@ -359,7 +384,7 @@ class SweepManager:
         self.boot_cache[cache_key] = result
         return result
 
-    def _prepare_pension_data(self):
+    def _prepare_pension_data(self) -> dict[str, pd.DataFrame | pd.Series]:
         return build_standard_two_asset_data(
             wig=self.data_map["WIG"],
             tbsp=self.data_map["TBSP"],
@@ -372,21 +397,21 @@ class SweepManager:
 
     def _compile_full_result(
         self,
-        strat_name,
-        train_y,
-        test_y,
-        stop_type,
-        common_start,
-        wf_results,
-        wf_equity_trimmed,
-        m_trimmed,
-        bh_metrics,
-        regime_metrics,
-        mc_verdicts_dict,
-        bb_verdicts_dict,
-        alloc_df=None,
-        weights_series=None,
-    ):  # <--- DODANO
+        strat_name:        str,
+        train_y:           int,
+        test_y:            int,
+        stop_type:         str,
+        common_start:      pd.Timestamp,
+        wf_results:        pd.DataFrame,
+        wf_equity_trimmed: pd.Series,
+        m_trimmed:         dict,
+        bh_metrics:        dict,
+        regime_metrics:    dict,
+        mc_verdicts_dict:  dict,
+        bb_verdicts_dict:  dict,
+        alloc_df:          pd.DataFrame | None = None,
+        weights_series:    pd.Series | None    = None,
+    ) -> dict:  
 
         # Przekazujemy wagi do ekstrakcji
         window_rows = _extract_window_rows(
@@ -447,7 +472,15 @@ class SweepManager:
             **regime_metrics,
         }
 
-    def run_single_asset_iteration(self, asset_name, train_y, test_y, stop_type, common_start):
+    def run_single_asset_iteration(
+        self, 
+        asset_name:   str, 
+        train_y:      int, 
+        test_y:       int, 
+        stop_type:    str, 
+        common_start: pd.Timestamp,
+    ) -> dict | None:
+
         asset_key = asset_name.upper()
         df = self.data_map.get(asset_key)
         cash_df = self.data_map.get("MMF_EXT")
@@ -527,7 +560,13 @@ class SweepManager:
             bb_res,
         )
 
-    def run_pension_iteration(self, train_y, test_y, stop_type_eq, common_start):
+    def run_pension_iteration(
+        self, 
+        train_y:      int, 
+        test_y:       int, 
+        stop_type_eq: str, 
+        common_start: pd.Timestamp,
+    ) -> dict | None:
 
         WIG = self.data_map.get("WIG")
         TBSP = self.data_map.get("TBSP")
@@ -664,7 +703,15 @@ class SweepManager:
             weights_series=port_wgts,
         )
 
-    def run_global_iteration(self, variant_key, train_y, test_y, stop_type_eq, common_start):
+    def run_global_iteration(
+        self, 
+        variant_key:  str, 
+        train_y:      int, 
+        test_y:       int, 
+        stop_type_eq: str, 
+        common_start: pd.Timestamp,
+    ) -> dict | None:
+
         cfg = ASSET_REGISTRY[variant_key]
         mode, fx_hedged = cfg["mode"], cfg["fx_hedged"]
 
@@ -855,7 +902,11 @@ class SweepManager:
         )
 
 
-def print_sweep_report(results_df: pd.DataFrame, common_start):
+def print_sweep_report(
+    results_df:   pd.DataFrame, 
+    common_start: dt.date,
+) -> None:
+
     if results_df.empty:
         return
     sep = "=" * 120
@@ -923,7 +974,7 @@ def print_sweep_report(results_df: pd.DataFrame, common_start):
     logging.info(sep)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Professional Multi-Strategy Sweeper")
     parser.add_argument("--mode", choices=["SINGLE", "PENSION", "GLOBAL", "ALL"], required=True)
     parser.add_argument("--assets", nargs="+", help="Dla trybu SINGLE (np. WIG20TR SP500)")

@@ -37,7 +37,7 @@ from moj_system.data.updater import DataUpdater
 # Definicja testowanych funkcji celu
 OBJECTIVES = ["calmar", "sharpe", "sortino", "calmar_sharpe", "calmar_sortino"]
 
-def run_benchmark():
+def run_benchmark() -> None:
     # 1. Setup i logowanie
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     log_file_path = OUTPUT_DIR / "objective_benchmark.log"

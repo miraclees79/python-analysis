@@ -65,7 +65,13 @@ from moj_system.data.updater import DataUpdater
 
 
 class ValidationManager:
-    def __init__(self, n_mc, n_boot, run_weights_perturb):
+    def __init__(
+        self, 
+        n_mc:                int, 
+        n_boot:              int, 
+        run_weights_perturb: bool,
+    ) -> None:
+
         self.n_mc = n_mc
         self.n_boot = n_boot
         self.run_weights_perturb = run_weights_perturb
@@ -73,7 +79,14 @@ class ValidationManager:
         self.creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
         self.folder_id = os.environ.get("GDRIVE_FOLDER_ID")
 
-    def _save_validation_chart(self, strategy_equity, bh_equity, title, filename):
+    def _save_validation_chart(
+        self, 
+        strategy_equity: pd.Series, 
+        bh_equity:       pd.Series | None, 
+        title:           str, 
+        filename:        str,
+    ) -> None:
+
         """Generates a 2-panel OOS validation chart (Equity + Drawdown)."""
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         chart_path = OUTPUT_DIR / filename
@@ -127,7 +140,16 @@ class ValidationManager:
         plt.close(fig=fig)
         logging.info(msg=f"Validation chart saved to: {chart_path}")
 
-    def validate_single(self, asset_name, train_y, test_y, stop_type, df, cash_df):
+    def validate_single(
+        self, 
+        asset_name: str, 
+        train_y:    int, 
+        test_y:     int, 
+        stop_type:  str, 
+        df:         pd.DataFrame, 
+        cash_df:    pd.DataFrame,
+    ) -> None:
+
         logging.info(f"VALIDATING SINGLE ASSET: {asset_name} | {train_y}+{test_y} | {stop_type}")
         use_atr = stop_type == "atr"
 
@@ -187,7 +209,13 @@ class ValidationManager:
                 thresholds=EQUITY_THRESHOLDS_BOOTSTRAP,
             )
 
-    def validate_pension(self, train_y, test_y, stop_type_eq):
+    def validate_pension(
+        self, 
+        train_y:      int, 
+        test_y:       int, 
+        stop_type_eq: str,
+    ) -> None:
+
         logging.info(
             f"VALIDATING PENSION PORTFOLIO | Train: {train_y} | Test: {test_y} | EQ Stop: {stop_type_eq}",
         )
@@ -334,7 +362,14 @@ class ValidationManager:
             )
             print_allocation_robustness_report(results_df=robust_df)
 
-    def validate_global(self, variant, train_y, test_y, stop_type_eq):
+    def validate_global(
+        self, 
+        variant:      str, 
+        train_y:      int, 
+        test_y:       int, 
+        stop_type_eq: str,
+    ) -> None:
+
         logging.info(
             f"VALIDATING GLOBAL - {variant} | Train: {train_y} | Test: {test_y} | Stop: {stop_type_eq}",
         )
@@ -555,7 +590,7 @@ class ValidationManager:
             print_allocation_robustness_report_n(results_df=robust_df, focus_asset="WIG")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Full Robustness Validator")
     parser.add_argument("--mode", choices=["SINGLE", "PENSION", "GLOBAL"], required=True)
     parser.add_argument("--asset", help="Dla mode SINGLE lub GLOBAL (np. WIG20TR, GLOBAL_A)")

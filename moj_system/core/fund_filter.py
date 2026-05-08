@@ -33,7 +33,10 @@ jej od głównego, aktywnego silnika strategii. Jest przeznaczona do dalszych ba
 # Import funkcji, od których te moduły zależą - do dopracowania
 
 
-def download_fund_navs(fund_codes: dict, tmp_dir: str) -> dict:
+def download_fund_navs(
+    fund_codes: dict[str, str], 
+    tmp_dir:    str,
+) -> dict[str, str]:
     """
     Download fund NAV series from stooq.pl and build the FUND_FILES dict.
     """
