@@ -75,7 +75,11 @@ TFI_BRAND_OVERRIDES = {
 
 
 class KNFTools:
-    def __init__(self, credentials_path=None):
+    def __init__(
+        self, 
+        credentials_path: str | None = None,
+    ) -> None:
+
         self.gdrive = GDriveClient(credentials_path)
         self.root_folder = self.gdrive.root_folder_id
 
@@ -84,12 +88,19 @@ class KNFTools:
     # =========================================================================
 
     @staticmethod
-    def to_ascii(s: str) -> str:
+    def to_ascii(
+        s: str,
+    ) -> str:
+
         if not isinstance(s, str):
             return ""
         return unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode("ascii")
 
-    def tfi_brand_token(self, company_name: str) -> str:
+    def tfi_brand_token(
+        self, 
+        company_name: str,
+    ) -> str:
+
         if not isinstance(company_name, str) or not company_name.strip():
             return ""
         raw_key = self.to_ascii(company_name.strip().lower())
@@ -111,7 +122,12 @@ class KNFTools:
         s = re.sub(r"[^a-z0-9 ]", " ", s)
         return re.sub(r"\s+", " ", s).strip()
 
-    def residual_name(self, name: str, brand_token: str = "") -> str:
+    def residual_name(
+        self, 
+        name:        str, 
+        brand_token: str = "",
+    ) -> str:
+
         if not isinstance(name, str):
             return ""
         s = self.to_ascii(name.lower())
@@ -141,6 +157,7 @@ class KNFTools:
     # =========================================================================
 
     def load_stooq_txt_files(self) -> pd.DataFrame:
+
         if not FUND_NAMES_DIR.exists():
             logging.error(f"Directory not found: {FUND_NAMES_DIR}")
             return pd.DataFrame()
@@ -188,7 +205,12 @@ class KNFTools:
         logging.info(f"Loaded {len(df)} Stooq names from {len(txt_files)} files.")
         return df
 
-    def _fetch_all_pages(self, path: str, params: dict = None) -> list:
+    def _fetch_all_pages(
+        self, 
+        path:   str, 
+        params: dict | None = None,
+    ) -> list[dict]:
+
         items = []
         page = 0
         if params is None:
@@ -205,7 +227,12 @@ class KNFTools:
             time.sleep(0.05)
         return items
 
-    def fetch_knf_subfunds(self, confirmed_ids: set, use_tfi_scope: bool = True) -> pd.DataFrame:
+    def fetch_knf_subfunds(
+        self, 
+        confirmed_ids: set[int], 
+        use_tfi_scope: bool = True,
+    ) -> pd.DataFrame:
+
         """
         Deep Hydration: Fetches subfunds and crawls through KIDs to get
         Fees, Risk Levels and Benchmarks.
@@ -287,7 +314,11 @@ class KNFTools:
         logging.info(f"Deep hydration complete. {len(df)} subfunds ready.")
         return df
 
-    def fetch_subfund_history(self, subfund_id: int) -> list:
+    def fetch_subfund_history(
+        self, 
+        subfund_id: int,
+    ) -> list[str]:
+
         url = f"{KNF_API_BASE}/v1/subfunds/{subfund_id}/history?size=50&sort=validFrom,desc"
         try:
             resp = requests.get(url, headers={"Accept": "application/json"}, timeout=10)
@@ -310,7 +341,12 @@ class KNFTools:
     # PRICE VERIFICATION
     # =========================================================================
 
-    def _verify_price_match(self, subfund_id: int, stooq_id: int) -> bool:
+    def _verify_price_match(
+        self, 
+        subfund_id: int, 
+        stooq_id:   int,
+    ) -> bool:
+
         from moj_system.data.updater import DataUpdater  # Import here to avoid circular dependency
 
         try:
@@ -396,7 +432,12 @@ class KNFTools:
     # MATCHING ENGINE
     # =========================================================================
 
-    def match_funds(self, knf_df: pd.DataFrame, stooq_df: pd.DataFrame) -> pd.DataFrame:
+    def match_funds(
+        self, 
+        knf_df:   pd.DataFrame, 
+        stooq_df: pd.DataFrame,
+    ) -> pd.DataFrame:
+
         knf_tfi_keys = set(knf_df["knf_tfi_key"].dropna().unique())
 
         sorted_tokens = sorted(knf_tfi_keys - {""}, key=len, reverse=True)
@@ -509,8 +550,11 @@ class KNFTools:
         return pd.DataFrame(results)
 
     def run_update_pipeline(
-        self, confirmed_file="knf_stooq_confirmed.csv", use_tfi_scope: bool = True,
-    ):
+        self, 
+        confirmed_file: str  = "knf_stooq_confirmed.csv", 
+        use_tfi_scope:  bool = True,
+    ) -> None:
+
         """Full pipeline: Load confirmed -> Fetch KNF -> Load Stooq -> Match -> Save."""
         if not self.root_folder:
             logging.error("GDRIVE_FOLDER_ID not set.")
@@ -570,7 +614,11 @@ class KNFTools:
         self.gdrive.upload_csv(self.root_folder, str(review_path))
         logging.info("Matches uploaded to Google Drive.")
 
-    def verify_confirmed_matches(self, confirmed_file="knf_stooq_confirmed.csv"):
+    def verify_confirmed_matches(
+        self, 
+        confirmed_file: str = "knf_stooq_confirmed.csv",
+    ) -> None:
+    
         """
         Pobiera potwierdzoną listę funduszy z GDrive i tylko dla nich uruchamia weryfikację cen.
         Nie szuka nowych dopasowań, nie skanuje pełnego API KNF.

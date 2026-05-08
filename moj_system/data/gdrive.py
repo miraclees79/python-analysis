@@ -12,7 +12,11 @@ from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 
 class GDriveClient:
-    def __init__(self, credentials_path=None):
+    def __init__(
+        self, 
+        credentials_path: str | None = None,
+    ) -> None:
+
         # Automatyczne pobieranie głównego folderu projektu ze zmiennej środowiskowej
         self.root_folder_id = os.environ.get("GDRIVE_FOLDER_ID")
 
@@ -23,7 +27,8 @@ class GDriveClient:
 
         self.service = self._get_service()
 
-    def _get_service(self):
+    def _get_service(self) -> object | None:
+
         if not os.path.exists(self.credentials_path):
             logging.warning(f"Brak pliku credentials w: {self.credentials_path}")
             return None
@@ -39,7 +44,12 @@ class GDriveClient:
             logging.error(f"Bląd inicjalizacji serwisu Drive: {e}")
             return None
 
-    def find_file_id(self, parent_id: str, filename: str) -> str:
+    def find_file_id(
+        self, 
+        parent_id: str, 
+        filename:  str,
+    ) -> str | None:
+
         if not self.service:
             return None
         try:
@@ -58,8 +68,13 @@ class GDriveClient:
             return self.find_file_id(parent_id, filename)  # Ponowna próba
 
     def download_csv(
-        self, folder_id: str, filename: str, sep=",", encoding="utf-8",
-    ) -> pd.DataFrame:
+        self, 
+        folder_id: str, 
+        filename:  str, 
+        sep:       str = ",", 
+        encoding:  str = "utf-8",
+    ) -> pd.DataFrame | None:
+
         file_id = self.find_file_id(folder_id, filename)
         if not file_id:
             return None
@@ -78,7 +93,13 @@ class GDriveClient:
             logging.error(f"Bląd dekodowania CSV: {e}")
             return None
 
-    def upload_file(self, folder_id: str, local_path: str, filename: str = None):
+    def upload_file(
+        self, 
+        folder_id:  str, 
+        local_path: str, 
+        filename:   str | None = None,
+    ) -> str | None:
+
         """Universal uploader for CSV, TXT, PNG and JSON files."""
         if not self.service:
             return None
@@ -110,5 +131,11 @@ class GDriveClient:
             return result["id"]
 
     # Dla kompatybilności wstecznej z resztą skryptów (np. data_updater):
-    def upload_csv(self, folder_id: str, local_path: str, filename: str = None):
+    def upload_csv(
+        self, 
+        folder_id:  str, 
+        local_path: str, 
+        filename:   str | None = None,
+    ) -> str | None:
+    
         return self.upload_file(folder_id, local_path, filename)

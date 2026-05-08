@@ -65,7 +65,9 @@ def download_fund_navs(
 
 
 def build_funds_df(
-    fund_files: dict, price_col: str = "Zamkniecie", min_history_years: int = 10,
+    fund_files:        dict[str, str], 
+    price_col:         str = "Zamkniecie", 
+    min_history_years: int = 10,
 ) -> pd.DataFrame:
     """
     Build a combined fund NAV panel from a list of CSV files.
@@ -105,13 +107,13 @@ def build_funds_df(
 
 
 def compute_fund_breadth_signal(
-    funds_df: pd.DataFrame,
-    lookback_days: int = 30,
-    n_top: int = 2,
-    entry_roll_thresh: float = 0.03,
+    funds_df:           pd.DataFrame,
+    lookback_days:      int   = 30,
+    n_top:              int   = 2,
+    entry_roll_thresh:  float = 0.03,
     entry_since_thresh: float = 0.05,
-    exit_roll_thresh: float = -0.03,
-    exit_since_thresh: float = -0.05,
+    exit_roll_thresh:   float = -0.03,
+    exit_since_thresh:  float = -0.05,
 ) -> pd.Series:
     """
     Compute a binary IN/OUT signal from a panel of fund NAV series.

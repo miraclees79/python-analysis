@@ -85,14 +85,23 @@ ETF_TICKERS = [
 
 
 class DataUpdater:
-    def __init__(self, gdrive_folder_id=None, credentials_path=None):
+    def __init__(
+        self, 
+        gdrive_folder_id: str | None = None, 
+        credentials_path: str | None = None,
+    ) -> None:
+
         self.gdrive = GDriveClient(credentials_path)
         self.root_folder_id = gdrive_folder_id or os.environ.get("GDRIVE_FOLDER_ID")
         self.data_folder_id = None
         if self.gdrive.service and self.root_folder_id:
             self.data_folder_id = self._get_or_create_subfolder(GDRIVE_DATA_FOLDER_NAME)
 
-    def _get_or_create_subfolder(self, folder_name: str) -> str:
+    def _get_or_create_subfolder(
+        self, 
+        folder_name: str,
+    ) -> str | None:
+
         """Gets or creates a subfolder on GDrive."""
         if not self.gdrive.service:
             return None
@@ -109,7 +118,11 @@ class DataUpdater:
         folder = self.gdrive.service.files().create(body=metadata, fields="id").execute()
         return folder.get("id")
 
-    def _get_zip_content(self, zip_type: str) -> bytes:
+    def _get_zip_content(
+        self, 
+        zip_type: str,
+    ) -> bytes | None:
+
         zip_name = ZIP_MAPPING.get(zip_type)
         if not zip_name:
             return None
@@ -136,7 +149,12 @@ class DataUpdater:
                     logging.error(f"GDrive ZIP error: {e}")
         return None
 
-    def _extract_from_zip(self, zip_data: bytes, stooq_ticker: str) -> pd.DataFrame | None:
+    def _extract_from_zip(
+        self, 
+        zip_data:     bytes, 
+        stooq_ticker: str,
+    ) -> pd.DataFrame | None:
+
         """
         Wyodrebnia dane pojedynczego tickera z duzego archiwum ZIP pobranego ze Stooq.
 
@@ -175,7 +193,12 @@ class DataUpdater:
             logging.error(f"ZIP error for {stooq_ticker}: {e}")
         return None
 
-    def _fetch_yfinance_data(self, ticker_yf: str, start_date: pd.Timestamp) -> pd.DataFrame | None:
+    def _fetch_yfinance_data(
+        self, 
+        ticker_yf:  str, 
+        start_date: pd.Timestamp,
+    ) -> pd.DataFrame | None:
+
         try:
             df = yf.download(ticker_yf, start=start_date, progress=False, auto_adjust=True)
             if df.empty:
@@ -198,7 +221,12 @@ class DataUpdater:
             logging.warning(f"yfinance error ({ticker_yf}): {e}")
             return None
 
-    def _fetch_knf_data(self, subfund_id: str, start_date: pd.Timestamp) -> pd.DataFrame | None:
+    def _fetch_knf_data(
+        self, 
+        subfund_id: str | None, 
+        start_date: pd.Timestamp,
+    ) -> pd.DataFrame | None:
+
         if not subfund_id or pd.isna(subfund_id):
             return None
         url = "https://wybieramfundusze-api.knf.gov.pl/v1/valuations"
@@ -229,7 +257,12 @@ class DataUpdater:
             logging.warning(f"KNF API Error: {e}")
             return None
 
-    def _validate_and_clean(self, df: pd.DataFrame, label: str) -> pd.DataFrame | None:
+    def _validate_and_clean(
+        self, 
+        df:    pd.DataFrame, 
+        label: str,
+    ) -> pd.DataFrame | None:
+
         if df is None or df.empty:
             return None
         df["Data"] = pd.to_datetime(df["Data"])
@@ -242,13 +275,13 @@ class DataUpdater:
 
     def update_ticker(
         self,
-        label: str,
-        stooq_ticker: str,
-        yf_ticker: str = None,
-        knf_id: str = None,
-        zip_type: str = "index_pl",
-        upload_to_drive: bool = False,
-    ):
+        label:           str,
+        stooq_ticker:    str,
+        yf_ticker:       str | None = None,
+        knf_id:          str | None = None,
+        zip_type:        str        = "index_pl",
+        upload_to_drive: bool       = False,
+    ) -> bool:
         """
         Aktualizuje dane instrumentu korzystając z hybrydowych zrodeł (Stooq ZIP + API).
 
@@ -294,7 +327,11 @@ class DataUpdater:
             return True
         return False
 
-    def run_full_update(self, get_funds: bool = True):
+    def run_full_update(
+        self, 
+        get_funds: bool = True,
+    ) -> None:
+    
         """Main entry point for hybrid update."""
         logging.info(f"Full Update Started. Funds/ETFs: {get_funds}")
 

@@ -38,12 +38,13 @@ def compute_fund_breadth_signal(
     *args:  object, 
     **kwargs: object,
 ) -> pd.Series | None:
+    return None
 
+    
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-
 # Parameters perturbed in fixed-stop mode
 PERTURB_PARAMS_FIXED = ["X", "Y", "fast", "slow", "stop_loss"]
 

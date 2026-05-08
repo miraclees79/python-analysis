@@ -26,10 +26,21 @@ from moj_system.core.robustness_engine import (
 
 
 class RobustnessEngine:
-    def __init__(self, n_jobs=-1):
+    def __init__(
+        self, 
+        n_jobs: int = -1,
+    ) -> None:
         self.n_jobs = n_jobs
 
-    def run_mc_test(self, wf_results, df, cash_df, n_samples=100, perturb_pct=0.20):
+    def run_mc_test(
+        self, 
+        wf_results:  pd.DataFrame, 
+        df:          pd.DataFrame, 
+        cash_df:     pd.DataFrame, 
+        n_samples:   int   = 100, 
+        perturb_pct: float = 0.20,
+    ) -> pd.DataFrame:
+
         """Runs Monte Carlo parameter perturbation."""
         logging.info(f"Starting MC Perturbation Test (n={n_samples})...")
 
@@ -50,7 +61,14 @@ class RobustnessEngine:
         )
         return mc_results_df
 
-    def run_bootstrap_test(self, df, cash_df, n_samples=500, **wf_kwargs):
+    def run_bootstrap_test(
+        self, 
+        df:          pd.DataFrame, 
+        cash_df:     pd.DataFrame, 
+        n_samples:   int = 500, 
+        **wf_kwargs: object,
+    ) -> pd.DataFrame:
+    
         """Runs Block Bootstrap history reshuffling."""
         logging.info(f"Starting Block Bootstrap Test (n={n_samples})...")
 

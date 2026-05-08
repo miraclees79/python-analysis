@@ -15,7 +15,10 @@ DATA_START = "1990-01-01"
 CLOSE_COL = "Zamkniecie"
 
 
-def _parse_wsj_csv(raw_bytes: bytes) -> pd.DataFrame | None:
+def _parse_wsj_csv(
+    raw_bytes: bytes,
+) -> pd.DataFrame | None:
+
     """Parses WSJ export format using multiple encoding attempts."""
     raw = None
     encodings_to_try = ("utf-8-sig", "utf-8", "latin-1")
@@ -87,7 +90,11 @@ def _parse_wsj_csv(raw_bytes: bytes) -> pd.DataFrame | None:
     return out.sort_index().dropna()
 
 
-def _extend_series(base_df: pd.DataFrame, ext_df: pd.DataFrame) -> pd.DataFrame:
+def _extend_series(
+    base_df: pd.DataFrame | None, 
+    ext_df:  pd.DataFrame | None,
+) -> pd.DataFrame:
+
     """Extends base_df with new returns from ext_df (Chain-linking)."""
     if base_df is None or base_df.empty:
         return ext_df
@@ -130,7 +137,12 @@ def _extend_series(base_df: pd.DataFrame, ext_df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _build_full_msci_world(client: GDriveClient, folder_id: str, wsj_combined_df: pd.DataFrame) -> pd.DataFrame:
+def _build_full_msci_world(
+    client:          GDriveClient, 
+    folder_id:       str, 
+    wsj_combined_df: pd.DataFrame,
+) -> pd.DataFrame:
+
     """Łączy syntetyczną bazę MSCI (1990-2010) z serią rzeczywistą."""
     if wsj_combined_df is not None and not wsj_combined_df.empty:
         if wsj_combined_df.index.min() <= pd.Timestamp("1990-01-05"):
@@ -149,14 +161,15 @@ def _build_full_msci_world(client: GDriveClient, folder_id: str, wsj_combined_df
 
 
 def build_and_upload(
-    folder_id: str,
-    raw_filename: str,
-    combined_filename: str,
+    folder_id:        str,
+    raw_filename:     str,
+    combined_filename:str,
     extension_ticker: str,
-    extension_source: str = "yfinance",
-    credentials_path: str = None,
-    is_msci_world: bool = False,
+    extension_source: str  = "yfinance",
+    credentials_path: str | None = None,
+    is_msci_world:    bool = False,
 ) -> pd.DataFrame | None:
+
     """Main builder: fetches from Drive, extends from local/YF, and uploads back."""
     client = GDriveClient(credentials_path=credentials_path)
     base_df = None
