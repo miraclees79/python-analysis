@@ -117,6 +117,12 @@ BOND_THRESHOLDS_BOOTSTRAP = {
  "STOXX600": {"type": "single", "source": "drive", "ticker": "^STOXX", 
               yf_ticker": "^STOXX", "train": 7, "test": 1, 
               "default_stop": "atr"},
+"GLOBAL_A": {"type": "portfolio_global", 
+                 "mode": "global_equity", 
+                 "train": 7, 
+                 "test": 2, 
+                 "fx_hedged": True
+                 },
 """
 
 
@@ -137,13 +143,7 @@ ASSET_REGISTRY = {
                 "test": 1,
                 "default_stop_eq": "atr"},
 
-    # GLOBAL_A config inactive
-    "GLOBAL_A": {"type": "portfolio_global", 
-                 "mode": "global_equity", 
-                 "train": 7, 
-                 "test": 2, 
-                 "fx_hedged": True
-                 },
+    
 
     "GLOBAL_B": {
         "type": "portfolio_global",
@@ -154,3 +154,60 @@ ASSET_REGISTRY = {
         "default_stop_eq": "atr",
     },
 }
+
+
+# FUND BREADTH FILTER DATA - RESEARCH
+
+FUND_CODES = {
+    "2718": "GS_Akcji",
+    "3872": "Skarbiec_Akcji",
+    "2847": "Investor_FundamentalnyDywWzr",
+    "1422": "Allianz_Selektywny",
+    "1626": "Rockbridge_Akcji",
+    "4650": "Uniqa_Selektywny",
+    "2869": "Ipopema_MiS",
+    "4544": "Uniqa_Akcji",
+    "3165": "Rockbridge_NeoAkcji",
+    "3199": "Millenium_Akcji",
+    "3959": "GenKorona_Akcji",
+    "1056": "Superfund_Akcji",
+    "3396": "PKO_Akcji",
+    "3187": "Rockbridge_NeoAkcjiPL",
+    "3360": "Pekao_AkcjiAktywna",
+    "1137": "PZU_AkcjiPL",
+    "1140": "PZU_AkcjiKrak",
+    "1656": "Santander_AkcjiPL",
+    "1621": "INPZU_AkcjiPL",
+    "2159": "CA_Akcji",
+    "1692": "SantanderPR_AkcjiPL",
+    "2719": "GS_POI",
+    "3151": "Esaliens_Akcji",
+    "3166": "Rockbridge_NeoMid",
+    "3306": "Velo_AkcjiPL",
+    "3441": "Quercus_Agr",
+    "1043": "Alior_Akcji"
+    }
+
+FUND_PARAMS_GRID = [    
+            {
+            "lookback_days":      30,   # medium asymmetric
+            "entry_roll_thresh":  0.05,
+            "entry_since_thresh": 0.08,
+            "exit_roll_thresh":  -0.06,
+            "exit_since_thresh": -0.10
+            },
+            {
+            "lookback_days":      30, #strong asymmetric tight entry loose exit
+            "entry_roll_thresh":  0.03,
+            "entry_since_thresh": 0.05,
+            "exit_roll_thresh":  -0.10,
+            "exit_since_thresh": -0.15
+            },
+            {
+            "lookback_days":      30, #original idea
+            "entry_roll_thresh":  0.10,
+            "entry_since_thresh": 0.15,
+            "exit_roll_thresh":  -0.10,
+            "exit_since_thresh": -0.15
+            }
+]
