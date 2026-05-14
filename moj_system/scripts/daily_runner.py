@@ -312,28 +312,28 @@ def run_pension_portfolio(
 def run_global_portfolio(
     asset_key: str,
     stop_mode_arg: str,
-    creds_path: str
+    creds_path: str,
 ) -> None:
-    
+
     cfg = ASSET_REGISTRY[asset_key]
     mode = cfg["mode"]
     train_y = cfg["train"]
     test_y = cfg["test"]
     fx_h = cfg["fx_hedged"]
-    
+
     selected_stop = cfg.get("default_stop_eq", "atr") if stop_mode_arg == "auto" else stop_mode_arg
     use_atr_eq = selected_stop == "atr"
 
     folder_id = os.environ.get("GDRIVE_FOLDER_ID")
     logging.info(
-        msg=f"GLOBAL PORTFOLIO ENGINE: {mode} | Equity Stop: {selected_stop} | FX Hedged: {fx_h} | Train: {train_y} y | Test: {test_y} y"
+        msg=f"GLOBAL PORTFOLIO ENGINE: {mode} | Equity Stop: {selected_stop} | FX Hedged: {fx_h} | Train: {train_y} y | Test: {test_y} y",
     )
 
     WIG = load_local_csv(
         ticker="wig",
-        label="WIG"
+        label="WIG",
     ).loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
-    
+
     TBSP = build_and_upload(
         folder_id=folder_id,
         raw_filename="tbsp_extended_full.csv",
@@ -342,47 +342,47 @@ def run_global_portfolio(
         extension_source="stooq",
         credentials_path=creds_path,
     )
-    
+
     MMF = load_local_csv(
         ticker="fund_2720",
-        label="MMF"
+        label="MMF",
     )
     PL10Y, DE10Y = load_local_csv("pl10y", "PL10Y"), load_local_csv("de10y", "DE10Y")
     WIBOR = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
     derived = build_standard_two_asset_data(WIG, TBSP, MMF, WIBOR, PL10Y, DE10Y, "1995-01-02")
     fx_map = {
         curr: load_local_csv(
-            ticker=f"{curr.lower()}pln", 
-            label=f"{curr}PLN"
+            ticker=f"{curr.lower()}pln",
+            label=f"{curr}PLN",
         )["Zamkniecie"]
         for curr in["USD", "EUR", "JPY"]
     }
 
     if mode == "global_equity":
         stoxx = build_and_upload(
-            folder_id=folder_id, 
-            raw_filename="stoxx600.csv", 
-            combined_filename="stoxx600_combined.csv", 
-            extension_ticker="^STOXX", 
-            extension_source="yfinance", 
+            folder_id=folder_id,
+            raw_filename="stoxx600.csv",
+            combined_filename="stoxx600_combined.csv",
+            extension_ticker="^STOXX",
+            extension_source="yfinance",
             credentials_path=creds_path,
         )
         assets = {
             "WIG": (WIG, None),
             "SP500": (
                 load_local_csv(
-                    ticker="sp500", 
-                    label="SP500"
-                ), 
-                fx_map["USD"]
+                    ticker="sp500",
+                    label="SP500",
+                ),
+                fx_map["USD"],
             ),
             "STOXX600": (stoxx, fx_map["EUR"]),
             "Nikkei225": (
                 load_local_csv(
-                    ticker="nikkei225", 
-                    label="Nikkei225"
-                ), 
-                fx_map["JPY"]
+                    ticker="nikkei225",
+                    label="Nikkei225",
+                ),
+                fx_map["JPY"],
             ),
         }
     else:  # msci_world
@@ -396,45 +396,45 @@ def run_global_portfolio(
             is_msci_world=True,
         )
         assets = {
-            "WIG": (WIG, None), 
-            "MSCI_World": (msciw, fx_map["USD"])
+            "WIG": (WIG, None),
+            "MSCI_World": (msciw, fx_map["USD"]),
         }
 
     rets_dict = {}
     sigs_full = {}
     bh_metrics_all = {}
-    
+
     # === NOWE SŁOWNIKI NA POTRZEBY SZCZEGÓŁOWEGO RAPORTOWANIA ===
     wf_results_dict = {}
     wf_trades_dict = {}
     price_df_dict = {}
-    
+
     n_jobs = get_n_jobs()
 
     wig_wf_res = None
     for lbl, (px_df, fx_s) in assets.items():
         ret_s = build_return_series(
-            price_df=px_df, 
-            fx_series=fx_s, 
-            hedged=fx_h
+            price_df=px_df,
+            fx_series=fx_s,
+            hedged=fx_h,
         )
         rets_dict[lbl] = ret_s.dropna()
         proc_px = px_df if fx_h or fx_s is None else build_price_df_from_returns(
-            ret=ret_s, 
-            label=lbl
+            ret=ret_s,
+            label=lbl,
         )
 
         logging.info(
-            msg=f"========== RUNNING: {lbl} =========="
+            msg=f"========== RUNNING: {lbl} ==========",
         )
 
         wf_e, wf_r, wf_t = walk_forward(
-            df=proc_px, 
-            cash_df=MMF, 
-            train_years=train_y, 
-            test_years=test_y, 
-            use_atr_stop=use_atr_eq, 
-            n_jobs=n_jobs
+            df=proc_px,
+            cash_df=MMF,
+            train_years=train_y,
+            test_years=test_y,
+            use_atr_stop=use_atr_eq,
+            n_jobs=n_jobs,
         )
 
         if wf_e.empty:
@@ -444,7 +444,7 @@ def run_global_portfolio(
 
         wf_metrics = {k: float(v) for k, v in compute_metrics(equity=wf_e).items()}
         trade_stats = analyze_trades(
-            trades=wf_t
+            trades=wf_t,
         )
 
         print_backtest_report(
@@ -457,37 +457,37 @@ def run_global_portfolio(
         )
 
         sigs_full[lbl] = build_signal_series(
-            wf_equity=wf_e, 
-            wf_trades=wf_t
+            wf_equity=wf_e,
+            wf_trades=wf_t,
         )
-        
+
         # Zapis do nowych struktur
         wf_results_dict[lbl] = wf_r
         wf_trades_dict[lbl] = wf_t
         price_df_dict[lbl] = proc_px
-        
+
         if lbl == "WIG":
             wig_wf_res = wf_r
 
     logging.info(
-        msg="========== RUNNING: TBSP =========="
+        msg="========== RUNNING: TBSP ==========",
     )
 
     wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
-        df=TBSP, 
-        cash_df=MMF, 
-        train_years=train_y, 
-        test_years=test_y, 
-        filter_modes_override=["ma"], 
+        df=TBSP,
+        cash_df=MMF,
+        train_years=train_y,
+        test_years=test_y,
+        filter_modes_override=["ma"],
         n_jobs=n_jobs,
         entry_gate_series=derived["bond_gate"],
     )
     rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
     sigs_full["TBSP"] = build_signal_series(
-        wf_equity=wf_bd, 
-        wf_trades=wf_tr_bd
+        wf_equity=wf_bd,
+        wf_trades=wf_tr_bd,
     )
-    
+
     # Dodanie TBSP do nowych struktur
     wf_results_dict["TBSP"] = wf_res_bd
     wf_trades_dict["TBSP"] = wf_tr_bd
@@ -513,34 +513,34 @@ def run_global_portfolio(
         bh_metrics_all[lbl] = compute_metrics(equity=bh_curve)
 
     print_global_equity_report(
-        portfolio_metrics=m, 
-        bh_metrics_dict=bh_metrics_all, 
-        alloc_results_df=a_df, 
-        reallocation_log=realloc, 
-        signals_oos_dict=sigs_full, 
-        oos_start=p_e.index.min(), 
-        oos_end=p_e.index.max(), 
-        portfolio_mode=mode, 
+        portfolio_metrics=m,
+        bh_metrics_dict=bh_metrics_all,
+        alloc_results_df=a_df,
+        reallocation_log=realloc,
+        signals_oos_dict=sigs_full,
+        oos_start=p_e.index.min(),
+        oos_end=p_e.index.max(),
+        portfolio_mode=mode,
         fx_hedged=fx_h,
     )
 
     # Raportowanie reżimów (Z użyciem WIG jako rynkowego kontekstu odniesienia)
     bh_wig = (1.0 + rets_dict["WIG"].reindex(index=p_e.index).fillna(value=0.0)).cumprod()
     regime_inputs = prepare_regime_inputs(
-        df=WIG, 
-        wf_results=wig_wf_res, 
-        wf_equity=p_e, 
-        bh_equity=bh_wig
+        df=WIG,
+        wf_results=wig_wf_res,
+        wf_equity=p_e,
+        bh_equity=bh_wig,
     )
     raw_regimes = run_regime_decomposition(
-        inputs=regime_inputs, 
-        generate_plots=False
+        inputs=regime_inputs,
+        generate_plots=False,
     )
     regime_metrics = extract_flat_regime_stats(
-        regime_results=raw_regimes
+        regime_results=raw_regimes,
     )
     print_live_regime_report(
-        regime_metrics=regime_metrics
+        regime_metrics=regime_metrics,
     )
 
     # Wysyłanie (wewnętrznie wywołuje upload na GDrive) - z nowymi argumentami
@@ -559,7 +559,7 @@ def run_global_portfolio(
         portfolio_mode=mode,
         fx_hedged=fx_h,
         output_dir=str(OUTPUT_DIR / asset_key.lower()),
-        asset_name=asset_key,  
+        asset_name=asset_key,
         run_date=None,
         gdrive_folder_id=folder_id,
         gdrive_credentials=creds_path,

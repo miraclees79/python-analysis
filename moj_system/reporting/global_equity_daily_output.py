@@ -34,7 +34,6 @@ from moj_system.reporting.output_base import (
     load_existing_log,
 )
 
-
 # ---------------------------------------------------------------------------
 # Signal & State extraction helpers (Ported from Multiasset)
 # ---------------------------------------------------------------------------
@@ -170,7 +169,7 @@ def _build_snapshot(
     fx_hedged: bool,
     run_date: dt.date,
 ) -> dict:
-    
+
     snap = {
         "run_date": str(run_date),
         "portfolio_mode": portfolio_mode,
@@ -196,7 +195,7 @@ def _build_snapshot(
         par = _get_active_window_params(wf_results=wf_results_dict.get(k))
         state["params"] = par
         df = price_df_dict.get(k)
-        
+
         if df is not None and not df.empty:
             state["ma_state"] = _compute_ma_filter_state(
                 df=df,
@@ -207,7 +206,7 @@ def _build_snapshot(
                 df=df,
                 lookback=par.get("mom_lookback", 252),
             )
-            
+
             pos = _get_open_position(wf_trades=wf_trades_dict.get(k))
             if pos:
                 prices = df["Zamkniecie"].dropna()
@@ -288,7 +287,7 @@ def _build_status_text(snap: dict, action: str, asset_keys: list) -> str:
         sep2,
         "  CURRENT ALLOCATION",
     ]
-    
+
     for k in asset_keys:
         wt = w.get(k, 0.0)
         lines.append(f"  {k:<14} {wt * 100.0:.0f}%")
@@ -302,7 +301,7 @@ def _build_status_text(snap: dict, action: str, asset_keys: list) -> str:
         state = snap["asset_states"].get(k, {})
         pos = state.get("position")
         par = state.get("params", {})
-        
+
         if pos:
             lines += [
                 f"  Entry date:     {pos['entry_date']}",
@@ -320,14 +319,14 @@ def _build_status_text(snap: dict, action: str, asset_keys: list) -> str:
         ma_state = state.get("ma_state", {})
         mom_state = state.get("mom_state", {})
         fmode = par.get("filter_mode", "ma").upper()
-        
+
         lines.append(f"  Filter (Active: {fmode}):")
         lines.append(
-            f"    MA:  {ma_state.get('fast_ma')} / {ma_state.get('slow_ma')} (gap {ma_state.get('gap_pct', 0.0):+.2f}%) -> {'ON' if ma_state.get('filter_on') else 'OFF'}"
+            f"    MA:  {ma_state.get('fast_ma')} / {ma_state.get('slow_ma')} (gap {ma_state.get('gap_pct', 0.0):+.2f}%) -> {'ON' if ma_state.get('filter_on') else 'OFF'}",
         )
         if mom_state.get("mom_value") is not None:
             lines.append(
-                f"    MOM: {mom_state.get('mom_value'):+.2f}% -> {'ON' if mom_state.get('filter_on') else 'OFF'}"
+                f"    MOM: {mom_state.get('mom_value'):+.2f}% -> {'ON' if mom_state.get('filter_on') else 'OFF'}",
             )
         lines.append(sep2)
 
@@ -354,7 +353,7 @@ def _build_log_row(snap: dict, action: str, asset_keys: list) -> dict:
     for k in asset_keys:
         row[f"signal_{k}"] = snap["signals"].get(k, "OUT")
         row[f"weight_{k}"] = snap["weights"].get(k, 0.0)
-        
+
         # Add basic position tracking to CSV to match multiasset behavior
         pos = snap["asset_states"].get(k, {}).get("position")
         if pos:
@@ -496,7 +495,7 @@ def build_daily_outputs(
     gdrive_folder_id: str | None = None,
     gdrive_credentials: str | None = None,
 ) -> dict:
-    
+
     if run_date is None:
         run_date = dt.date.today()
 
@@ -512,10 +511,10 @@ def build_daily_outputs(
 
     if gdrive_folder_id and gdrive_credentials:
         fetch_file_from_drive(
-            local_path=log_path, 
-            folder_id=gdrive_folder_id, 
-            filename=logfile_name, 
-            credentials_path=gdrive_credentials
+            local_path=log_path,
+            folder_id=gdrive_folder_id,
+            filename=logfile_name,
+            credentials_path=gdrive_credentials,
         )
     else:
         logging.info(msg="global_equity_daily_output: skipping log pre-fetch.")
@@ -546,18 +545,18 @@ def build_daily_outputs(
     snap["action"] = action
 
     status_text = _build_status_text(
-        snap=snap, 
-        action=action, 
-        asset_keys=asset_keys
+        snap=snap,
+        action=action,
+        asset_keys=asset_keys,
     )
     logging.info(msg=f"\n{status_text}")
     atomic_write(path=status_path, content=status_text)
     logging.info(msg=f"build_daily_outputs: status written to {status_path}")
 
     log_row = _build_log_row(
-        snap=snap, 
-        action=action, 
-        asset_keys=asset_keys
+        snap=snap,
+        action=action,
+        asset_keys=asset_keys,
     )
     append_log_row(log_path=log_path, row=log_row)
     logging.info(msg=f"build_daily_outputs: log updated at {log_path}")
@@ -591,9 +590,9 @@ def build_daily_outputs(
                 for file_path in files_to_upload:
                     if file_path.exists():
                         client.upload_csv(
-                            folder_id=gdrive_folder_id, 
-                            local_path=str(file_path), 
-                            filename=file_path.name
+                            folder_id=gdrive_folder_id,
+                            local_path=str(file_path),
+                            filename=file_path.name,
                         )
                 logging.info(msg="Successfully uploaded all daily artefacts to Google Drive.")
             else:

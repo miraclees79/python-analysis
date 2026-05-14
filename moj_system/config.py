@@ -136,14 +136,24 @@ ASSET_REGISTRY = {
         "test": 2,
         "default_stop": "fixed",
     },
-   
+
     # Portfolio Templates
     "PENSION": {"type": "portfolio_pension",
                 "train": 7,
                 "test": 1,
                 "default_stop_eq": "atr"},
 
+<<<<<<< Updated upstream
     
+=======
+    # GLOBAL_A config inactive
+    "GLOBAL_A": {"type": "portfolio_global",
+                 "mode": "global_equity",
+                 "train": 7,
+                 "test": 2,
+                 "fx_hedged": True,
+                 },
+>>>>>>> Stashed changes
 
     "GLOBAL_B": {
         "type": "portfolio_global",
