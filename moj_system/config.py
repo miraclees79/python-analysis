@@ -143,9 +143,8 @@ ASSET_REGISTRY = {
                 "test": 1,
                 "default_stop_eq": "atr"},
 
-<<<<<<< Updated upstream
     
-=======
+
     # GLOBAL_A config inactive
     "GLOBAL_A": {"type": "portfolio_global",
                  "mode": "global_equity",
@@ -153,7 +152,7 @@ ASSET_REGISTRY = {
                  "test": 2,
                  "fx_hedged": True,
                  },
->>>>>>> Stashed changes
+
 
     "GLOBAL_B": {
         "type": "portfolio_global",
