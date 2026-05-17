@@ -361,6 +361,7 @@ def _build_status_text(snap: dict, action: str) -> str:
         f"  Equity signal:  {snap['signal_equity']}",
         f"  Bond signal:    {snap['signal_bond']}",
         f"  Rynek (ADX):      {snap.get('current_regime_adx', 'N/A').upper()}",
+        f"  Dane z dnia: {snap['data_freshness']}", 
         sep2,
         "  CURRENT ALLOCATION",
         f"  Equity (WIG):   {w['equity'] * 100:.0f}%"
