@@ -86,31 +86,32 @@ BOUNDARY_EXITS = {"CARRY", "SAMPLE_END"}
 
 
 def _get_active_window_params(wf_results: pd.DataFrame) -> dict:
-    """Return the parameter dict from the last walk-forward window."""
+    """Extracts parameters and identifies if ATR or Fixed stop is used."""
     if wf_results is None or wf_results.empty:
         return {}
     last = wf_results.iloc[-1]
 
     def _safe_float(key, default=None):
-        v = last.get(key)
-        if v is None or (isinstance(v, float) and np.isnan(v)):
+        val = last.get(key)
+        if val is None or (isinstance(val, float) and np.isnan(val)):
             return default
-        try:
-            return float(v)
-        except (ValueError, TypeError):
-            return default
+        return float(val)
 
-    def _safe_int(key, default=None):
-        v = _safe_float(key)
-        return int(v) if v is not None else default
+    use_atr = bool(last.get("use_atr_stop", False))
+    stop_val = _safe_float("N_atr" if use_atr else "X", 0.10)
+    stop_label = "N_atr" if use_atr else "X"
 
     params = {
         "filter_mode": last.get("filter_mode", "ma"),
-        "X": _safe_float("X", 0.10),
+        "stop_param": stop_val,
+        "stop_label": stop_label,
+        "use_atr_stop": use_atr,
         "Y": _safe_float("Y", 0.10),
-        "fast": _safe_int("fast", 50),
-        "slow": _safe_int("slow", 200),
-        "stop_loss": _safe_float("stop_loss", 0.10),
+        "fast": int(_safe_float("fast", 50)),
+        "slow": int(_safe_float("slow", 200)),
+        "stop_loss": _safe_float("stop_loss", 0.05),
+        "mom_lookback": int(_safe_float("mom_lookback", 252)),
+        "atr_window": int(_safe_float("atr_window", 20)),
         "TestStart": pd.Timestamp(last["TestStart"]),
         "TestEnd": pd.Timestamp(last["TestEnd"]),
     }
@@ -124,6 +125,23 @@ def _get_active_window_params(wf_results: pd.DataFrame) -> dict:
         params["mom_lookback"] = 252
     return params
 
+def _compute_atr_val(df: pd.DataFrame, atr_window: int) -> float:
+    """Calculates the current ATR volatility percentage (shifted by 1 for next day logic)."""
+    if len(df) < atr_window + 1:
+        return 0.0
+    
+    df_copy = df.copy()
+    has_hl = "Najwyzszy" in df_copy.columns and "Najnizszy" in df_copy.columns
+    
+    if has_hl:
+        prev_close = df_copy["Zamkniecie"].shift(periods=1)
+        tr = np.maximum(df_copy["Najwyzszy"], prev_close) - np.minimum(df_copy["Najnizszy"], prev_close)
+        atr_s = (tr / prev_close).rolling(window=atr_window).mean().shift(periods=1) * 100.0
+    else:
+        atr_s = (df_copy["Zamkniecie"].diff().abs() / df_copy["Zamkniecie"].shift(periods=1)).rolling(window=atr_window).mean().shift(periods=1) * 100.0
+    
+    val = float(atr_s.iloc[-1])
+    return val if np.isfinite(val) else 0.0
 
 def _extract_open_position(wf_trades: pd.DataFrame) -> dict | None:
     """Return the most recent CARRY record as a dict, or None if flat."""
@@ -200,17 +218,27 @@ def _determine_action(
 
 
 def _build_snapshot(
-    wf_equity: pd.Series,
-    wf_trades: pd.DataFrame,
+    wf_equity:  pd.Series,
+    wf_trades:  pd.DataFrame,
     wf_metrics: dict,
     wf_results: pd.DataFrame,
     bh_metrics: dict,
-    df: pd.DataFrame,
-    price_col: str,
-    run_date: dt.date,
+    df:         pd.DataFrame,
+    price_col:  str,
+    run_date:   dt.date,
+    asset_name: str,
 ) -> dict:
     """Assemble the full snapshot dict from walk-forward outputs."""
     snap = {"run_date": run_date.isoformat()}
+
+    # --- NOWE: Data freshness ---
+    freshness = {}
+    if df is not None and not df.empty:
+        freshness[asset_name] = str(df.index.max().date())
+    if wf_equity is not None and not wf_equity.empty:
+        freshness["Strategy"] = str(wf_equity.index.max().date())
+    snap["data_freshness"] = freshness
+    # ----------------------------
 
     params = _get_active_window_params(wf_results)
     snap["params"] = params
@@ -236,24 +264,34 @@ def _build_snapshot(
             if not price_in_trade.empty:
                 peak_price = float(price_in_trade.max())
 
-        X = params.get("X", 0.10)
-        stop_loss = params.get("stop_loss", 0.10)
-        trail_stop = round(peak_price * (1 - X), 2)
-        abs_stop = round(entry_price * (1 - stop_loss), 2)
+        # POPRAWKA: Pobieramy 'stop_param' (którym jest X lub N_atr) i stop_loss
+        stop_param = params.get("stop_param", 0.10)
+        stop_loss = params.get("stop_loss", 0.05)
+
+        # POPRAWKA: Używamy peak_price oraz stop_param
+        if params.get("use_atr_stop"):
+            atr_val = _compute_atr_val(df=df, atr_window=params.get("atr_window", 20))
+            trail_stop = round(number=peak_price * (1.0 - stop_param * atr_val), ndigits=2)
+            snap["atr_val_equity"] = round(number=atr_val, ndigits=3)
+        else:
+            trail_stop = round(number=peak_price * (1.0 - stop_param), ndigits=2)
+            snap["atr_val_equity"] = None
+            
+        abs_stop = round(number=entry_price * (1.0 - stop_loss), ndigits=2)
         binding_stop = max(trail_stop, abs_stop)
 
         snap["entry_date"] = entry_date
-        snap["entry_price"] = round(entry_price, 2)
+        snap["entry_price"] = round(number=entry_price, ndigits=2)
         snap["days_in_trade"] = days_in
-        snap["unrealised_pct"] = round(unreal_ret * 100, 2)
-        snap["peak_price"] = round(peak_price, 2)
+        snap["unrealised_pct"] = round(number=unreal_ret * 100.0, ndigits=2)
+        snap["peak_price"] = round(number=peak_price, ndigits=2)
         snap["trail_stop"] = trail_stop
         snap["abs_stop"] = abs_stop
         snap["binding_stop"] = binding_stop
         if today_price:
             snap["stop_gap_pct"] = round(
-                (binding_stop - today_price) / today_price * 100,
-                2,
+                number=(binding_stop - today_price) / today_price * 100.0,
+                ndigits=2,
             )
     else:
         snap["signal"] = "OUT"
@@ -305,7 +343,11 @@ def _build_snapshot(
 # ---------------------------------------------------------------------------
 
 
-def _build_status_text(snap: dict, action: str, asset_name: str) -> str:
+def _build_status_text(
+    snap:       dict, 
+    action:     str, 
+    asset_name: str,
+) -> str:
     """Render the human-readable status block from a snapshot dict."""
     sep = "=" * 60
     sep2 = "-" * 60
@@ -313,10 +355,11 @@ def _build_status_text(snap: dict, action: str, asset_name: str) -> str:
         sep,
         f"  {asset_name} STRATEGY SIGNAL — {snap['run_date']}",
         sep,
-        f"  Signal:      {snap['signal']}",
-        f"  Action:      {action}",
-        f"  Price today: {snap['today_price']}",
+        f"  Signal:        {snap['signal']}",
+        f"  Action:        {action}",
+        f"  Price today:   {snap['today_price']}",
         f"  Rynek (ADX):   {snap.get('current_regime_adx', 'N/A').upper()}",
+        f"  Dane z dnia:   {snap.get('data_freshness', {})}",
         sep2,
     ]
 
@@ -331,6 +374,12 @@ def _build_status_text(snap: dict, action: str, asset_name: str) -> str:
     mom_lbl = "(ACTIVE)" if fmode == "mom" else ""
 
     if snap["signal"] == "IN":
+        # POPRAWKA: Pobieramy 'stop_param' zamiast sztywnego 'X'
+        if snap["params"].get("use_atr_stop"):
+            trail_str = f"  Trail stop:    {snap['trail_stop']}  (peak {snap['peak_price']} × (1 - {snap['params'].get('stop_param', 0):.2f}[N_atr] × {snap.get('atr_val_equity', 0.0):.2f}%[ATR]))"
+        else:
+            trail_str = f"  Trail stop:    {snap['trail_stop']}  (peak {snap['peak_price']} × (1 - {snap['params'].get('stop_param', 0):.0%}))"
+
         lines += [
             f"  Entry date:    {snap['entry_date']}",
             f"  Entry price:   {snap['entry_price']}",
@@ -338,12 +387,9 @@ def _build_status_text(snap: dict, action: str, asset_name: str) -> str:
             f"  Unrealised:    {snap['unrealised_pct']:+.2f}%",
             sep2,
             "  STOP LEVELS",
-            f"  Trail stop:    {snap['trail_stop']}  "
-            f"(peak {snap['peak_price']} × (1 - {snap['params'].get('X', '?'):.0%}))",
-            f"  Abs stop:      {snap['abs_stop']}  "
-            f"(entry × (1 - {snap['params'].get('stop_loss', '?'):.0%}))",
-            f"  Binding stop:  {snap['binding_stop']}  "
-            f"(gap from today: {snap.get('stop_gap_pct', '?'):+.1f}%)",
+            trail_str,
+            f"  Abs stop:      {snap['abs_stop']}  (entry × (1 - {snap['params'].get('stop_loss', 0):.0%}))",
+            f"  Binding stop:  {snap['binding_stop']}  (gap from today: {snap.get('stop_gap_pct', '?'):+.1f}%)",
             sep2,
             f"  FILTERS  [active filter: {fmode.upper()}]  {act_icon}",
             f"  MA  cross {active_lbl}  fast({snap['params'].get('fast', '?')})={ma.get('fast_ma')}  "

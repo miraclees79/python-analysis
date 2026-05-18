@@ -78,8 +78,26 @@ def _get_active_window_params(wf_results: pd.DataFrame | None) -> dict:
         "slow": int(_safe_float("slow", 200)),
         "stop_loss": _safe_float("stop_loss", 0.05),
         "mom_lookback": int(_safe_float("mom_lookback", 252)),
+        "atr_window": int(_safe_float("atr_window", 20)),
     }
 
+def _compute_atr_val(df: pd.DataFrame, atr_window: int) -> float:
+    """Calculates the current ATR volatility percentage (shifted by 1 for next day logic)."""
+    if len(df) < atr_window + 1:
+        return 0.0
+    
+    df_copy = df.copy()
+    has_hl = "Najwyzszy" in df_copy.columns and "Najnizszy" in df_copy.columns
+    
+    if has_hl:
+        prev_close = df_copy["Zamkniecie"].shift(periods=1)
+        tr = np.maximum(df_copy["Najwyzszy"], prev_close) - np.minimum(df_copy["Najnizszy"], prev_close)
+        atr_s = (tr / prev_close).rolling(window=atr_window).mean().shift(periods=1) * 100.0
+    else:
+        atr_s = (df_copy["Zamkniecie"].diff().abs() / df_copy["Zamkniecie"].shift(periods=1)).rolling(window=atr_window).mean().shift(periods=1) * 100.0
+    
+    val = float(atr_s.iloc[-1])
+    return val if np.isfinite(val) else 0.0
 
 def _compute_ma_filter_state(df: pd.DataFrame, fast: int, slow: int) -> dict:
     prices = df["Zamkniecie"].dropna()
@@ -215,7 +233,14 @@ def _build_snapshot(
                 in_trade = prices.loc[prices.index >= pd.Timestamp(pos["EntryDate"])]
                 peak_px = float(in_trade.max())
 
-                trail_stop = round(number=peak_px * (1.0 - par.get("stop_param", 0.10)), ndigits=2)
+                if par.get("use_atr_stop"):
+                    atr_val = _compute_atr_val(df=df, atr_window=par.get("atr_window", 20))
+                    trail_stop = round(number=peak_px * (1.0 - par.get("stop_param", 0.10) * atr_val), ndigits=2)
+                    state["atr_val"] = round(number=atr_val, ndigits=3)
+                else:
+                    trail_stop = round(number=peak_px * (1.0 - par.get("stop_param", 0.10)), ndigits=2)
+                    state["atr_val"] = None
+
                 abs_stop = round(number=entry_px * (1.0 - par.get("stop_loss", 0.05)), ndigits=2)
                 binding = max(trail_stop, abs_stop)
 
@@ -284,6 +309,7 @@ def _build_status_text(snap: dict, action: str, asset_keys: list) -> str:
         f"  Mode:           {snap['portfolio_mode']} | FX: {'hedged' if snap['fx_hedged'] else 'unhedged'}",
         f"  Action:         {action}",
         f"  Rynek (ADX):    {snap.get('current_regime_adx', 'N/A').upper()}",
+        f"  Dane z dnia:    {snap.get('data_freshness', {})}",  # <--- DODANA LINIA
         sep2,
         "  CURRENT ALLOCATION",
     ]
@@ -301,16 +327,21 @@ def _build_status_text(snap: dict, action: str, asset_keys: list) -> str:
         state = snap["asset_states"].get(k, {})
         pos = state.get("position")
         par = state.get("params", {})
-
+        
         if pos:
+            if par.get("use_atr_stop"):
+                trail_str = f"  Trail stop:     {pos['trail_stop']}  (peak {pos['peak_price']} × (1 - {par.get('stop_param', 0):.2f}[N_atr] × {state.get('atr_val', 0.0):.2f}%[ATR]))"
+            else:
+                trail_str = f"  Trail stop:     {pos['trail_stop']}  (peak {pos['peak_price']} × (1 - {par.get('stop_param', 0):.2f}[{par.get('stop_label', 'X')}]))"
+
             lines += [
                 f"  Entry date:     {pos['entry_date']}",
                 f"  Entry price:    {pos['entry_price']}",
                 f"  Today price:    {pos['today_price']}",
                 f"  Days in trade:  {pos['days_in_trade']}",
                 f"  Unrealised:     {pos['unrealised_pct']:+.2f}%",
-                f"  Trail stop:     {pos['trail_stop']}  (peak {pos['peak_price']} × (1-{par.get('stop_param', 0):.2f}[{par.get('stop_label', 'X')}]))",
-                f"  Abs stop:       {pos['abs_stop']}  (entry × (1-{par.get('stop_loss', 0):.0%}))",
+                trail_str,
+                f"  Abs stop:       {pos['abs_stop']}  (entry × (1 - {par.get('stop_loss', 0):.0%}))",
                 f"  Binding stop:   {pos['binding_stop']}  (gap: {pos['stop_gap_pct']:+.1f}%)",
             ]
         else:
@@ -344,17 +375,16 @@ def _build_status_text(snap: dict, action: str, asset_keys: list) -> str:
 
 def _build_log_row(snap: dict, action: str, asset_keys: list) -> dict:
     row = {
-        "Date": snap["run_date"],
-        "Action": action,
-        "Mode": snap["portfolio_mode"],
-        "Regime_ADX": snap.get("current_regime_adx"),
-        "Realloc_Today": snap.get("realloc_today", False),
+        "date": snap["run_date"],           # ZMIENIONE Z "Date" NA "date"
+        "action": action,                   # ZMIENIONE Z "Action" NA "action"
+        "mode": snap["portfolio_mode"],     # ZMIENIONE Z "Mode" NA "mode"
+        "regime_adx": snap.get("current_regime_adx"),
+        "realloc_today": snap.get("realloc_today", False),
     }
     for k in asset_keys:
         row[f"signal_{k}"] = snap["signals"].get(k, "OUT")
         row[f"weight_{k}"] = snap["weights"].get(k, 0.0)
 
-        # Add basic position tracking to CSV to match multiasset behavior
         pos = snap["asset_states"].get(k, {}).get("position")
         if pos:
             row[f"{k}_entry_date"] = pos["entry_date"]

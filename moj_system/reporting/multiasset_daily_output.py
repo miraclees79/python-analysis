@@ -89,7 +89,6 @@ def _get_active_window_params(wf_results: pd.DataFrame) -> dict:
             return default
         return float(val)
 
-    # Wykrywanie trybu stopu
     use_atr = bool(last.get("use_atr_stop", False))
     stop_val = _safe_float("N_atr" if use_atr else "X", 0.10)
     stop_label = "N_atr" if use_atr else "X"
@@ -104,7 +103,26 @@ def _get_active_window_params(wf_results: pd.DataFrame) -> dict:
         "slow": int(_safe_float("slow", 200)),
         "stop_loss": _safe_float("stop_loss", 0.05),
         "mom_lookback": int(_safe_float("mom_lookback", 252)),
+        "atr_window": int(_safe_float("atr_window", 20)),
     }
+
+def _compute_atr_val(df: pd.DataFrame, atr_window: int) -> float:
+    """Calculates the current ATR volatility percentage (shifted by 1 for next day logic)."""
+    if len(df) < atr_window + 1:
+        return 0.0
+    
+    df_copy = df.copy()
+    has_hl = "Najwyzszy" in df_copy.columns and "Najnizszy" in df_copy.columns
+    
+    if has_hl:
+        prev_close = df_copy["Zamkniecie"].shift(periods=1)
+        tr = np.maximum(df_copy["Najwyzszy"], prev_close) - np.minimum(df_copy["Najnizszy"], prev_close)
+        atr_s = (tr / prev_close).rolling(window=atr_window).mean().shift(periods=1) * 100.0
+    else:
+        atr_s = (df_copy["Zamkniecie"].diff().abs() / df_copy["Zamkniecie"].shift(periods=1)).rolling(window=atr_window).mean().shift(periods=1) * 100.0
+    
+    val = float(atr_s.iloc[-1])
+    return val if np.isfinite(val) else 0.0
 
 
 def _compute_ma_filter_state(df: pd.DataFrame, fast: int, slow: int) -> dict:
@@ -250,13 +268,19 @@ def _build_snapshot(
         prices_eq = WIG["Zamkniecie"].dropna()
         entry_px = float(pos_eq["EntryPrice"])
         today_px = float(prices_eq.iloc[-1])
-        # Obliczanie ceny szczytowej od daty wejścia
         in_trade = prices_eq.loc[prices_eq.index >= pd.Timestamp(pos_eq["EntryDate"])]
         peak_px = float(in_trade.max())
 
-        # Obliczenia stopów (identyczne jak w tekście)
-        trail_stop = round(number=peak_px * (1 - par_eq["stop_param"]), ndigits=2)
-        abs_stop = round(number=entry_px * (1 - par_eq["stop_loss"]), ndigits=2)
+        # OBLICZENIA STOPÓW (teraz z uwzględnieniem ATR)
+        if par_eq.get("use_atr_stop"):
+            atr_val = _compute_atr_val(df=WIG, atr_window=par_eq.get("atr_window", 20))
+            trail_stop = round(number=peak_px * (1.0 - par_eq["stop_param"] * atr_val), ndigits=2)
+            snap["atr_val_equity"] = round(number=atr_val, ndigits=3)
+        else:
+            trail_stop = round(number=peak_px * (1.0 - par_eq["stop_param"]), ndigits=2)
+            snap["atr_val_equity"] = None
+            
+        abs_stop = round(number=entry_px * (1.0 - par_eq["stop_loss"]), ndigits=2)
         binding = max(trail_stop, abs_stop)
 
         snap["equity_position"] = {
@@ -264,12 +288,12 @@ def _build_snapshot(
             "entry_price": round(number=entry_px, ndigits=2),
             "today_price": round(number=today_px, ndigits=2),
             "days_in_trade": int(pos_eq.get("Days", 0)),
-            "unrealised_pct": round(number=float(pos_eq["Return"]) * 100, ndigits=2),
+            "unrealised_pct": round(number=float(pos_eq["Return"]) * 100.0, ndigits=2),
             "peak_price": round(number=peak_px, ndigits=2),
             "trail_stop": trail_stop,
             "abs_stop": abs_stop,
             "binding_stop": binding,
-            "stop_gap_pct": round(number=(binding - today_px) / today_px * 100, ndigits=2),
+            "stop_gap_pct": round(number=(binding - today_px) / today_px * 100.0, ndigits=2),
         }
     else:
         snap["equity_position"] = None
@@ -293,8 +317,15 @@ def _build_snapshot(
         in_trade_bd = prices_bd.loc[prices_bd.index >= pd.Timestamp(pos_bd["EntryDate"])]
         peak_px_bd = float(in_trade_bd.max())
 
-        trail_stop_bd = round(number=peak_px_bd * (1 - par_bd["stop_param"]), ndigits=2)
-        abs_stop_bd = round(number=entry_px_bd * (1 - par_bd["stop_loss"]), ndigits=2)
+        if par_bd.get("use_atr_stop"):
+            atr_val_bd = _compute_atr_val(df=TBSP, atr_window=par_bd.get("atr_window", 20))
+            trail_stop_bd = round(number=peak_px_bd * (1.0 - par_bd["stop_param"] * atr_val_bd), ndigits=2)
+            snap["atr_val_bond"] = round(number=atr_val_bd, ndigits=3)
+        else:
+            trail_stop_bd = round(number=peak_px_bd * (1.0 - par_bd["stop_param"]), ndigits=2)
+            snap["atr_val_bond"] = None
+
+        abs_stop_bd = round(number=entry_px_bd * (1.0 - par_bd["stop_loss"]), ndigits=2)
         binding_bd = max(trail_stop_bd, abs_stop_bd)
 
         snap["bond_position"] = {
@@ -302,12 +333,12 @@ def _build_snapshot(
             "entry_price": round(number=entry_px_bd, ndigits=2),
             "today_price": round(number=today_px_bd, ndigits=2),
             "days_in_trade": int(pos_bd.get("Days", 0)),
-            "unrealised_pct": round(number=float(pos_bd["Return"]) * 100, ndigits=2),
+            "unrealised_pct": round(number=float(pos_bd["Return"]) * 100.0, ndigits=2),
             "peak_price": round(number=peak_px_bd, ndigits=2),
             "trail_stop": trail_stop_bd,
             "abs_stop": abs_stop_bd,
             "binding_stop": binding_bd,
-            "stop_gap_pct": round(number=(binding_bd - today_px_bd) / today_px_bd * 100, ndigits=2),
+            "stop_gap_pct": round(number=(binding_bd - today_px_bd) / today_px_bd * 100.0, ndigits=2),
         }
     else:
         snap["bond_position"] = None
@@ -361,7 +392,7 @@ def _build_status_text(snap: dict, action: str) -> str:
         f"  Equity signal:  {snap['signal_equity']}",
         f"  Bond signal:    {snap['signal_bond']}",
         f"  Rynek (ADX):      {snap.get('current_regime_adx', 'N/A').upper()}",
-        f"  Dane z dnia: {snap['data_freshness']}", 
+        f"  Dane z dnia:    {snap.get('data_freshness', {})}", 
         sep2,
         "  CURRENT ALLOCATION",
         f"  Equity (WIG):   {w['equity'] * 100:.0f}%"
@@ -381,14 +412,20 @@ def _build_status_text(snap: dict, action: str) -> str:
     ep = snap.get("equity_position")
     pe = snap.get("params_equity", {})
     if ep:
+        # BUDOWANIE ETYKIETY STOPA
+        if pe.get("use_atr_stop"):
+            trail_str = f"  Trail stop:     {ep['trail_stop']}  (peak {ep['peak_price']} × (1 - {pe.get('stop_param', 0):.2f}[N_atr] × {snap.get('atr_val_equity', 0.0):.2f}%[ATR]))"
+        else:
+            trail_str = f"  Trail stop:     {ep['trail_stop']}  (peak {ep['peak_price']} × (1 - {pe.get('stop_param', 0):.2f}[{pe.get('stop_label', 'X')}]))"
+
         lines += [
             f"  Entry date:     {ep['entry_date']}",
             f"  Entry price:    {ep['entry_price']}",
             f"  Today price:    {ep['today_price']}",
             f"  Days in trade:  {ep['days_in_trade']}",
             f"  Unrealised:     {ep['unrealised_pct']:+.2f}%",
-            f"  Trail stop:     {ep['trail_stop']}  (peak {ep['peak_price']} × (1-{pe.get('stop_param', 0):.2f} [{pe.get('stop_label', 'X')}]))",
-            f"  Abs stop:       {ep['abs_stop']}  (entry × (1-{pe.get('stop_loss', 0):.0%}))",
+            trail_str,
+            f"  Abs stop:       {ep['abs_stop']}  (entry × (1 - {pe.get('stop_loss', 0):.0%}))",
             f"  Binding stop:   {ep['binding_stop']}  (gap: {ep['stop_gap_pct']:+.1f}%)",
         ]
     else:
@@ -411,14 +448,19 @@ def _build_status_text(snap: dict, action: str) -> str:
     bp = snap.get("bond_position")
     pb = snap.get("params_bond", {})
     if bp:
+        if pb.get("use_atr_stop"):
+            trail_str_bd = f"  Trail stop:     {bp['trail_stop']}  (peak {bp['peak_price']} × (1 - {pb.get('stop_param', 0):.2f}[N_atr] × {snap.get('atr_val_bond', 0.0):.2f}%[ATR]))"
+        else:
+            trail_str_bd = f"  Trail stop:     {bp['trail_stop']}  (peak {bp['peak_price']} × (1 - {pb.get('stop_param', 0):.2f}[{pb.get('stop_label', 'X')}]))"
+
         lines += [
             f"  Entry date:     {bp['entry_date']}",
             f"  Entry price:    {bp['entry_price']}",
             f"  Today price:    {bp['today_price']}",
             f"  Days in trade:  {bp['days_in_trade']}",
             f"  Unrealised:     {bp['unrealised_pct']:+.2f}%",
-            f"  Trail stop:     {bp['trail_stop']}  (peak {bp['peak_price']} × (1-{pb.get('stop_param', 0):.2f} [{pb.get('stop_label', 'X')}]))",
-            f"  Abs stop:       {bp['abs_stop']}  (entry × (1-{pb.get('stop_loss', 0):.0%}))",
+            trail_str_bd,
+            f"  Abs stop:       {bp['abs_stop']}  (entry × (1 - {pb.get('stop_loss', 0):.0%}))",
             f"  Binding stop:   {bp['binding_stop']}  (gap: {bp['stop_gap_pct']:+.1f}%)",
         ]
     else:
