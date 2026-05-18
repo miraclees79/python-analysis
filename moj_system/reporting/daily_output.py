@@ -781,6 +781,7 @@ def build_daily_outputs(
         df=df,
         price_col=price_col,
         run_date=run_date,
+        asset_name=asset_name,  # <--- DODANA LINIA
     )
 
     # Action
