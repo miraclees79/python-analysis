@@ -374,7 +374,7 @@ def _build_status_text(
     mom_lbl = "(ACTIVE)" if fmode == "mom" else ""
 
     if snap["signal"] == "IN":
-        # POPRAWKA: Pobieramy 'stop_param' zamiast sztywnego 'X'
+        # Bezpieczne pobranie parametrów bez '?' dla formatowań liczbowych
         if snap["params"].get("use_atr_stop"):
             trail_str = f"  Trail stop:    {snap['trail_stop']}  (peak {snap['peak_price']} × (1 - {snap['params'].get('stop_param', 0):.2f}[N_atr] × {snap.get('atr_val_equity', 0.0):.2f}%[ATR]))"
         else:
@@ -384,34 +384,39 @@ def _build_status_text(
             f"  Entry date:    {snap['entry_date']}",
             f"  Entry price:   {snap['entry_price']}",
             f"  Days in trade: {snap['days_in_trade']}",
-            f"  Unrealised:    {snap['unrealised_pct']:+.2f}%",
+            f"  Unrealised:    {snap.get('unrealised_pct', 0.0):+.2f}%",
             sep2,
             "  STOP LEVELS",
             trail_str,
             f"  Abs stop:      {snap['abs_stop']}  (entry × (1 - {snap['params'].get('stop_loss', 0):.0%}))",
-            f"  Binding stop:  {snap['binding_stop']}  (gap from today: {snap.get('stop_gap_pct', '?'):+.1f}%)",
+            f"  Binding stop:  {snap['binding_stop']}  (gap from today: {snap.get('stop_gap_pct', 0.0):+.1f}%)",
             sep2,
             f"  FILTERS  [active filter: {fmode.upper()}]  {act_icon}",
-            f"  MA  cross {active_lbl}  fast({snap['params'].get('fast', '?')})={ma.get('fast_ma')}  "
-            f"slow({snap['params'].get('slow', '?')})={ma.get('slow_ma')}  "
-            f"gap={ma.get('gap_pct', 0):+.2f}%  {ma_icon}",
-            f"  MOM {mom_lbl}  12m-1m={mom.get('mom_value', 0):+.2f}%  {mom_icon}",
+            f"  MA  cross {active_lbl}  fast({snap['params'].get('fast', 'N/A')})={ma.get('fast_ma')}  "
+            f"slow({snap['params'].get('slow', 'N/A')})={ma.get('slow_ma')}  "
+            f"gap={ma.get('gap_pct', 0.0):+.2f}%  {ma_icon}",
+            f"  MOM {mom_lbl}  12m-1m={mom.get('mom_value', 0.0):+.2f}%  {mom_icon}",
         ]
     else:
         lines += [
             "  Position:      FLAT (cash / MMF)",
             sep2,
             f"  FILTERS  [active filter: {fmode.upper()}]  entry requires: {act_icon}",
-            f"  MA  cross {active_lbl}  fast({snap['params'].get('fast', '?')})={ma.get('fast_ma')}  "
-            f"slow({snap['params'].get('slow', '?')})={ma.get('slow_ma')}  "
-            f"gap={ma.get('gap_pct', 0):+.2f}%  {ma_icon}",
-            f"  MOM {mom_lbl}  12m-1m={mom.get('mom_value', 0):+.2f}%  {mom_icon}",
-            f"  Entry breakout threshold: +{snap['params'].get('Y', '?'):.0%} from trough",
+            f"  MA  cross {active_lbl}  fast({snap['params'].get('fast', 'N/A')})={ma.get('fast_ma')}  "
+            f"slow({snap['params'].get('slow', 'N/A')})={ma.get('slow_ma')}  "
+            f"gap={ma.get('gap_pct', 0.0):+.2f}%  {ma_icon}",
+            f"  MOM {mom_lbl}  12m-1m={mom.get('mom_value', 0.0):+.2f}%  {mom_icon}",
+            f"  Entry breakout threshold: +{snap['params'].get('Y', 0):.0%} from trough",
         ]
 
     sm = snap.get("strategy_metrics", {})
     bh = snap.get("bh_metrics", {})
     aw = snap.get("active_window", {})
+
+    # Wykrycie dynamicznej etykiety dla sekcji Params (X lub N_atr)
+    stop_label = snap["params"].get("stop_label", "X")
+    stop_val = snap["params"].get("stop_param", 0.0)
+    stop_str = f"{stop_val:.2f}" if stop_label == "N_atr" else f"{stop_val:.0%}"
 
     lines += [
         sep2,
@@ -429,12 +434,12 @@ def _build_status_text(
         f"  Train start: {aw.get('train_start', 'n/a')}",
         f"  Test start:  {aw.get('test_start', 'n/a')}",
         f"  Test end:    {aw.get('test_end', 'n/a')}",
-        f"  Params:      X={snap['params'].get('X', '?'):.0%}  "
-        f"Y={snap['params'].get('Y', '?'):.0%}  "
-        f"fast={snap['params'].get('fast', '?')}  "
-        f"slow={snap['params'].get('slow', '?')}  "
-        f"sl={snap['params'].get('stop_loss', '?'):.0%}  "
-        f"mode={snap['params'].get('filter_mode', '?')}",
+        f"  Params:      {stop_label}={stop_str}  "
+        f"Y={snap['params'].get('Y', 0):.0%}  "
+        f"fast={snap['params'].get('fast', 'N/A')}  "
+        f"slow={snap['params'].get('slow', 'N/A')}  "
+        f"sl={snap['params'].get('stop_loss', 0):.0%}  "
+        f"mode={snap['params'].get('filter_mode', 'N/A')}",
         sep,
     ]
 
