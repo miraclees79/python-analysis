@@ -511,16 +511,15 @@ def _build_status_text(snap: dict, action: str) -> str:
             f"  Exec CAGR:      {ec['cagr']:+.2f}%  (vs Matched Theory {th_cagr:+.2f}% -> Drag: {drag_sign}{ec['cagr_drag_pp']} pp)",
             f"  Exec MaxDD:     {ec['maxdd']:+.2f}%  (vs Matched Theory {th_maxdd:+.2f}% -> Drag: {drag_sign_mdd}{ec.get('maxdd_drag_pp', 0.0)} pp)",
             f"  Correlation:    {ec['correlation']:.2f}  (1.0 = perfect match)",
-            sep2,
         ]
         
         d = ec.get("decomp")
         if d:
             lines += [
                 "  -- Drag Decomposition --",
-                f"  Equity (WIG):  Fund {d.get('eq_fund_cagr', 0):+.2f}% vs Idx {d.get('eq_idx_cagr', 0):+.2f}% (Port impact: {d.get('port_impact_eq', 0):+.2f} pp)",
-                f"  Bond (TBSP):   Fund {d.get('bd_fund_cagr', 0):+.2f}% vs Idx {d.get('bd_idx_cagr', 0):+.2f}% (Port impact: {d.get('port_impact_bd', 0):+.2f} pp)",
-                f"  MMF:           Fund {d.get('mmf_fund_cagr', 0):+.2f}% vs Idx {d.get('mmf_idx_cagr', 0):+.2f}% (Port impact: {d.get('port_impact_mmf', 0):+.2f} pp)",
+                f"  Equity (WIG):  Fund {d.get('eq_fund_cagr', 0):+.2f}% (MDD: {d.get('eq_fund_maxdd', 0):.2f}%) vs Idx {d.get('eq_idx_cagr', 0):+.2f}% (MDD: {d.get('eq_idx_maxdd', 0):.2f}%) -> Port impact: {d.get('port_impact_eq', 0):+.2f} pp",
+                f"  Bond (TBSP):   Fund {d.get('bd_fund_cagr', 0):+.2f}% (MDD: {d.get('bd_fund_maxdd', 0):.2f}%) vs Idx {d.get('bd_idx_cagr', 0):+.2f}% (MDD: {d.get('bd_idx_maxdd', 0):.2f}%) -> Port impact: {d.get('port_impact_bd', 0):+.2f} pp",
+                f"  MMF:           Fund {d.get('mmf_fund_cagr', 0):+.2f}% vs Idx {d.get('mmf_idx_cagr', 0):+.2f}% -> Port impact: {d.get('port_impact_mmf', 0):+.2f} pp",
             ]
         lines.append(sep2)
     lines.append(sep)
