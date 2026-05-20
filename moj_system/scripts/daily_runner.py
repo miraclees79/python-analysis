@@ -56,7 +56,8 @@ from moj_system.reporting.global_equity_daily_output import (
 from moj_system.reporting.multiasset_daily_output import (
     build_daily_outputs as build_multiasset_outputs,
 )
-
+from moj_system.data.ppe_manager import build_continuous_ppe_data
+from moj_system.core.execution_engine import simulate_ppe_execution
 
 def setup_logging(
     output_prefix: str,
@@ -275,6 +276,22 @@ def run_pension_portfolio(
         m_p, bh_m_eq, bh_m_bd, alloc_df, realloc, sig_eq_oos, sig_bd_oos, oos_s, oos_e, sig_bd,
     )
 
+    ppe_df = build_continuous_ppe_data(
+        folder_id=folder_id,
+        credentials_path=creds_path,
+    )
+    
+    exec_equity = None
+    exec_metrics = {}
+    
+    if ppe_df is not None and not ppe_df.empty:
+        exec_equity, exec_metrics, _ = simulate_ppe_execution(
+            target_weights=w_s,
+            ppe_df=ppe_df,
+        )
+    else:
+        logging.warning(msg="PPE Data unavailable. Skipping execution simulation.")
+
     # Raportowanie reżimów
     regime_inputs = prepare_regime_inputs(WIG, wf_res_eq, port_eq, bh_eq)
     raw_regimes = run_regime_decomposition(regime_inputs, generate_plots=False)
@@ -301,6 +318,8 @@ def run_pension_portfolio(
         TBSP,
         sig_eq_oos,
         sig_bd_oos,
+        exec_equity=exec_equity,      # <--- NOWY ARGUMENT
+        exec_metrics=exec_metrics,    # <--- NOWY ARGUMENT
         output_dir=str(OUTPUT_DIR / "pension"),
         asset_name="PENSION",  # [Ważne]
         run_date=None,

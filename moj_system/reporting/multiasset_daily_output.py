@@ -232,6 +232,8 @@ def _build_snapshot(
     reallocation_log: list,
     bh_eq_metrics: dict,
     bh_bd_metrics: dict,
+    exec_equity, 
+    exec_metrics,
     WIG: pd.DataFrame,
     TBSP: pd.DataFrame,
     run_date: dt.date,
@@ -371,7 +373,25 @@ def _build_snapshot(
             "mmf_after": round(number=float(last_r["mmf_after"]), ndigits=2),
             "reason": last_r.get("reason", ""),
         }
-
+    # Execution reality check
+    if exec_equity is not None and exec_metrics:
+        # Oblicz korelację dziennych stóp zwrotu
+        ret_theory = portfolio_equity.pct_change().dropna()
+        ret_exec = exec_equity.pct_change().dropna()
+        common_ret_idx = ret_theory.index.intersection(ret_exec.index)
+        
+        correlation = ret_theory.loc[common_ret_idx].corr(ret_exec.loc[common_ret_idx])
+        cagr_drag = (exec_metrics.get("CAGR", 0.0) - portfolio_metrics.get("CAGR", 0.0)) * 100.0
+        
+        snap["execution_check"] = {
+            "cagr": round(number=exec_metrics.get("CAGR", 0.0) * 100.0, ndigits=2),
+            "maxdd": round(number=exec_metrics.get("MaxDD", 0.0) * 100.0, ndigits=2),
+            "cagr_drag_pp": round(number=cagr_drag, ndigits=2),
+            "correlation": round(number=correlation, ndigits=3),
+            "latest_date": str(exec_equity.index.max().date()),
+        }
+    else:
+        snap["execution_check"] = None
     return snap
 
 
@@ -471,7 +491,17 @@ def _build_status_text(snap: dict, action: str) -> str:
         f"  MA Filter: {ma_bd.get('fast_ma')} / {ma_bd.get('slow_ma')} (gap {ma_bd.get('gap_pct'):+.2f}%) -> {'ON' if ma_bd.get('filter_on') else 'OFF'}",
     )
     lines.append(sep2)
-
+    ec = snap.get("execution_check")
+    if ec:
+        drag_sign = "+" if ec["cagr_drag_pp"] > 0 else ""
+        lines += [
+            "  EXECUTION REALITY CHECK (PPE FUNDS)",
+            f"  Simulated to:   {ec['latest_date']}",
+            f"  Exec CAGR:      {ec['cagr']:+.2f}%  (Drag: {drag_sign}{ec['cagr_drag_pp']} pp vs Theory)",
+            f"  Exec MaxDD:     {ec['maxdd']:+.2f}%",
+            f"  Correlation:    {ec['correlation']:.2f}  (1.0 = perfect match)",
+            sep2,
+        ]
     lines += [
         "  PORTFOLIO OOS METRICS",
         f"  CAGR: {pm.get('CAGR') * 100:+.2f}% | Sharpe: {pm.get('Sharpe'):.2f} | MaxDD: {pm.get('MaxDD') * 100:+.2f}%",
@@ -629,6 +659,8 @@ def build_daily_outputs(
     TBSP: pd.DataFrame,
     sig_eq_oos: pd.Series,
     sig_bd_oos: pd.Series,
+    exec_equity, 
+    exec_metrics,
     output_dir: str = "outputs",
     asset_name: str = "PENSION",
     run_date: dt.date | None = None,
@@ -673,6 +705,8 @@ def build_daily_outputs(
         reallocation_log=reallocation_log,
         bh_eq_metrics=bh_eq_metrics,
         bh_bd_metrics=bh_bd_metrics,
+        exec_equity=exec_equity, 
+        exec_metrics=exec_metrics,
         WIG=WIG,
         TBSP=TBSP,
         run_date=run_date,
