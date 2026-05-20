@@ -28,8 +28,10 @@ KNF_API_BASE = "https://wybieramfundusze-api.knf.gov.pl"
 FUZZY_THRESHOLD = 75  # Minimum score to consider a fuzzy match
 PRICE_TOLERANCE = 0.05  # 5% tolerance for NAV comparison
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-FUND_NAMES_DIR = SCRIPT_DIR / "fund_names_stooq"
+from moj_system.config import PROJECT_ROOT
+
+
+FUND_NAMES_DIR = PROJECT_ROOT / "moj_system" / "data" / "fund_names_stooq"
 
 # --- TFI REGISTRY (Wide Scope) ---
 TFI_IN_SCOPE = {
