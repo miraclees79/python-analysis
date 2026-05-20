@@ -285,12 +285,19 @@ def run_pension_portfolio(
     exec_metrics = {}
     
     if ppe_df is not None and not ppe_df.empty:
-        exec_equity, exec_metrics = simulate_ppe_execution(
+        exec_equity, exec_metrics, exec_decomp = simulate_ppe_execution(
             target_weights=w_s,
             ppe_df=ppe_df,
+            theory_eq_ret=derived["ret_eq"],    # <-- NOWE
+            theory_bd_ret=derived["ret_bd"],    # <-- NOWE
+            theory_mmf_ret=derived["ret_mmf"],  # <-- NOWE
         )
     else:
+        exec_equity = None
+        exec_metrics = {}
+        exec_decomp = {}
         logging.warning(msg="PPE Data unavailable. Skipping execution simulation.")
+
 
     # Raportowanie reżimów
     regime_inputs = prepare_regime_inputs(WIG, wf_res_eq, port_eq, bh_eq)
@@ -318,8 +325,9 @@ def run_pension_portfolio(
         TBSP,
         sig_eq_oos,
         sig_bd_oos,
-        exec_equity=exec_equity,      # <--- NOWY ARGUMENT
-        exec_metrics=exec_metrics,    # <--- NOWY ARGUMENT
+        exec_equity=exec_equity,
+        exec_metrics=exec_metrics,
+        exec_decomp=exec_decomp,
         output_dir=str(OUTPUT_DIR / "pension"),
         asset_name="PENSION",  # [Ważne]
         run_date=None,
