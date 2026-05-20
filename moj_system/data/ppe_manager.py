@@ -3,7 +3,8 @@
 moj_system/data/ppe_manager.py
 ==============================
 Moduł łączący długoterminową historię funduszy PPE z codziennymi
-odczytami OCR (filtered_table.csv). Zwraca zunifikowany DataFrame.
+odczytami OCR (filtered_table.csv). Zwraca zunifikowany DataFrame
+oraz automatycznie uaktualnia pełną bazę (full_ppe_history.csv) na Google Drive.
 """
 
 import logging
@@ -26,7 +27,8 @@ def build_continuous_ppe_data(
 ) -> pd.DataFrame | None:
     """
     Pobiera historię oraz najnowsze dane OCR z GDrive, łączy je,
-    usuwa duplikaty i ujednolica kolumny do [equity, bond, mmf].
+    usuwa duplikaty, ujednolica kolumny i wgrywa zaktualizowaną
+    historię (full_ppe_history.csv) z powrotem na GDrive.
     """
     client = GDriveClient(
         credentials_path=credentials_path
@@ -58,8 +60,17 @@ def build_continuous_ppe_data(
         )
         return None
 
+    # Oryginalne nagłówki do późniejszego zapisu na GDrive
+    original_header = [
+        "data wyceny",
+        "BEZPIECZNA JESIEŃ SFIO SUBFUNDUSZ AKCJI",
+        "BEZPIECZNA JESIEŃ SFIO SUBFUNDUSZ ZRÓWNOWAŻONY",
+        "BEZPIECZNA JESIEŃ SFIO SUBFUNDUSZ STABILNEGO WZROSTU",
+        "BEZPIECZNA JESIEŃ SFIO SUBFUNDUSZ OBLIGACJI",
+        "BEZPIECZNA JESIEŃ SFIO SUBFUNDUSZ KONSERWATYWNY"
+    ]
+
     # --- 3. Standaryzacja pliku z historią ---
-    # CSV ma 6 kolumn: Data, Akcji, Zrównoważony, Stabilnego Wzrostu, Obligacji, Konserwatywny
     hist_df.columns = ["Date", "equity", "balanced", "stable", "bond", "mmf"]
     
     hist_df["Data"] = pd.to_datetime(
@@ -128,11 +139,11 @@ def build_continuous_ppe_data(
     else:
         combined_df = hist_df
 
-    # --- 5. Konwersja kolumn na numeryczne ---
-    target_cols = ["equity", "bond", "mmf"]
-    for col in target_cols:
+    # --- 5. Konwersja WSZYSTKICH kolumn na numeryczne ---
+    # Konwertujemy wszystkie 5 funduszy, by wyeksportowany plik CSV był w 100% poprawny
+    all_fund_cols = ["equity", "balanced", "stable", "bond", "mmf"]
+    for col in all_fund_cols:
         if combined_df[col].dtype == object:
-            # Zamiana polskich przecinków dziesiętnych z OCR na kropki
             combined_df[col] = combined_df[col].astype(str).str.replace(
                 pat=",", 
                 repl=".", 
@@ -143,16 +154,43 @@ def build_continuous_ppe_data(
             errors="coerce"
         )
 
-    # Ffill uzupełnia dni wolne wyceną z piątku
     combined_df.ffill(
         inplace=True
     )
     
-    # Zapis lokalny do cache
-    out_path = DATA_DIR / "ppe_combined.csv"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    # --- 6. Upload uaktualnionej historii na GDrive ---
+    if ocr_df is not None and not ocr_df.empty:
+        history_export = combined_df.copy().reset_index()
+        history_export.columns = original_header
+        
+        # Zapis daty w formacie oryginalnym: dd/mm/yyyy
+        history_export["data wyceny"] = history_export["data wyceny"].dt.strftime(
+            date_format="%d/%m/%Y"
+        )
+        
+        hist_out_path = DATA_DIR / "full_ppe_history.csv"
+        hist_out_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        history_export.to_csv(
+            path_or_buf=hist_out_path, 
+            index=False, 
+            sep=","
+        )
+        
+        logging.info(
+            msg="Uploading updated full_ppe_history.csv to Google Drive..."
+        )
+        client.upload_csv(
+            folder_id=folder_id,
+            local_path=str(hist_out_path),
+            filename="full_ppe_history.csv"
+        )
+
+    # --- 7. Zapis lokalny zunifikowanego pliku (dla cache/debugowania) ---
+    cache_path = DATA_DIR / "ppe_combined.csv"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
     combined_df.to_csv(
-        path_or_buf=out_path, 
+        path_or_buf=cache_path, 
         sep=";"
     )
 
