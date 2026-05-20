@@ -569,22 +569,33 @@ def _build_log_row(snap: dict, action: str) -> dict:
 
 def _build_chart(
     portfolio_equity: pd.Series,
-    sig_eq_oos: pd.Series,
-    sig_bd_oos: pd.Series,
+    sig_eq_oos:       pd.Series,
+    sig_bd_oos:       pd.Series,
     reallocation_log: list,
-    bh_eq_equity: pd.Series,
-    bh_bd_equity: pd.Series,
-    chart_path: Path,
-    action: str,
-    run_date: dt.date,
+    bh_eq_equity:     pd.Series,
+    bh_bd_equity:     pd.Series,
+    chart_path:       Path,
+    action:           str,
+    run_date:         dt.date,
+    exec_equity:      pd.Series | None = None,
 ) -> None:
-    fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
-    fig.suptitle(f"Multi-Asset Strategy — {run_date}  [{action}]", fontsize=12, fontweight="bold")
+    fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(14, 10), sharex=True)
+    fig.suptitle(t=f"Multi-Asset Strategy — {run_date}  [{action}]", fontsize=12, fontweight="bold")
 
     oos_start = portfolio_equity.index.min()
 
+    # --- PANEL 1: EQUITY ---
     ax = axes[0]
-    portfolio_equity.plot(ax=ax, label="Portfolio", color="steelblue", linewidth=1.8)
+    portfolio_equity.plot(ax=ax, label="Theory Portfolio", color="steelblue", linewidth=1.8)
+    
+    # Dodanie krzywej Execution PPE
+    if exec_equity is not None and not exec_equity.empty:
+        align_date = exec_equity.index.min()
+        # "Zaczepiamy" krzywą PPE o poziom teoretycznego portfela z tego samego dnia
+        align_factor = float(portfolio_equity.asof(align_date)) if pd.notna(portfolio_equity.asof(align_date)) else 1.0
+        exec_line = exec_equity * align_factor
+        exec_line.plot(ax=ax, label="Execution PPE", color="purple", linewidth=1.5, alpha=0.9)
+
     if bh_eq_equity is not None:
         bh_eq = (
             bh_eq_equity.loc[bh_eq_equity.index >= oos_start]
@@ -601,28 +612,36 @@ def _build_chart(
         bh_bd.plot(
             ax=ax, label="B&H TBSP", color="seagreen", linewidth=1, linestyle="--", alpha=0.7,
         )
-    ax.set_title("Portfolio Equity (OOS)")
-    ax.set_ylabel("Equity (rebased to 1.0)")
+    ax.set_title(label="Portfolio Equity (OOS)")
+    ax.set_ylabel(ylabel="Equity (rebased to 1.0)")
     ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.25)
+    ax.grid(visible=True, alpha=0.25)
 
+    # --- PANEL 2: DRAWDOWN ---
     ax = axes[1]
-    dd_port = portfolio_equity / portfolio_equity.cummax() - 1
-    dd_port.plot(ax=ax, label="Portfolio", color="steelblue", linewidth=1.5)
+    dd_port = portfolio_equity / portfolio_equity.cummax() - 1.0
+    dd_port.plot(ax=ax, label="Theory DD", color="steelblue", linewidth=1.5)
+    
+    # Dodanie Drawdownu dla Execution PPE
+    if exec_equity is not None and not exec_equity.empty:
+        dd_exec = exec_equity / exec_equity.cummax() - 1.0
+        dd_exec.plot(ax=ax, label="Execution DD", color="purple", linewidth=1.2, alpha=0.8)
+
     if bh_eq_equity is not None:
         bh_eq = (
             bh_eq_equity.loc[bh_eq_equity.index >= oos_start]
             / bh_eq_equity.loc[bh_eq_equity.index >= oos_start].iloc[0]
         )
-        dd_eq = bh_eq / bh_eq.cummax() - 1
+        dd_eq = bh_eq / bh_eq.cummax() - 1.0
         dd_eq.plot(
             ax=ax, label="B&H WIG", color="darkorange", linewidth=1, linestyle="--", alpha=0.7,
         )
-    ax.set_title("Drawdown")
-    ax.set_ylabel("Drawdown")
+    ax.set_title(label="Drawdown")
+    ax.set_ylabel(ylabel="Drawdown")
     ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.25)
+    ax.grid(visible=True, alpha=0.25)
 
+    # --- PANEL 3: SIGNALS ---
     ax = axes[2]
     if sig_eq_oos is not None and not sig_eq_oos.empty:
         sig_eq_oos.plot(ax=ax, label="Equity signal", color="darkorange", linewidth=0.9, alpha=0.8)
@@ -631,22 +650,22 @@ def _build_chart(
     if reallocation_log:
         rdates = [pd.Timestamp(r["Date"]) for r in reallocation_log]
         ax.vlines(
-            rdates, ymin=0, ymax=1.05, color="grey", linewidth=0.5, alpha=0.5, label="Reallocation",
+            x=rdates, ymin=0, ymax=1.05, color="grey", linewidth=0.5, alpha=0.5, label="Reallocation",
         )
-    ax.set_title("Asset Signals and Reallocation Events")
-    ax.set_ylabel("Signal (0=off, 1=on)")
-    ax.set_ylim(-0.05, 1.15)
+    ax.set_title(label="Asset Signals and Reallocation Events")
+    ax.set_ylabel(ylabel="Signal (0=off, 1=on)")
+    ax.set_ylim(bottom=-0.05, top=1.15)
     ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.25)
+    ax.grid(visible=True, alpha=0.25)
 
     plt.tight_layout()
     buf = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    plt.savefig(buf.name, dpi=72, bbox_inches="tight")
-    plt.close(fig)
+    plt.savefig(fname=buf.name, dpi=100, bbox_inches="tight")
+    plt.close(fig=fig)
     buf.close()
-    atomic_write_bytes(chart_path, open(buf.name, "rb").read())
-    os.unlink(buf.name)
-    logging.info("multiasset_daily_output: chart saved to %s", chart_path)
+    atomic_write_bytes(path=chart_path, data=open(buf.name, "rb").read())
+    os.unlink(path=buf.name)
+    logging.info(msg=f"multiasset_daily_output: chart saved to {chart_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -673,9 +692,9 @@ def build_daily_outputs(
     TBSP: pd.DataFrame,
     sig_eq_oos: pd.Series,
     sig_bd_oos: pd.Series,
-    exec_equity, 
-    exec_metrics,
-    exec_decomp: dict | None = None,
+    exec_equity:        pd.Series | None = None,  # <--- DODANE
+    exec_metrics:       dict | None = None,       # <--- DODANE
+    exec_decomp:        dict | None = None,       # <--- DODANE
     output_dir: str = "outputs",
     asset_name: str = "PENSION",
     run_date: dt.date | None = None,
@@ -760,6 +779,7 @@ def build_daily_outputs(
         chart_path=chart_path,
         action=action,
         run_date=run_date,
+        exec_equity=exec_equity,
     )
     # --- NOWA LOGIKA: WYSYŁANIE NA GOOGLE DRIVE ---
     if gdrive_folder_id and gdrive_credentials:
