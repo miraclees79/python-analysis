@@ -381,7 +381,10 @@ def _build_snapshot(
         common_ret_idx = ret_theory.index.intersection(other=ret_exec.index)
         
         correlation = ret_theory.loc[common_ret_idx].corr(other=ret_exec.loc[common_ret_idx])
-        cagr_drag = (exec_metrics.get("CAGR", 0.0) - portfolio_metrics.get("CAGR", 0.0)) * 100.0
+        
+        # Pobieramy wynik teorii dokładnie z tego samego okresu co egzekucja
+        th_port_cagr = exec_decomp.get("theory_port_cagr", portfolio_metrics.get("CAGR", 0.0) * 100.0)
+        cagr_drag = (exec_metrics.get("CAGR", 0.0) * 100.0) - th_port_cagr
         
         snap["execution_check"] = {
             "cagr": round(number=exec_metrics.get("CAGR", 0.0) * 100.0, ndigits=2),
@@ -495,12 +498,14 @@ def _build_status_text(snap: dict, action: str) -> str:
     ec = snap.get("execution_check")
     if ec:
         drag_sign = "+" if ec["cagr_drag_pp"] > 0 else ""
+        th_cagr = ec["decomp"].get("theory_port_cagr", 0.0)
         lines += [
             "  EXECUTION REALITY CHECK (PPE FUNDS)",
             f"  Simulated to:   {ec['latest_date']}",
-            f"  Exec CAGR:      {ec['cagr']:+.2f}%  (Drag: {drag_sign}{ec['cagr_drag_pp']} pp vs Theory)",
+            f"  Exec CAGR:      {ec['cagr']:+.2f}%  (vs Matched Theory {th_cagr:+.2f}% -> Drag: {drag_sign}{ec['cagr_drag_pp']} pp)",
             f"  Exec MaxDD:     {ec['maxdd']:+.2f}%",
             f"  Correlation:    {ec['correlation']:.2f}  (1.0 = perfect match)",
+            sep2,
         ]
         
         d = ec.get("decomp")
