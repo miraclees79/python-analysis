@@ -234,6 +234,7 @@ def _build_snapshot(
     bh_bd_metrics: dict,
     exec_equity, 
     exec_metrics,
+    exec_decomp,
     WIG: pd.DataFrame,
     TBSP: pd.DataFrame,
     run_date: dt.date,
@@ -375,12 +376,11 @@ def _build_snapshot(
         }
     # Execution reality check
     if exec_equity is not None and exec_metrics:
-        # Oblicz korelację dziennych stóp zwrotu
         ret_theory = portfolio_equity.pct_change().dropna()
         ret_exec = exec_equity.pct_change().dropna()
-        common_ret_idx = ret_theory.index.intersection(ret_exec.index)
+        common_ret_idx = ret_theory.index.intersection(other=ret_exec.index)
         
-        correlation = ret_theory.loc[common_ret_idx].corr(ret_exec.loc[common_ret_idx])
+        correlation = ret_theory.loc[common_ret_idx].corr(other=ret_exec.loc[common_ret_idx])
         cagr_drag = (exec_metrics.get("CAGR", 0.0) - portfolio_metrics.get("CAGR", 0.0)) * 100.0
         
         snap["execution_check"] = {
@@ -389,6 +389,7 @@ def _build_snapshot(
             "cagr_drag_pp": round(number=cagr_drag, ndigits=2),
             "correlation": round(number=correlation, ndigits=3),
             "latest_date": str(exec_equity.index.max().date()),
+            "decomp": {k: round(number=v, ndigits=2) for k, v in exec_decomp.items()} if exec_decomp else {}
         }
     else:
         snap["execution_check"] = None
@@ -500,14 +501,17 @@ def _build_status_text(snap: dict, action: str) -> str:
             f"  Exec CAGR:      {ec['cagr']:+.2f}%  (Drag: {drag_sign}{ec['cagr_drag_pp']} pp vs Theory)",
             f"  Exec MaxDD:     {ec['maxdd']:+.2f}%",
             f"  Correlation:    {ec['correlation']:.2f}  (1.0 = perfect match)",
-            sep2,
         ]
-    lines += [
-        "  PORTFOLIO OOS METRICS",
-        f"  CAGR: {pm.get('CAGR') * 100:+.2f}% | Sharpe: {pm.get('Sharpe'):.2f} | MaxDD: {pm.get('MaxDD') * 100:+.2f}%",
-        sep2,
-    ]
-
+        
+        d = ec.get("decomp")
+        if d:
+            lines += [
+                "  -- Drag Decomposition --",
+                f"  Equity (WIG):  Fund {d.get('eq_fund_cagr', 0):+.2f}% vs Idx {d.get('eq_idx_cagr', 0):+.2f}% (Port impact: {d.get('port_impact_eq', 0):+.2f} pp)",
+                f"  Bond (TBSP):   Fund {d.get('bd_fund_cagr', 0):+.2f}% vs Idx {d.get('bd_idx_cagr', 0):+.2f}% (Port impact: {d.get('port_impact_bd', 0):+.2f} pp)",
+                f"  MMF:           Fund {d.get('mmf_fund_cagr', 0):+.2f}% vs Idx {d.get('mmf_idx_cagr', 0):+.2f}% (Port impact: {d.get('port_impact_mmf', 0):+.2f} pp)",
+            ]
+        lines.append(sep2)
     lines.append(sep)
     return "\n".join(lines)
 
@@ -661,6 +665,7 @@ def build_daily_outputs(
     sig_bd_oos: pd.Series,
     exec_equity, 
     exec_metrics,
+    exec_decomp: dict | None = None
     output_dir: str = "outputs",
     asset_name: str = "PENSION",
     run_date: dt.date | None = None,
@@ -707,6 +712,7 @@ def build_daily_outputs(
         bh_bd_metrics=bh_bd_metrics,
         exec_equity=exec_equity, 
         exec_metrics=exec_metrics,
+        exec_decomp=exec_decomp,
         WIG=WIG,
         TBSP=TBSP,
         run_date=run_date,
