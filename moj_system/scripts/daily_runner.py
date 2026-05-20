@@ -285,7 +285,7 @@ def run_pension_portfolio(
     exec_metrics = {}
     
     if ppe_df is not None and not ppe_df.empty:
-        exec_equity, exec_metrics, _ = simulate_ppe_execution(
+        exec_equity, exec_metrics = simulate_ppe_execution(
             target_weights=w_s,
             ppe_df=ppe_df,
         )
