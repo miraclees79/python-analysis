@@ -382,14 +382,17 @@ def _build_snapshot(
         
         correlation = ret_theory.loc[common_ret_idx].corr(other=ret_exec.loc[common_ret_idx])
         
-        # Pobieramy wynik teorii dokładnie z tego samego okresu co egzekucja
         th_port_cagr = exec_decomp.get("theory_port_cagr", portfolio_metrics.get("CAGR", 0.0) * 100.0)
         cagr_drag = (exec_metrics.get("CAGR", 0.0) * 100.0) - th_port_cagr
+
+        th_port_maxdd = exec_decomp.get("theory_port_maxdd", portfolio_metrics.get("MaxDD", 0.0) * 100.0)
+        maxdd_drag = (exec_metrics.get("MaxDD", 0.0) * 100.0) - th_port_maxdd
         
         snap["execution_check"] = {
             "cagr": round(number=exec_metrics.get("CAGR", 0.0) * 100.0, ndigits=2),
             "maxdd": round(number=exec_metrics.get("MaxDD", 0.0) * 100.0, ndigits=2),
             "cagr_drag_pp": round(number=cagr_drag, ndigits=2),
+            "maxdd_drag_pp": round(number=maxdd_drag, ndigits=2),
             "correlation": round(number=correlation, ndigits=3),
             "latest_date": str(exec_equity.index.max().date()),
             "decomp": {k: round(number=v, ndigits=2) for k, v in exec_decomp.items()} if exec_decomp else {}
@@ -498,12 +501,15 @@ def _build_status_text(snap: dict, action: str) -> str:
     ec = snap.get("execution_check")
     if ec:
         drag_sign = "+" if ec["cagr_drag_pp"] > 0 else ""
+        drag_sign_mdd = "+" if ec.get("maxdd_drag_pp", 0.0) > 0 else ""
         th_cagr = ec["decomp"].get("theory_port_cagr", 0.0)
+        th_maxdd = ec["decomp"].get("theory_port_maxdd", 0.0)
+        
         lines += [
             "  EXECUTION REALITY CHECK (PPE FUNDS)",
             f"  Simulated to:   {ec['latest_date']}",
             f"  Exec CAGR:      {ec['cagr']:+.2f}%  (vs Matched Theory {th_cagr:+.2f}% -> Drag: {drag_sign}{ec['cagr_drag_pp']} pp)",
-            f"  Exec MaxDD:     {ec['maxdd']:+.2f}%",
+            f"  Exec MaxDD:     {ec['maxdd']:+.2f}%  (vs Matched Theory {th_maxdd:+.2f}% -> Drag: {drag_sign_mdd}{ec.get('maxdd_drag_pp', 0.0)} pp)",
             f"  Correlation:    {ec['correlation']:.2f}  (1.0 = perfect match)",
             sep2,
         ]

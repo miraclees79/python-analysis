@@ -111,8 +111,15 @@ def simulate_ppe_execution(
         "mmf_idx_cagr":  _calc_cagr(r=th_mmf) * 100.0,
     }
 
+    # Obliczamy metryki opóźnionego portfela TEORETYCZNEGO (WIG/TBSP)
     port_th_rets = (w_eval["equity"] * th_eq) + (w_eval["bond"] * th_bd) + (w_eval["mmf"] * th_mmf)
+    th_equity = (1.0 + port_th_rets).cumprod()
+    th_equity = th_equity / th_equity.iloc[0]
+    th_metrics = compute_metrics(equity=th_equity, risk_free_rate=0.0)
+    
     cagr_th_port = _calc_cagr(r=port_th_rets) * 100.0
+    decomp["theory_port_cagr"] = cagr_th_port
+    decomp["theory_port_maxdd"] = float(th_metrics.get("MaxDD", 0.0)) * 100.0
 
     port_sub_eq = (w_eval["equity"] * r_eval["ret_equity"]) + (w_eval["bond"] * th_bd) + (w_eval["mmf"] * th_mmf)
     decomp["port_impact_eq"] = (_calc_cagr(r=port_sub_eq) * 100.0) - cagr_th_port
@@ -122,8 +129,6 @@ def simulate_ppe_execution(
 
     port_sub_mmf = (w_eval["equity"] * th_eq) + (w_eval["bond"] * th_bd) + (w_eval["mmf"] * r_eval["ret_mmf"])
     decomp["port_impact_mmf"] = (_calc_cagr(r=port_sub_mmf) * 100.0) - cagr_th_port
-
-    decomp["theory_port_cagr"] = cagr_th_port
 
     logging.info(
         msg=f"PPE Execution Simulation completed. Execution CAGR: {exec_metrics_float['CAGR']*100.0:.2f}% (Delay: {execution_delay} days)"
