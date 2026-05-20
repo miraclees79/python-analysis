@@ -665,7 +665,7 @@ def build_daily_outputs(
     sig_bd_oos: pd.Series,
     exec_equity, 
     exec_metrics,
-    exec_decomp: dict | None = None
+    exec_decomp: dict | None = None,
     output_dir: str = "outputs",
     asset_name: str = "PENSION",
     run_date: dt.date | None = None,
