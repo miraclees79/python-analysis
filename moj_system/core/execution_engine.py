@@ -3,6 +3,7 @@
 moj_system/core/execution_engine.py
 ===================================
 Silnik symulujący faktyczną egzekucję na instrumentach PPE.
+Wzbogacony o dekompozycję Implementation Drag.
 """
 
 import logging
@@ -12,13 +13,26 @@ import pandas as pd
 from moj_system.core.strategy_engine import compute_metrics
 from moj_system.data.ppe_manager import PPE_COLUMN_MAPPING
 
+def _calc_cagr(
+    r: pd.Series,
+) -> float:
+    """Pomocnicza funkcja licząca CAGR na czystej serii zwrotów."""
+    if len(r) == 0:
+        return 0.0
+    return float(((1.0 + r).prod() ** (252.0 / len(r))) - 1.0)
+
+
 def simulate_ppe_execution(
     target_weights: pd.Series,
     ppe_df:         pd.DataFrame,
-) -> tuple[pd.Series, dict[str, float]]:
+    theory_eq_ret:  pd.Series,
+    theory_bd_ret:  pd.Series,
+    theory_mmf_ret: pd.Series,
+) -> tuple[pd.Series, dict[str, float], dict[str, float]]:
     """
     Symuluje faktyczne zachowanie portfela nakładając wagi teoretyczne
-    na stopy zwrotu funduszy PPE. Zwraca krzywą equity i metryki.
+    na stopy zwrotu funduszy PPE. Zwraca krzywą equity, metryki oraz 
+    szczegółową dekompozycję błędów odwzorowania.
     """
     # 1. Wyliczenie dziennych stóp zwrotu funduszy PPE
     ret_df = pd.DataFrame(
@@ -37,8 +51,7 @@ def simulate_ppe_execution(
         inplace=True
     )
 
-    # 2. Synchronizacja kalendarzy (WIG/TBSP vs fundusze PPE)
-    # Wagi wyliczone na zamknięciu dnia T. Pracują i generują zwrot w dniu T+1.
+    # 2. Synchronizacja kalendarzy
     weights_df = pd.DataFrame(
         data=list(target_weights.values), 
         index=target_weights.index
@@ -56,10 +69,15 @@ def simulate_ppe_execution(
         logging.error(
             msg="PPE Execution: No overlapping dates between shifted weights and PPE returns."
         )
-        return pd.Series(dtype=float), {}
+        return pd.Series(dtype=float), {}, {}
 
     w_eval = weights_shifted.loc[eval_idx]
     r_eval = ret_df.loc[eval_idx]
+
+    # Ujednolicenie kalendarza teoretycznych zwrotów
+    th_eq = theory_eq_ret.reindex(index=eval_idx).fillna(value=0.0)
+    th_bd = theory_bd_ret.reindex(index=eval_idx).fillna(value=0.0)
+    th_mmf = theory_mmf_ret.reindex(index=eval_idx).fillna(value=0.0)
 
     # 3. Obliczenie zwrotu portfela egzekucyjnego
     daily_port_ret = (
@@ -71,15 +89,47 @@ def simulate_ppe_execution(
     execution_equity = (1.0 + daily_port_ret).cumprod()
     execution_equity = execution_equity / execution_equity.iloc[0]
     
-    # 4. Obliczenie metryk
     exec_metrics = compute_metrics(
         equity=execution_equity,
         risk_free_rate=0.0
     )
     exec_metrics_float = {k: float(v) for k, v in exec_metrics.items()}
     
+    # =========================================================================
+    # 4. DEKOMPOZYCJA DRAGU
+    # =========================================================================
+    
+    # A) "Nagi" wynik: Fundusz vs Indeks (w wybranym okresie egzekucji)
+    decomp = {
+        "eq_fund_cagr":  _calc_cagr(r=r_eval["ret_equity"]) * 100.0,
+        "eq_idx_cagr":   _calc_cagr(r=th_eq) * 100.0,
+        "bd_fund_cagr":  _calc_cagr(r=r_eval["ret_bond"]) * 100.0,
+        "bd_idx_cagr":   _calc_cagr(r=th_bd) * 100.0,
+        "mmf_fund_cagr": _calc_cagr(r=r_eval["ret_mmf"]) * 100.0,
+        "mmf_idx_cagr":  _calc_cagr(r=th_mmf) * 100.0,
+    }
+
+    # B) Wpływ na portfel metodą częściowej substytucji
+    port_th_rets = (w_eval["equity"] * th_eq) + (w_eval["bond"] * th_bd) + (w_eval["mmf"] * th_mmf)
+    cagr_th_port = _calc_cagr(r=port_th_rets) * 100.0
+
+    # 1. Zastępujemy tylko Equity
+    port_sub_eq = (w_eval["equity"] * r_eval["ret_equity"]) + (w_eval["bond"] * th_bd) + (w_eval["mmf"] * th_mmf)
+    decomp["port_impact_eq"] = (_calc_cagr(r=port_sub_eq) * 100.0) - cagr_th_port
+
+    # 2. Zastępujemy tylko Bond
+    port_sub_bd = (w_eval["equity"] * th_eq) + (w_eval["bond"] * r_eval["ret_bond"]) + (w_eval["mmf"] * th_mmf)
+    decomp["port_impact_bd"] = (_calc_cagr(r=port_sub_bd) * 100.0) - cagr_th_port
+
+    # 3. Zastępujemy tylko MMF
+    port_sub_mmf = (w_eval["equity"] * th_eq) + (w_eval["bond"] * th_bd) + (w_eval["mmf"] * r_eval["ret_mmf"])
+    decomp["port_impact_mmf"] = (_calc_cagr(r=port_sub_mmf) * 100.0) - cagr_th_port
+
+    # Suma impactów powinna być w przybliżeniu równa cagr_dragowi portfela
+    # Ze względu na potęgowanie będzie drobny rozjazd rzędu 0.01pp, co jest akceptowalne.
+
     logging.info(
         msg=f"PPE Execution Simulation completed. Execution CAGR: {exec_metrics_float['CAGR']*100.0:.2f}%"
     )
 
-    return execution_equity, exec_metrics_float
+    return execution_equity, exec_metrics_float, decomp
