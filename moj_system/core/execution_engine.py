@@ -23,16 +23,16 @@ def _calc_cagr(
 
 
 def simulate_ppe_execution(
-    target_weights: pd.Series,
-    ppe_df:         pd.DataFrame,
-    theory_eq_ret:  pd.Series,
-    theory_bd_ret:  pd.Series,
-    theory_mmf_ret: pd.Series,
+    target_weights:  pd.Series,
+    ppe_df:          pd.DataFrame,
+    theory_eq_ret:   pd.Series,
+    theory_bd_ret:   pd.Series,
+    theory_mmf_ret:  pd.Series,
+    execution_delay: int = 5,  # <--- NOWY PARAMETR (domyślnie 5 sesji opóźnienia)
 ) -> tuple[pd.Series, dict[str, float], dict[str, float]]:
     """
     Symuluje faktyczne zachowanie portfela nakładając wagi teoretyczne
-    na stopy zwrotu funduszy PPE. Zwraca krzywą equity, metryki oraz 
-    szczegółową dekompozycję błędów odwzorowania.
+    na stopy zwrotu funduszy PPE z uwzględnieniem opóźnienia w egzekucji zlecenia.
     """
     # 1. Wyliczenie dziennych stóp zwrotu funduszy PPE
     ret_df = pd.DataFrame(
@@ -51,15 +51,18 @@ def simulate_ppe_execution(
         inplace=True
     )
 
-    # 2. Synchronizacja kalendarzy
+    # 2. Synchronizacja kalendarzy i APLIKACJA OPÓŹNIENIA
     weights_df = pd.DataFrame(
         data=list(target_weights.values), 
         index=target_weights.index
     )
     
+    # === KLUCZOWA ZMIANA ===
+    # Wagi wyliczone na koniec dnia T aplikujemy na stopy zwrotu z opóźnieniem
     weights_shifted = weights_df.shift(
-        periods=1
+        periods=execution_delay
     ).dropna()
+    # =======================
     
     eval_idx = weights_shifted.index.intersection(
         other=ret_df.index
@@ -75,6 +78,9 @@ def simulate_ppe_execution(
     r_eval = ret_df.loc[eval_idx]
 
     # Ujednolicenie kalendarza teoretycznych zwrotów
+    # UWAGA: Teorię też opóźniamy, aby porównywać "jabłka do jabłek"!
+    # Chcemy zobaczyć, jak wygląda fundusz PPE opóźniony o 5 dni, 
+    # w porównaniu do indeksu giełdowego, gdyby on też był opóźniony o 5 dni.
     th_eq = theory_eq_ret.reindex(index=eval_idx).fillna(value=0.0)
     th_bd = theory_bd_ret.reindex(index=eval_idx).fillna(value=0.0)
     th_mmf = theory_mmf_ret.reindex(index=eval_idx).fillna(value=0.0)
@@ -95,11 +101,7 @@ def simulate_ppe_execution(
     )
     exec_metrics_float = {k: float(v) for k, v in exec_metrics.items()}
     
-    # =========================================================================
     # 4. DEKOMPOZYCJA DRAGU
-    # =========================================================================
-    
-    # A) "Nagi" wynik: Fundusz vs Indeks (w wybranym okresie egzekucji)
     decomp = {
         "eq_fund_cagr":  _calc_cagr(r=r_eval["ret_equity"]) * 100.0,
         "eq_idx_cagr":   _calc_cagr(r=th_eq) * 100.0,
@@ -109,28 +111,22 @@ def simulate_ppe_execution(
         "mmf_idx_cagr":  _calc_cagr(r=th_mmf) * 100.0,
     }
 
-    # B) Wpływ na portfel metodą częściowej substytucji
     port_th_rets = (w_eval["equity"] * th_eq) + (w_eval["bond"] * th_bd) + (w_eval["mmf"] * th_mmf)
     cagr_th_port = _calc_cagr(r=port_th_rets) * 100.0
 
-    # 1. Zastępujemy tylko Equity
     port_sub_eq = (w_eval["equity"] * r_eval["ret_equity"]) + (w_eval["bond"] * th_bd) + (w_eval["mmf"] * th_mmf)
     decomp["port_impact_eq"] = (_calc_cagr(r=port_sub_eq) * 100.0) - cagr_th_port
 
-    # 2. Zastępujemy tylko Bond
     port_sub_bd = (w_eval["equity"] * th_eq) + (w_eval["bond"] * r_eval["ret_bond"]) + (w_eval["mmf"] * th_mmf)
     decomp["port_impact_bd"] = (_calc_cagr(r=port_sub_bd) * 100.0) - cagr_th_port
 
-    # 3. Zastępujemy tylko MMF
     port_sub_mmf = (w_eval["equity"] * th_eq) + (w_eval["bond"] * th_bd) + (w_eval["mmf"] * r_eval["ret_mmf"])
-    # ... (po wyliczeniu port_impact_mmf) ...
     decomp["port_impact_mmf"] = (_calc_cagr(r=port_sub_mmf) * 100.0) - cagr_th_port
 
-    # --- DODAJ TĘ LINIĘ ---
     decomp["theory_port_cagr"] = cagr_th_port
 
     logging.info(
-        msg=f"PPE Execution Simulation completed. Execution CAGR: {exec_metrics_float['CAGR']*100.0:.2f}%"
+        msg=f"PPE Execution Simulation completed. Execution CAGR: {exec_metrics_float['CAGR']*100.0:.2f}% (Delay: {execution_delay} days)"
     )
 
     return execution_equity, exec_metrics_float, decomp
