@@ -288,9 +288,10 @@ def run_pension_portfolio(
         exec_equity, exec_metrics, exec_decomp = simulate_ppe_execution(
             target_weights=w_s,
             ppe_df=ppe_df,
-            theory_eq_ret=derived["ret_eq"],    # <-- NOWE
-            theory_bd_ret=derived["ret_bd"],    # <-- NOWE
-            theory_mmf_ret=derived["ret_mmf"],  # <-- NOWE
+            theory_eq_ret=derived["ret_eq"],
+            theory_bd_ret=derived["ret_bd"],
+            theory_mmf_ret=derived["ret_mmf"],
+            execution_delay=5,  # <--- JAWNE USTAWENIE OPÓŹNIENIA
         )
     else:
         exec_equity = None
