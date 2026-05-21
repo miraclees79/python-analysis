@@ -606,7 +606,7 @@ def optimise_asset_weights(
     keys_with_signal = [
         k for k in asset_keys if signals_dict.get(k) is not None and len(signals_dict[k]) > 0
     ]
-    keys_no_signal = [k for k in asset_keys if k not in keys_with_signal]
+    
 
     if keys_with_signal:
         common_idx = mmf_returns.index
@@ -666,7 +666,10 @@ def optimise_asset_weights(
 
     # Fixed return: 0-on -> MMF; 1-on -> that asset; 2+-on -> handled per combo
     fixed_r = np.where(n_on_arr == 0, mmf_arr, 0.0)
-    for i, key in enumerate(asset_keys):
+    
+    # previous for i, key in enumerate(asset_keys):
+    
+    for i in range(len(asset_keys)):
         only_this = (sig_mat[:, i] == 1) & (n_on_arr == 1)
         fixed_r = np.where(only_this, ret_mat[:, i], fixed_r)
 
@@ -708,7 +711,7 @@ def optimise_asset_weights(
 
         if np.isfinite(obj_val) and obj_val > best_obj:
             best_obj = obj_val
-            best_weights = dict(zip(asset_keys, combo))
+            best_weights = dict(zip(asset_keys, combo, strict=True))
 
     logging.info(
         "optimise_asset_weights: best %s=%.4f  weights=%s",
@@ -725,14 +728,14 @@ def optimise_asset_weights(
 
 
 def reallocation_gate_n(
-    current_weights: dict,
-    target_weights: dict,
-    last_change_date,
-    current_date,
-    cooldown_days: int = 10,
-    min_delta: float = 0.10,
-    annual_cap: int = 999,
-    annual_counter: dict = None,
+    current_weights:  dict,
+    target_weights:   dict,
+    last_change_date: pd.Timestamp | None,
+    current_date:     pd.Timestamp,
+    cooldown_days:    int   = 10,
+    min_delta:        float = 0.10,
+    annual_cap:       int   = 999,
+    annual_counter:   dict | None = None,
 ) -> tuple[dict, bool]:
     """
     Decide whether to apply a target N-asset reallocation or hold.
@@ -916,8 +919,8 @@ def allocation_walk_forward_n(
     annual_counter = {}
 
     # Determine OOS period from reference walk-forward results
-    oos_start = wf_results_ref["TestStart"].min()
-    oos_end = wf_results_ref["TestEnd"].max()
+    # oos_start = wf_results_ref["TestStart"].min()
+    # oos_end = wf_results_ref["TestEnd"].max()
 
     # Initialise gate state
     last_change_date = None
@@ -926,7 +929,7 @@ def allocation_walk_forward_n(
 
     prev_best_weights = {k: 0.0 for k in asset_keys}  # all-zero = no carry-forward
 
-    for _, row in wf_results_ref.iterrows():
+    for row_index, row in wf_results_ref.iterrows():
         train_end = pd.Timestamp(row["TestStart"])
         test_start = pd.Timestamp(row["TestStart"])
         test_end = pd.Timestamp(row["TestEnd"])
