@@ -1751,7 +1751,7 @@ def walk_forward(
             vol_window=vol_window,
             initial_state=carry_state,
             warmup_df=warmup,
-            entry_gate=gate_oos if "gate_oos" in dir() else None,
+            entry_gate=gate_oos,
             fund_signal=oos_fund_signal,
             fast_mode=fast_mode,
             filter_mode=best_params["filter_mode"],
