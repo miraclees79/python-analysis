@@ -4,8 +4,8 @@ on:
 
   workflow_dispatch:  # Pozwala odpalić ręcznie
   schedule:
-    # Uruchamia się codziennie o 00:00 UTC
-    - cron: '0 0 * * *'
+    # Uruchamia się codziennie o 01:00 UTC
+    - cron: '0 1 * * *'
 
 permissions:
   contents: read

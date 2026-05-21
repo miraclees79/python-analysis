@@ -2,8 +2,8 @@ name: Daily OCR Data Download
 
 on:
   schedule:
-    # 2:00 UTC każdego dnia
-    - cron: '0 2 * * *'
+    # 0:00 UTC każdego dnia
+    - cron: '0 0 * * *'
   workflow_dispatch:  # Pozwala odpalić ręcznie w razie potrzeby
 
 permissions:

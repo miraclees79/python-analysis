@@ -47,9 +47,9 @@ The following consolidation work was completed. All changes preserve backward-co
 
 | Asset | Config | Stop Mode | Robustness Status |
 |---|---|---|---|
-| WIG20TR | 6+2 | fixed | Pending verification |
-| GLOBAL_B | 7+2 | atr | Pending verification |
-| PENSION (WIG+TBSP+MMF) | — | — | Production |
+| WIG20TR | 6+2 | fixed | Monitoring only |
+| GLOBAL_B | 7+2 | atr | Monitoring only |
+| PENSION (WIG+TBSP+MMF) | 7+1 | atr | Production |
 
 **Deployment gate**: configs must pass both MC parameter perturbation and block bootstrap before deployment consideration. MC alone is insufficient.
 
@@ -66,10 +66,11 @@ Walk-forward OOS → Monte Carlo parameter perturbation → block bootstrap → 
 
 | Workflow | Schedule | Trigger |
 |---|---|---|
-| `daily_strategy.yml` | 00:00 UTC daily | All assets in matrix |
-| `ocr_download.yml` | 23:00 UTC daily | PPE PDF OCR |
-| `fund_reviewer.yml` | Monday 04:00 UTC | TFI fund ranking |
-| `refresh_knf.yml` | Monday 01:00 UTC | KNF subfund matching |
+| `daily_strategy.yml` | 01:00 UTC daily | All assets in matrix |
+| `ocr_download.yml` | 00:00 UTC daily | PPE PDF OCR |
+| `fund_data_refresher.yml` | 23:00 UTC daily | TFI history update |
+| `fund_reviewer.yml` | Friday 23:00 UTC | TFI fund ranking |
+| `refresh_knf.yml` | Friday 01:00 UTC | KNF subfund matching |
 | `research_sweep.yml` | Manual only | Parameter sweeps |
 | `keepalive` | 1st of month | Repository activity |
 
@@ -84,7 +85,7 @@ Walk-forward OOS → Monte Carlo parameter perturbation → block bootstrap → 
 | `ZIP_URL` | PPE data source URL |
 | `ZIP_PASSWORD` | PPE archive password |
 | `INT_FILE_NAME` | PDF filename inside PPE archive |
-| `FOLDER_NAME` | Drive folder for OCR output |
+
 
 ---
 
