@@ -14,7 +14,7 @@ Uses legacy simulation engine to ensure results consistency.
 """
 
 import logging
-
+import pandas as pd
 from moj_system.core.robustness_engine import (
     extract_best_params_from_wf_results,
     extract_windows_from_wf_results,
