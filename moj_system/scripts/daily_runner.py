@@ -19,6 +19,7 @@ matplotlib.use("Agg")
 # --- Path Setup ---
 # --- New, Clean Imports ---
 from moj_system.config import ASSET_REGISTRY, BASE_GRIDS, OUTPUT_DIR
+from moj_system.core.execution_engine import simulate_ppe_execution
 from moj_system.core.global_engine import (
     allocation_walk_forward_n,
     build_price_df_from_returns,
@@ -48,6 +49,7 @@ from moj_system.core.strategy_engine import (
 from moj_system.core.utils import build_mmf_extended
 from moj_system.data.builder import build_and_upload
 from moj_system.data.data_manager import load_local_csv
+from moj_system.data.ppe_manager import build_continuous_ppe_data
 from moj_system.data.updater import DataUpdater
 from moj_system.reporting.daily_output import build_daily_outputs
 from moj_system.reporting.global_equity_daily_output import (
@@ -56,8 +58,7 @@ from moj_system.reporting.global_equity_daily_output import (
 from moj_system.reporting.multiasset_daily_output import (
     build_daily_outputs as build_multiasset_outputs,
 )
-from moj_system.data.ppe_manager import build_continuous_ppe_data
-from moj_system.core.execution_engine import simulate_ppe_execution
+
 
 def setup_logging(
     output_prefix: str,
@@ -79,8 +80,8 @@ def setup_logging(
 
 
 def run_single_asset(
-    asset_name:    str, 
-    stop_mode_arg: str, 
+    asset_name:    str,
+    stop_mode_arg: str,
     creds_path:    str,
 ) -> None:
 
@@ -189,7 +190,7 @@ def run_single_asset(
 
 
 def run_pension_portfolio(
-    stop_mode_arg: str, 
+    stop_mode_arg: str,
     creds_path:    str,
 ) -> None:
 
@@ -280,10 +281,10 @@ def run_pension_portfolio(
         folder_id=folder_id,
         credentials_path=creds_path,
     )
-    
+
     exec_equity = None
     exec_metrics = {}
-    
+
     if ppe_df is not None and not ppe_df.empty:
         exec_equity, exec_metrics, exec_decomp = simulate_ppe_execution(
             target_weights=w_s,

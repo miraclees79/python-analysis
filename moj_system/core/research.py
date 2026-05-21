@@ -19,7 +19,7 @@ import pandas as pd
 
 
 def get_common_oos_start(
-    assets_data:    dict[str, pd.DataFrame], 
+    assets_data:    dict[str, pd.DataFrame],
     window_configs: list[tuple[int, int]],
 ) -> pd.Timestamp:
 
@@ -69,7 +69,7 @@ def get_common_oos_start(
 
 
 def rank_research_results(
-    results_df: pd.DataFrame, 
+    results_df: pd.DataFrame,
     objective:  str = "CalMAR",
 ) -> pd.DataFrame:
 
@@ -88,9 +88,9 @@ def rank_research_results(
 
 
 def prepare_regime_inputs(
-    df:         pd.DataFrame, 
-    wf_results: pd.DataFrame | None, 
-    wf_equity:  pd.Series, 
+    df:         pd.DataFrame,
+    wf_results: pd.DataFrame | None,
+    wf_equity:  pd.Series,
     bh_equity:  pd.Series,
 ) -> dict[str, pd.Series]:
 
@@ -143,9 +143,9 @@ def prepare_regime_inputs(
 
 
 def compute_adx(
-    high:   pd.Series, 
-    low:    pd.Series, 
-    close:  pd.Series, 
+    high:   pd.Series,
+    low:    pd.Series,
+    close:  pd.Series,
     period: int = 20,
 ) -> tuple[pd.Series, pd.Series, pd.Series]:
 
@@ -174,11 +174,11 @@ def compute_adx(
 
 
 def label_regime_adx(
-    close:        pd.Series, 
-    high:         pd.Series, 
-    low:          pd.Series, 
-    period:       int   = 20, 
-    trend_thresh: float = 25.0, 
+    close:        pd.Series,
+    high:         pd.Series,
+    low:          pd.Series,
+    period:       int   = 20,
+    trend_thresh: float = 25.0,
     chop_thresh:  float = 20.0,
 ) -> pd.Series:
 
@@ -194,8 +194,8 @@ def label_regime_adx(
 
 
 def label_regime_momentum(
-    close:  pd.Series, 
-    window: int   = 63, 
+    close:  pd.Series,
+    window: int   = 63,
     thresh: float = 0.03,
 ) -> pd.Series:
 
@@ -207,9 +207,9 @@ def label_regime_momentum(
 
 
 def label_regime_vol(
-    close:  pd.Series, 
-    window: int   = 21, 
-    hi_pct: float = 0.67, 
+    close:  pd.Series,
+    window: int   = 21,
+    hi_pct: float = 0.67,
     lo_pct: float = 0.33,
 ) -> pd.Series:
 
@@ -290,7 +290,7 @@ def regime_transition_matrix(
 
 
 def run_regime_decomposition(
-    inputs:         dict[str, pd.Series], 
+    inputs:         dict[str, pd.Series],
     generate_plots: bool = False,
 ) -> dict[str, dict[str, pd.DataFrame]]:
 
@@ -468,7 +468,7 @@ def get_current_adx_regime(
 
 
 def analyze_production_candidates(
-    results_df:        pd.DataFrame, 
+    results_df:        pd.DataFrame,
     require_bootstrap: bool = False,
 ) -> pd.DataFrame:
 

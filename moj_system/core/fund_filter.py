@@ -27,17 +27,17 @@ def prepare_fund_data(
     z pliku ZIP na GDrive dla funduszy podanych w fund_codes.
     """
     updater = DataUpdater(
-        credentials_path=credentials_path
+        credentials_path=credentials_path,
     )
 
     for code, fund_name in fund_codes.items():
         safe_label = f"fund_{code}"
         stooq_ticker = f"{code}.n"
-        
+
         logging.info(
-            msg=f"Preparing fund data for: {fund_name} ({stooq_ticker})"
+            msg=f"Preparing fund data for: {fund_name} ({stooq_ticker})",
         )
-        
+
         updater.update_ticker(
             label=safe_label,
             stooq_ticker=stooq_ticker,
@@ -47,8 +47,8 @@ def prepare_fund_data(
 
 
 def build_funds_df(
-    fund_codes:        dict[str, str], 
-    price_col:         str = "Zamkniecie", 
+    fund_codes:        dict[str, str],
+    price_col:         str = "Zamkniecie",
     min_history_years: int = 10,
 ) -> pd.DataFrame:
     """
@@ -60,13 +60,13 @@ def build_funds_df(
 
     for code, fund_name in fund_codes.items():
         label = f"fund_{code}"
-        
+
         df = load_local_csv(
             ticker=label,
             label=fund_name,
             mandatory=False,
         )
-        
+
         if df is None:
             excluded.append((fund_name, "load failed"))
             continue
@@ -77,31 +77,31 @@ def build_funds_df(
 
         series = df[price_col].copy()
         series.name = fund_name
-        
+
         years_available = (series.index.max() - series.index.min()).days / 365.25
         if years_available < min_history_years:
             excluded.append((fund_name, f"insufficient history ({years_available:.1f}y)"))
             continue
-            
+
         series_list.append(series)
 
     if len(series_list) < 2:
         return pd.DataFrame()
 
     funds_df = pd.concat(
-        objs=series_list, 
-        axis=1, 
+        objs=series_list,
+        axis=1,
         join="outer",
     ).sort_index().ffill()
-    
+
     min_funds_required = max(2, len(funds_df.columns) // 2)
     funds_df = funds_df.dropna(
-        thresh=min_funds_required
+        thresh=min_funds_required,
     )
 
     if funds_df.empty:
         logging.error(
-            msg="build_funds_df: panel is empty after cleaning."
+            msg="build_funds_df: panel is empty after cleaning.",
         )
         return funds_df
 
@@ -109,7 +109,7 @@ def build_funds_df(
     corr_matrix = funds_df.corr()
     high_corr_pairs =[]
     matrix_cols = corr_matrix.columns
-    
+
     for i in range(len(matrix_cols)):
         for j in range(i + 1, len(matrix_cols)):
             r_val = corr_matrix.iloc[i, j]
@@ -117,16 +117,16 @@ def build_funds_df(
                 high_corr_pairs.append((
                     matrix_cols[i],
                     matrix_cols[j],
-                    round(number=r_val, ndigits=4)
+                    round(number=r_val, ndigits=4),
                 ))
 
     if high_corr_pairs:
         logging.info(
-            msg="High correlation fund pairs (r > 0.98):"
+            msg="High correlation fund pairs (r > 0.98):",
         )
         for f1, f2, r_val in sorted(high_corr_pairs, key=lambda x: -x[2]):
             logging.info(
-                msg=f"  {f1} / {f2}  r={r_val:.4f}"
+                msg=f"  {f1} / {f2}  r={r_val:.4f}",
             )
 
     return funds_df
@@ -146,19 +146,19 @@ def compute_fund_breadth_signal(
     using comparative performance logic.
     """
     fund_rets = funds_df.pct_change()
-    
+
     roll_ret = (1.0 + fund_rets).rolling(
-        window=lookback_days
+        window=lookback_days,
     ).apply(
-        func=np.prod, 
-        raw=True
+        func=np.prod,
+        raw=True,
     ) - 1.0
-    
+
     signal = pd.Series(
-        data=0.0, 
-        index=funds_df.index
+        data=0.0,
+        index=funds_df.index,
     )
-    
+
     state = 0.0
     last_change_idx = funds_df.index[0]
 
@@ -175,9 +175,9 @@ def compute_fund_breadth_signal(
         ref_prices = funds_df.loc[:last_change_idx].iloc[-1]
         curr_prices = funds_df.loc[iter_date]
         since_rets = (curr_prices / ref_prices - 1.0).dropna()
-        
+
         common_funds = todays_roll.index.intersection(
-            other=since_rets.index
+            other=since_rets.index,
         )
 
         if len(common_funds) < n_top:
@@ -185,10 +185,10 @@ def compute_fund_breadth_signal(
             continue
 
         top_funds = todays_roll.loc[common_funds].nlargest(
-            n=n_top
+            n=n_top,
         )
         bottom_funds = todays_roll.loc[common_funds].nsmallest(
-            n=n_top
+            n=n_top,
         )
         top_since = since_rets.loc[top_funds.index]
         bottom_since = since_rets.loc[bottom_funds.index]
@@ -201,13 +201,13 @@ def compute_fund_breadth_signal(
             if bottom_funds.mean() <= exit_roll_thresh or bottom_since.mean() <= exit_since_thresh:
                 state = 0.0
                 last_change_idx = iter_date
-                
+
         signal.iloc[day_idx] = state
-        
+
     return signal.shift(
-        periods=1
+        periods=1,
     ).fillna(
-        value=0.0
+        value=0.0,
     )
 
 
@@ -223,9 +223,9 @@ def generate_fund_filter_signal(
     Zwraca gotową serię `pd.Series`, którą można podpiąć jako `fund_signal`
     w silniku strategii.
     """
-    
+
     logging.info(
-        msg="Initiating fund filter signal generation..."
+        msg="Initiating fund filter signal generation...",
     )
 
     # 1. Pobranie / weryfikacja dostępności danych z pliku ZIP
@@ -243,7 +243,7 @@ def generate_fund_filter_signal(
 
     if funds_df.empty:
         logging.error(
-            msg="Cannot generate fund filter signal: funds_df is empty."
+            msg="Cannot generate fund filter signal: funds_df is empty.",
         )
         return None
 
@@ -267,7 +267,7 @@ def generate_fund_filter_signal(
     )
 
     logging.info(
-        msg=f"Fund filter signal generated successfully. Signal 'ON' time: {(signal_series.mean() * 100.0):.1f}%"
+        msg=f"Fund filter signal generated successfully. Signal 'ON' time: {(signal_series.mean() * 100.0):.1f}%",
     )
 
     return signal_series

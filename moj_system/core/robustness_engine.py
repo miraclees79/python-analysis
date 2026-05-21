@@ -35,12 +35,12 @@ from moj_system.core.strategy_engine import compute_metrics, run_strategy_with_t
 
 # Hack for legacy code compatibility
 def compute_fund_breadth_signal(
-    *args:  object, 
+    *args:  object,
     **kwargs: object,
 ) -> pd.Series | None:
     return None
 
-    
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -71,7 +71,7 @@ MIN_VALUES = {
 
 
 def build_perturbation_grid(
-    base_params: dict, 
+    base_params: dict,
     pct:         float = 0.20,
 ) -> list[dict]:
 
@@ -149,7 +149,7 @@ def build_perturbation_grid(
 
 
 def build_all_perturbation_grids(
-    best_params: dict[int, dict], 
+    best_params: dict[int, dict],
     pct:         float = 0.20,
 ) -> dict[int, list[dict]]:
 
@@ -162,7 +162,7 @@ def build_all_perturbation_grids(
 
 
 def sample_universe(
-    window_variants: dict[int, list[dict]], 
+    window_variants: dict[int, list[dict]],
     rng:             random.Random,
 ) -> dict[int, dict]:
 
@@ -175,13 +175,13 @@ def sample_universe(
 
 
 def run_universe(
-    universe:      dict[int, dict], 
-    windows:       list[dict], 
-    df:            pd.DataFrame, 
-    cash_df:       pd.DataFrame, 
-    vol_window:    int, 
-    selected_mode: str, 
-    funds_df:      pd.DataFrame | None = None, 
+    universe:      dict[int, dict],
+    windows:       list[dict],
+    df:            pd.DataFrame,
+    cash_df:       pd.DataFrame,
+    vol_window:    int,
+    selected_mode: str,
+    funds_df:      pd.DataFrame | None = None,
     price_col:     str = "Zamkniecie",
 ) -> tuple[pd.Series | None, list[dict]]:
 
@@ -277,14 +277,14 @@ def run_universe(
 
 
 def _run_single_sample(
-    seed:            int, 
-    window_variants: dict[int, list[dict]], 
-    windows:         list[dict], 
-    df:              pd.DataFrame, 
-    cash_df:         pd.DataFrame, 
-    vol_window:      int, 
-    selected_mode:   str, 
-    funds_df:        pd.DataFrame | None, 
+    seed:            int,
+    window_variants: dict[int, list[dict]],
+    windows:         list[dict],
+    df:              pd.DataFrame,
+    cash_df:         pd.DataFrame,
+    vol_window:      int,
+    selected_mode:   str,
+    funds_df:        pd.DataFrame | None,
     price_col:       str,
 ) -> dict | None:
 
@@ -448,8 +448,8 @@ def run_monte_carlo_robustness(
 
 
 def analyze_robustness(
-    results_df:       pd.DataFrame, 
-    baseline_metrics: dict[str, float], 
+    results_df:       pd.DataFrame,
+    baseline_metrics: dict[str, float],
     thresholds:       dict | None = None,
 ) -> dict:
 
@@ -593,7 +593,7 @@ def analyze_robustness(
 
 
 def extract_windows_from_wf_results(
-    wf_results:  pd.DataFrame, 
+    wf_results:  pd.DataFrame,
     train_years: int = 8,
 ) -> list[dict]:
 
@@ -652,10 +652,10 @@ def extract_best_params_from_wf_results(
 
 
 def block_bootstrap_history(
-    df:         pd.DataFrame, 
-    price_col:  str, 
-    cash_col:   str, 
-    block_size: int = 250, 
+    df:         pd.DataFrame,
+    price_col:  str,
+    cash_col:   str,
+    block_size: int = 250,
     seed:       int | None = None,
 ) -> pd.DataFrame:
 
@@ -957,8 +957,8 @@ def run_block_bootstrap_robustness(
 
 
 def analyze_bootstrap(
-    results_df:       pd.DataFrame, 
-    baseline_metrics: dict[str, float], 
+    results_df:       pd.DataFrame,
+    baseline_metrics: dict[str, float],
     thresholds:       dict | None = None,
 ) -> dict:
 

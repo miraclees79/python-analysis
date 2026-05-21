@@ -110,17 +110,17 @@ def _compute_atr_val(df: pd.DataFrame, atr_window: int) -> float:
     """Calculates the current ATR volatility percentage (shifted by 1 for next day logic)."""
     if len(df) < atr_window + 1:
         return 0.0
-    
+
     df_copy = df.copy()
     has_hl = "Najwyzszy" in df_copy.columns and "Najnizszy" in df_copy.columns
-    
+
     if has_hl:
         prev_close = df_copy["Zamkniecie"].shift(periods=1)
         tr = np.maximum(df_copy["Najwyzszy"], prev_close) - np.minimum(df_copy["Najnizszy"], prev_close)
         atr_s = (tr / prev_close).rolling(window=atr_window).mean().shift(periods=1) * 100.0
     else:
         atr_s = (df_copy["Zamkniecie"].diff().abs() / df_copy["Zamkniecie"].shift(periods=1)).rolling(window=atr_window).mean().shift(periods=1) * 100.0
-    
+
     val = float(atr_s.iloc[-1])
     return val if np.isfinite(val) else 0.0
 
@@ -232,7 +232,7 @@ def _build_snapshot(
     reallocation_log: list,
     bh_eq_metrics: dict,
     bh_bd_metrics: dict,
-    exec_equity, 
+    exec_equity,
     exec_metrics,
     exec_decomp,
     WIG: pd.DataFrame,
@@ -282,7 +282,7 @@ def _build_snapshot(
         else:
             trail_stop = round(number=peak_px * (1.0 - par_eq["stop_param"]), ndigits=2)
             snap["atr_val_equity"] = None
-            
+
         abs_stop = round(number=entry_px * (1.0 - par_eq["stop_loss"]), ndigits=2)
         binding = max(trail_stop, abs_stop)
 
@@ -379,15 +379,15 @@ def _build_snapshot(
         ret_theory = portfolio_equity.pct_change().dropna()
         ret_exec = exec_equity.pct_change().dropna()
         common_ret_idx = ret_theory.index.intersection(other=ret_exec.index)
-        
+
         correlation = ret_theory.loc[common_ret_idx].corr(other=ret_exec.loc[common_ret_idx])
-        
+
         th_port_cagr = exec_decomp.get("theory_port_cagr", portfolio_metrics.get("CAGR", 0.0) * 100.0)
         cagr_drag = (exec_metrics.get("CAGR", 0.0) * 100.0) - th_port_cagr
 
         th_port_maxdd = exec_decomp.get("theory_port_maxdd", portfolio_metrics.get("MaxDD", 0.0) * 100.0)
         maxdd_drag = (exec_metrics.get("MaxDD", 0.0) * 100.0) - th_port_maxdd
-        
+
         snap["execution_check"] = {
             "cagr": round(number=exec_metrics.get("CAGR", 0.0) * 100.0, ndigits=2),
             "maxdd": round(number=exec_metrics.get("MaxDD", 0.0) * 100.0, ndigits=2),
@@ -395,7 +395,7 @@ def _build_snapshot(
             "maxdd_drag_pp": round(number=maxdd_drag, ndigits=2),
             "correlation": round(number=correlation, ndigits=3),
             "latest_date": str(exec_equity.index.max().date()),
-            "decomp": {k: round(number=v, ndigits=2) for k, v in exec_decomp.items()} if exec_decomp else {}
+            "decomp": {k: round(number=v, ndigits=2) for k, v in exec_decomp.items()} if exec_decomp else {},
         }
     else:
         snap["execution_check"] = None
@@ -419,7 +419,7 @@ def _build_status_text(snap: dict, action: str) -> str:
         f"  Equity signal:  {snap['signal_equity']}",
         f"  Bond signal:    {snap['signal_bond']}",
         f"  Rynek (ADX):      {snap.get('current_regime_adx', 'N/A').upper()}",
-        f"  Dane z dnia:    {snap.get('data_freshness', {})}", 
+        f"  Dane z dnia:    {snap.get('data_freshness', {})}",
         sep2,
         "  CURRENT ALLOCATION",
         f"  Equity (WIG):   {w['equity'] * 100:.0f}%"
@@ -504,7 +504,7 @@ def _build_status_text(snap: dict, action: str) -> str:
         drag_sign_mdd = "+" if ec.get("maxdd_drag_pp", 0.0) > 0 else ""
         th_cagr = ec["decomp"].get("theory_port_cagr", 0.0)
         th_maxdd = ec["decomp"].get("theory_port_maxdd", 0.0)
-        
+
         lines += [
             "  EXECUTION REALITY CHECK (PPE FUNDS)",
             f"  Simulated to:   {ec['latest_date']}",
@@ -512,7 +512,7 @@ def _build_status_text(snap: dict, action: str) -> str:
             f"  Exec MaxDD:     {ec['maxdd']:+.2f}%  (vs Matched Theory {th_maxdd:+.2f}% -> Drag: {drag_sign_mdd}{ec.get('maxdd_drag_pp', 0.0)} pp)",
             f"  Correlation:    {ec['correlation']:.2f}  (1.0 = perfect match)",
         ]
-        
+
         d = ec.get("decomp")
         if d:
             lines += [
@@ -587,7 +587,7 @@ def _build_chart(
     # --- PANEL 1: EQUITY ---
     ax = axes[0]
     portfolio_equity.plot(ax=ax, label="Theory Portfolio", color="steelblue", linewidth=1.8)
-    
+
     # Dodanie krzywej Execution PPE
     if exec_equity is not None and not exec_equity.empty:
         align_date = exec_equity.index.min()
@@ -621,7 +621,7 @@ def _build_chart(
     ax = axes[1]
     dd_port = portfolio_equity / portfolio_equity.cummax() - 1.0
     dd_port.plot(ax=ax, label="Theory DD", color="steelblue", linewidth=1.5)
-    
+
     # Dodanie Drawdownu dla Execution PPE
     if exec_equity is not None and not exec_equity.empty:
         dd_exec = exec_equity / exec_equity.cummax() - 1.0
@@ -739,7 +739,7 @@ def build_daily_outputs(
         reallocation_log=reallocation_log,
         bh_eq_metrics=bh_eq_metrics,
         bh_bd_metrics=bh_bd_metrics,
-        exec_equity=exec_equity, 
+        exec_equity=exec_equity,
         exec_metrics=exec_metrics,
         exec_decomp=exec_decomp,
         WIG=WIG,

@@ -45,12 +45,12 @@ from moj_system.core.pension_engine import (
     build_standard_two_asset_data,
 )
 from moj_system.core.research import (
+    analyze_production_candidates,
     extract_flat_regime_stats,
     get_common_oos_start,
     prepare_regime_inputs,
     print_live_regime_report,
     run_regime_decomposition,
-    analyze_production_candidates, 
 )
 from moj_system.core.robustness import RobustnessEngine
 from moj_system.core.robustness_engine import analyze_bootstrap, analyze_robustness
@@ -205,9 +205,9 @@ def _compile_window_stats(
 
 class SweepManager:
     def __init__(
-        self, 
-        n_mc:     int, 
-        n_boot:   int, 
+        self,
+        n_mc:     int,
+        n_boot:   int,
         data_map: dict[str, pd.DataFrame],
     ) -> None:
 
@@ -224,8 +224,8 @@ class SweepManager:
 
 
     def _create_portfolio_wf_results(
-        self, 
-        wf_results_ref: pd.DataFrame, 
+        self,
+        wf_results_ref: pd.DataFrame,
         port_eq:        pd.Series,
     ) -> pd.DataFrame:
 
@@ -258,13 +258,13 @@ class SweepManager:
         return portfolio_wf_results
 
     def get_cached_wf(
-        self, 
-        asset_name: str, 
-        df:         pd.DataFrame, 
-        train_y:    int, 
-        test_y:     int, 
-        stop_type:  str, 
-        grid_type:  str = "EQUITY", 
+        self,
+        asset_name: str,
+        df:         pd.DataFrame,
+        train_y:    int,
+        test_y:     int,
+        stop_type:  str,
+        grid_type:  str = "EQUITY",
         entry_gate: pd.Series | None = None,
     ) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame]:
 
@@ -412,7 +412,7 @@ class SweepManager:
         bb_verdicts_dict:  dict,
         alloc_df:          pd.DataFrame | None = None,
         weights_series:    pd.Series | None    = None,
-    ) -> dict:  
+    ) -> dict:
 
         # Przekazujemy wagi do ekstrakcji
         window_rows = _extract_window_rows(
@@ -474,11 +474,11 @@ class SweepManager:
         }
 
     def run_single_asset_iteration(
-        self, 
-        asset_name:   str, 
-        train_y:      int, 
-        test_y:       int, 
-        stop_type:    str, 
+        self,
+        asset_name:   str,
+        train_y:      int,
+        test_y:       int,
+        stop_type:    str,
         common_start: pd.Timestamp,
     ) -> dict | None:
 
@@ -562,10 +562,10 @@ class SweepManager:
         )
 
     def run_pension_iteration(
-        self, 
-        train_y:      int, 
-        test_y:       int, 
-        stop_type_eq: str, 
+        self,
+        train_y:      int,
+        test_y:       int,
+        stop_type_eq: str,
         common_start: pd.Timestamp,
     ) -> dict | None:
 
@@ -705,11 +705,11 @@ class SweepManager:
         )
 
     def run_global_iteration(
-        self, 
-        variant_key:  str, 
-        train_y:      int, 
-        test_y:       int, 
-        stop_type_eq: str, 
+        self,
+        variant_key:  str,
+        train_y:      int,
+        test_y:       int,
+        stop_type_eq: str,
         common_start: pd.Timestamp,
     ) -> dict | None:
 
@@ -904,19 +904,19 @@ class SweepManager:
 
 
 def print_sweep_report(
-    results_df:    pd.DataFrame, 
+    results_df:    pd.DataFrame,
     common_start:  dt.date,
     candidates_df: pd.DataFrame | None = None,
 ) -> None:
-    
+
     if results_df.empty:
         return
     sep = "=" * 120
     logging.info(
-        msg=f"\n{sep}\nSWEEP OPTIMIZER REPORT (Common OOS Start: {common_start})\n{sep}"
+        msg=f"\n{sep}\nSWEEP OPTIMIZER REPORT (Common OOS Start: {common_start})\n{sep}",
     )
     logging.info(
-        msg="\n--- 1. PERFORMANCE & ROBUSTNESS LEADERBOARD ---"
+        msg="\n--- 1. PERFORMANCE & ROBUSTNESS LEADERBOARD ---",
     )
 
     display_cols =[
@@ -935,28 +935,28 @@ def print_sweep_report(
 
     existing_cols =[c for c in display_cols if c in results_df.columns]
     format_df = results_df[existing_cols].copy()
-    
+
     pct_cols =["oos_cagr", "oos_maxdd", "MC_p05_CAGR"]
 
     for col in pct_cols:
         if col in format_df.columns:
             format_df[col] = format_df[col].apply(
-                func=lambda x: f"{x * 100.0:+.2f}%" if pd.notna(x) else "N/A"
+                func=lambda x: f"{x * 100.0:+.2f}%" if pd.notna(x) else "N/A",
             )
 
     if "oos_calmar" in format_df.columns:
         format_df["oos_calmar"] = format_df["oos_calmar"].apply(
-            func=lambda x: round(number=x, ndigits=3) if pd.notna(x) else "N/A"
+            func=lambda x: round(number=x, ndigits=3) if pd.notna(x) else "N/A",
         )
 
     logging.info(
-        msg=f"\n{format_df.to_string(index=False)}"
+        msg=f"\n{format_df.to_string(index=False)}",
     )
 
     regime_cols =[c for c in results_df.columns if "adx_" in c or "vol_" in c]
     if regime_cols:
         logging.info(
-            msg=f"\n{sep}\n--- 2. REGIME DECOMPOSITION: CAGR in Specific Market Conditions ---"
+            msg=f"\n{sep}\n--- 2. REGIME DECOMPOSITION: CAGR in Specific Market Conditions ---",
         )
         key_regime_cols =[
             "Strategy",
@@ -975,16 +975,16 @@ def print_sweep_report(
         for col in avail_regime_cols:
             if "cagr" in col:
                 regime_df[col] = regime_df[col].apply(
-                    func=lambda x: f"{x:.2f}%" if pd.notna(x) else "N/A"
+                    func=lambda x: f"{x:.2f}%" if pd.notna(x) else "N/A",
                 )
         logging.info(
-            msg=f"\n{regime_df.to_string(index=False)}"
+            msg=f"\n{regime_df.to_string(index=False)}",
         )
 
     # --- NOWA SEKCJA: PRODUCTION CANDIDATES ---
     if candidates_df is not None and not candidates_df.empty:
         logging.info(
-            msg=f"\n{sep}\n--- 3. PRODUCTION CANDIDATES (Ranked by Weighted Score) ---"
+            msg=f"\n{sep}\n--- 3. PRODUCTION CANDIDATES (Ranked by Weighted Score) ---",
         )
         cand_cols =[
             "Strategy",
@@ -998,23 +998,23 @@ def print_sweep_report(
         ]
         avail_cand_cols =[c for c in cand_cols if c in candidates_df.columns]
         cand_format_df = candidates_df[avail_cand_cols].copy()
-        
+
         # Zaokrąglenie punktacji (scores) do 3 miejsc po przecinku
         for score_col in["ranking_score", "score_protection", "score_uptrend", "score_excess"]:
             if score_col in cand_format_df.columns:
                 cand_format_df[score_col] = cand_format_df[score_col].apply(
-                    func=lambda x: round(number=x, ndigits=3) if pd.notna(x) else "N/A"
+                    func=lambda x: round(number=x, ndigits=3) if pd.notna(x) else "N/A",
                 )
-        
+
         logging.info(
-            msg=f"\n{cand_format_df.to_string(index=False)}"
+            msg=f"\n{cand_format_df.to_string(index=False)}",
         )
     elif candidates_df is not None:
         logging.info(
-            msg=f"\n{sep}\n--- 3. PRODUCTION CANDIDATES ---"
+            msg=f"\n{sep}\n--- 3. PRODUCTION CANDIDATES ---",
         )
         logging.info(
-            msg="No configurations passed all mandatory production gates."
+            msg="No configurations passed all mandatory production gates.",
         )
 
     logging.info(msg=sep)
@@ -1140,12 +1140,12 @@ def main() -> None:
     # 5. Saving
     if results:
         final_df = pd.DataFrame(
-            data=results
+            data=results,
         ).sort_values(
-            by="oos_calmar", 
-            ascending=False
+            by="oos_calmar",
+            ascending=False,
         )
-        
+
         # --- GENEROWANIE KANDYDATÓW ---
         require_boot_flag = args.n_boot > 0
         candidates_df = analyze_production_candidates(
@@ -1154,52 +1154,52 @@ def main() -> None:
         )
 
         print_sweep_report(
-            results_df=final_df, 
+            results_df=final_df,
             common_start=common_start.date(),
             candidates_df=candidates_df,
         )
-        
+
         ts = dt.datetime.now().strftime("%Y%m%d_%H%M")
-        
+
         # Zapisywanie głównych wyników
         final_df.to_csv(
-            path_or_buf=OUTPUT_DIR / f"sweep_results_{ts}.csv", 
-            index=False, 
-            sep=";"
+            path_or_buf=OUTPUT_DIR / f"sweep_results_{ts}.csv",
+            index=False,
+            sep=";",
         )
         final_df.to_csv(
-            path_or_buf=OUTPUT_DIR / "sweep_results_latest.csv", 
-            index=False, 
-            sep=";"
+            path_or_buf=OUTPUT_DIR / "sweep_results_latest.csv",
+            index=False,
+            sep=";",
         )
-        
+
         # Zapisywanie kandydatów (jeśli jacyś są)
         if not candidates_df.empty:
             candidates_df.to_csv(
-                path_or_buf=OUTPUT_DIR / f"sweep_candidates_{ts}.csv", 
-                index=False, 
-                sep=";"
+                path_or_buf=OUTPUT_DIR / f"sweep_candidates_{ts}.csv",
+                index=False,
+                sep=";",
             )
             candidates_df.to_csv(
-                path_or_buf=OUTPUT_DIR / "sweep_candidates_latest.csv", 
-                index=False, 
-                sep=";"
+                path_or_buf=OUTPUT_DIR / "sweep_candidates_latest.csv",
+                index=False,
+                sep=";",
             )
-            
+
         # Zapisywanie okienek
         if manager.all_windows:
             win_df = pd.DataFrame(
-                data=manager.all_windows
+                data=manager.all_windows,
             )
             win_df.to_csv(
-                path_or_buf=OUTPUT_DIR / f"sweep_windows_{ts}.csv", 
-                index=False, 
-                sep=";"
+                path_or_buf=OUTPUT_DIR / f"sweep_windows_{ts}.csv",
+                index=False,
+                sep=";",
             )
             win_df.to_csv(
-                path_or_buf=OUTPUT_DIR / "sweep_windows_latest.csv", 
-                index=False, 
-                sep=";"
+                path_or_buf=OUTPUT_DIR / "sweep_windows_latest.csv",
+                index=False,
+                sep=";",
             )
 
 

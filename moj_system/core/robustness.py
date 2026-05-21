@@ -14,7 +14,9 @@ Uses legacy simulation engine to ensure results consistency.
 """
 
 import logging
+
 import pandas as pd
+
 from moj_system.core.robustness_engine import (
     extract_best_params_from_wf_results,
     extract_windows_from_wf_results,
@@ -27,17 +29,17 @@ from moj_system.core.robustness_engine import (
 
 class RobustnessEngine:
     def __init__(
-        self, 
+        self,
         n_jobs: int = -1,
     ) -> None:
         self.n_jobs = n_jobs
 
     def run_mc_test(
-        self, 
-        wf_results:  pd.DataFrame, 
-        df:          pd.DataFrame, 
-        cash_df:     pd.DataFrame, 
-        n_samples:   int   = 100, 
+        self,
+        wf_results:  pd.DataFrame,
+        df:          pd.DataFrame,
+        cash_df:     pd.DataFrame,
+        n_samples:   int   = 100,
         perturb_pct: float = 0.20,
     ) -> pd.DataFrame:
 
@@ -62,13 +64,13 @@ class RobustnessEngine:
         return mc_results_df
 
     def run_bootstrap_test(
-        self, 
-        df:          pd.DataFrame, 
-        cash_df:     pd.DataFrame, 
-        n_samples:   int = 500, 
+        self,
+        df:          pd.DataFrame,
+        cash_df:     pd.DataFrame,
+        n_samples:   int = 500,
         **wf_kwargs: object,
     ) -> pd.DataFrame:
-    
+
         """Runs Block Bootstrap history reshuffling."""
         logging.info(f"Starting Block Bootstrap Test (n={n_samples})...")
 

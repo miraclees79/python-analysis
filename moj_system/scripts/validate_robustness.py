@@ -66,9 +66,9 @@ from moj_system.data.updater import DataUpdater
 
 class ValidationManager:
     def __init__(
-        self, 
-        n_mc:                int, 
-        n_boot:              int, 
+        self,
+        n_mc:                int,
+        n_boot:              int,
         run_weights_perturb: bool,
     ) -> None:
 
@@ -80,10 +80,10 @@ class ValidationManager:
         self.folder_id = os.environ.get("GDRIVE_FOLDER_ID")
 
     def _save_validation_chart(
-        self, 
-        strategy_equity: pd.Series, 
-        bh_equity:       pd.Series | None, 
-        title:           str, 
+        self,
+        strategy_equity: pd.Series,
+        bh_equity:       pd.Series | None,
+        title:           str,
         filename:        str,
     ) -> None:
 
@@ -141,12 +141,12 @@ class ValidationManager:
         logging.info(msg=f"Validation chart saved to: {chart_path}")
 
     def validate_single(
-        self, 
-        asset_name: str, 
-        train_y:    int, 
-        test_y:     int, 
-        stop_type:  str, 
-        df:         pd.DataFrame, 
+        self,
+        asset_name: str,
+        train_y:    int,
+        test_y:     int,
+        stop_type:  str,
+        df:         pd.DataFrame,
         cash_df:    pd.DataFrame,
     ) -> None:
 
@@ -210,9 +210,9 @@ class ValidationManager:
             )
 
     def validate_pension(
-        self, 
-        train_y:      int, 
-        test_y:       int, 
+        self,
+        train_y:      int,
+        test_y:       int,
         stop_type_eq: str,
     ) -> None:
 
@@ -363,10 +363,10 @@ class ValidationManager:
             print_allocation_robustness_report(results_df=robust_df)
 
     def validate_global(
-        self, 
-        variant:      str, 
-        train_y:      int, 
-        test_y:       int, 
+        self,
+        variant:      str,
+        train_y:      int,
+        test_y:       int,
         stop_type_eq: str,
     ) -> None:
 

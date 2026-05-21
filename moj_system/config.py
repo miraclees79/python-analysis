@@ -143,7 +143,7 @@ ASSET_REGISTRY = {
                 "test": 1,
                 "default_stop_eq": "atr"},
 
-    
+
 
     # GLOBAL_A config inactive
     "GLOBAL_A": {"type": "portfolio_global",
@@ -194,29 +194,29 @@ FUND_CODES = {
     "3166": "Rockbridge_NeoMid",
     "3306": "Velo_AkcjiPL",
     "3441": "Quercus_Agr",
-    "1043": "Alior_Akcji"
+    "1043": "Alior_Akcji",
     }
 
-FUND_PARAMS_GRID = [    
+FUND_PARAMS_GRID = [
             {
             "lookback_days":      30,   # medium asymmetric
             "entry_roll_thresh":  0.05,
             "entry_since_thresh": 0.08,
             "exit_roll_thresh":  -0.06,
-            "exit_since_thresh": -0.10
+            "exit_since_thresh": -0.10,
             },
             {
             "lookback_days":      30, #strong asymmetric tight entry loose exit
             "entry_roll_thresh":  0.03,
             "entry_since_thresh": 0.05,
             "exit_roll_thresh":  -0.10,
-            "exit_since_thresh": -0.15
+            "exit_since_thresh": -0.15,
             },
             {
             "lookback_days":      30, #original idea
             "entry_roll_thresh":  0.10,
             "entry_since_thresh": 0.15,
             "exit_roll_thresh":  -0.10,
-            "exit_since_thresh": -0.15
-            }
+            "exit_since_thresh": -0.15,
+            },
 ]

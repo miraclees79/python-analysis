@@ -73,7 +73,7 @@ FINAL_COLS = [
 
 class FundReviewer:
     def __init__(
-        self, 
+        self,
         update_data: bool = True,
     ) -> None:
 
@@ -163,8 +163,8 @@ class FundReviewer:
         return df_funds, fund_prices
 
     def build_category_benchmarks(
-        self, 
-        df_funds:    pd.DataFrame, 
+        self,
+        df_funds:    pd.DataFrame,
         fund_prices: dict[str, pd.Series],
     ) -> dict[str, pd.Series]:
 
@@ -199,9 +199,9 @@ class FundReviewer:
         return benchmarks
 
     def evaluate_fund(
-        self, 
-        fund_row:       pd.Series, 
-        prices:         pd.Series, 
+        self,
+        fund_row:       pd.Series,
+        prices:         pd.Series,
         cat_benchmarks: dict[str, pd.Series],
     ) -> list[dict]:
 

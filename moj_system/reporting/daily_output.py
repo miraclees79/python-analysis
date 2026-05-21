@@ -129,17 +129,17 @@ def _compute_atr_val(df: pd.DataFrame, atr_window: int) -> float:
     """Calculates the current ATR volatility percentage (shifted by 1 for next day logic)."""
     if len(df) < atr_window + 1:
         return 0.0
-    
+
     df_copy = df.copy()
     has_hl = "Najwyzszy" in df_copy.columns and "Najnizszy" in df_copy.columns
-    
+
     if has_hl:
         prev_close = df_copy["Zamkniecie"].shift(periods=1)
         tr = np.maximum(df_copy["Najwyzszy"], prev_close) - np.minimum(df_copy["Najnizszy"], prev_close)
         atr_s = (tr / prev_close).rolling(window=atr_window).mean().shift(periods=1) * 100.0
     else:
         atr_s = (df_copy["Zamkniecie"].diff().abs() / df_copy["Zamkniecie"].shift(periods=1)).rolling(window=atr_window).mean().shift(periods=1) * 100.0
-    
+
     val = float(atr_s.iloc[-1])
     return val if np.isfinite(val) else 0.0
 
@@ -276,7 +276,7 @@ def _build_snapshot(
         else:
             trail_stop = round(number=peak_price * (1.0 - stop_param), ndigits=2)
             snap["atr_val_equity"] = None
-            
+
         abs_stop = round(number=entry_price * (1.0 - stop_loss), ndigits=2)
         binding_stop = max(trail_stop, abs_stop)
 
@@ -344,8 +344,8 @@ def _build_snapshot(
 
 
 def _build_status_text(
-    snap:       dict, 
-    action:     str, 
+    snap:       dict,
+    action:     str,
     asset_name: str,
 ) -> str:
     """Render the human-readable status block from a snapshot dict."""
