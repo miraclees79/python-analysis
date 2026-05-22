@@ -337,6 +337,20 @@ def run_ocr_pipeline() -> None:
     if not all_rows:
         logging.warning(msg="Nie znaleziono żadnych wierszy danych w pliku PDF.")
         df = pd.DataFrame(columns=["Date", "Col2", "Col3", "Col4", "Col5", "Col6"])
+    else:
+        # --- NOWA LOGIKA: Wyszukanie najnowszej daty ---
+        latest_date_series = pd.to_datetime(
+            arg=df["Date"], 
+            format="%d.%m.%Y", 
+            errors="coerce"
+        )
+        latest_date = latest_date_series.max()
+        
+        if pd.notna(obj=latest_date):
+            logging.info(
+                msg=f"Najnowsza data wyodrębniona z dokumentu: {latest_date.strftime(format='%Y-%m-%d')}"
+            )
+        # -----------------------------------------------
 
     logging.info(msg="Potok OCR zakończony pomyślnie.")
 
