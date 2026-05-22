@@ -1,0 +1,154 @@
+name: Sharded Deep Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Strategy Mode (SINGLE, PENSION, GLOBAL)'
+        required: true
+        type: choice
+        options:
+          - PENSION
+          - GLOBAL
+          - SINGLE
+        default: 'PENSION'
+      asset:
+        description: 'Asset Key (e.g., WIG20TR, PENSION, GLOBAL_B)'
+        required: true
+        type: string
+        default: 'PENSION'
+      train:
+        description: 'Train window (years)'
+        required: true
+        type: string
+        default: '7'
+      test:
+        description: 'Test window (years)'
+        required: true
+        type: string
+        default: '1'
+      stop:
+        description: 'Stop mode (atr, fixed)'
+        required: true
+        type: choice
+        options:
+          - atr
+          - fixed
+        default: 'atr'
+      worker_mc:
+        description: 'MC samples per shard (e.g. 100 * 10 shards = 1000)'
+        required: true
+        type: string
+        default: '100'
+      worker_boot:
+        description: 'Boot samples per shard (e.g. 50 * 10 shards = 500)'
+        required: true
+        type: string
+        default: '50'
+      weights_perturb:
+        description: 'Run allocation weight perturbation (Merge step)'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  worker:
+    name: Worker Shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Sharded Worker
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
+          python -m moj_system.scripts.sharded_robustness \
+            --run_mode worker \
+            --shard_id ${{ matrix.shard }} \
+            --mode ${{ github.event.inputs.mode }} \
+            --asset ${{ github.event.inputs.asset }} \
+            --train ${{ github.event.inputs.train }} \
+            --test ${{ github.event.inputs.test }} \
+            --stop ${{ github.event.inputs.stop }} \
+            --n_mc ${{ github.event.inputs.worker_mc }} \
+            --n_boot ${{ github.event.inputs.worker_boot }}
+            
+      - name: Upload Shard Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}-results
+          path: outputs/shard_${{ matrix.shard }}_*.csv
+          retention-days: 1
+
+  merge:
+    name: Merge and Evaluate
+    needs: worker
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download Shard Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: outputs/
+          pattern: shard-*-results
+          merge-multiple: true
+
+      - name: Run Sharded Merge
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
+          
+          # Przygotuj opcjonalną flagę perturbacji wag
+          PERTURB_FLAG=""
+          if [ "${{ github.event.inputs.weights_perturb }}" == "true" ]; then
+            PERTURB_FLAG="--weights_perturb"
+          fi
+
+          python -m moj_system.scripts.sharded_robustness \
+            --run_mode merge \
+            --mode ${{ github.event.inputs.mode }} \
+            --asset ${{ github.event.inputs.asset }} \
+            --train ${{ github.event.inputs.train }} \
+            --test ${{ github.event.inputs.test }} \
+            --stop ${{ github.event.inputs.stop }} \
+            $PERTURB_FLAG
+            
+      - name: Upload Final Validation Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-validation-report-${{ github.event.inputs.asset }}
+          path: |
+            outputs/*.log
+            outputs/*.png
