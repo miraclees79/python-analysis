@@ -198,27 +198,36 @@ class DataUpdater:
         ticker_yf:  str, 
         start_date: pd.Timestamp,
     ) -> pd.DataFrame | None:
-
         try:
-            df = yf.download(ticker_yf, start=start_date, progress=False, auto_adjust=True)
+            df = yf.download(tickers=ticker_yf, start=start_date, progress=False, auto_adjust=True)
             if df.empty:
                 return None
+            
+            # Usunięcie poziomu MultiIndex (jeśli występuje np. w nowym yfinance)
             if isinstance(df.columns, pd.MultiIndex):
-                df = df.droplevel(1, axis=1)
+                df = df.droplevel(level=1, axis=1)
+            
+            # --- PANCERNA POPRAWKA ---
+            # Zamiast zgadywać czy Yahoo zwróciło "Date" czy "Datetime",
+            # po prostu na twardo nazywamy indeks jako "Data" przed resetem.
+            df.index.name = "Data"
+            
             df = df.reset_index().rename(
                 columns={
-                    "Date": "Data",
                     "Open": "Otwarcie",
                     "High": "Najwyzszy",
                     "Low": "Najnizszy",
                     "Close": "Zamkniecie",
                 },
             )
-            df["Data"] = pd.to_datetime(df["Data"]).dt.tz_localize(None)
+            
+            df["Data"] = pd.to_datetime(arg=df["Data"]).dt.tz_localize(tz=None)
+            
             cols = ["Data", "Otwarcie", "Najwyzszy", "Najnizszy", "Zamkniecie"]
             return df[[c for c in cols if c in df.columns]]
+            
         except Exception as e:
-            logging.warning(f"yfinance error ({ticker_yf}): {e}")
+            logging.warning(msg=f"yfinance error ({ticker_yf}): {e}")
             return None
 
     def _fetch_knf_data(
