@@ -606,7 +606,7 @@ def optimise_asset_weights(
     keys_with_signal = [
         k for k in asset_keys if signals_dict.get(k) is not None and len(signals_dict[k]) > 0
     ]
-    
+
 
     if keys_with_signal:
         common_idx = mmf_returns.index
@@ -666,9 +666,9 @@ def optimise_asset_weights(
 
     # Fixed return: 0-on -> MMF; 1-on -> that asset; 2+-on -> handled per combo
     fixed_r = np.where(n_on_arr == 0, mmf_arr, 0.0)
-    
+
     # previous for i, key in enumerate(asset_keys):
-    
+
     for i in range(len(asset_keys)):
         only_this = (sig_mat[:, i] == 1) & (n_on_arr == 1)
         fixed_r = np.where(only_this, ret_mat[:, i], fixed_r)

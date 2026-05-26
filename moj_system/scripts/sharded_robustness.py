@@ -68,7 +68,6 @@ from moj_system.data.builder import build_and_upload
 from moj_system.data.data_manager import load_local_csv
 from moj_system.data.updater import DataUpdater
 
-
 # =========================================================================
 # CUSTOM SHARDED BOOTSTRAP LOGIC
 # =========================================================================
@@ -84,7 +83,7 @@ def _sharded_bootstrap_single_sample(
     block_size:     int,
     wf_kwargs:      dict,
 ) -> dict | None:
-    
+
     seed = base_seed + iteration
     wf_kwargs_inner = {**wf_kwargs, "n_jobs": 1}
 
@@ -100,7 +99,7 @@ def _sharded_bootstrap_single_sample(
         n_synth = len(synthetic)
         synthetic_df = combined.iloc[:n_synth, [combined.columns.get_loc(price_col)]].copy()
         synthetic_df[price_col] = synthetic[price_col].values
-        
+
         synthetic_cash = combined.iloc[:n_synth][["cash_price"]].copy()
         synthetic_cash = synthetic_cash.rename(columns={"cash_price": cash_price_col})
         synthetic_cash[cash_price_col] = synthetic["cash_price"].values
@@ -115,8 +114,8 @@ def _sharded_bootstrap_single_sample(
             return None
 
         m = compute_metrics(
-            equity=equity, 
-            risk_free_rate=0.0
+            equity=equity,
+            risk_free_rate=0.0,
         )
         return {
             "sample": seed,
@@ -128,7 +127,7 @@ def _sharded_bootstrap_single_sample(
         }
     except Exception as e:
         logging.warning(
-            msg=f"Sharded Bootstrap sample {seed} failed: {e}"
+            msg=f"Sharded Bootstrap sample {seed} failed: {e}",
         )
         return None
 
@@ -142,22 +141,22 @@ def run_sharded_block_bootstrap(
     cash_price_col: str = "Zamkniecie",
     **wf_kwargs:    object,
 ) -> pd.DataFrame:
-    
+
     n_jobs = get_n_jobs()
     common_idx = df.index.intersection(other=cash_df.index)
     combined = df.loc[common_idx, [price_col]].copy()
     combined["cash_price"] = cash_df.loc[common_idx, cash_price_col]
 
     valid = []
-    
+
     try:
         source = Parallel(
-            n_jobs=n_jobs, 
-            backend="loky", 
-            return_as="generator"
+            n_jobs=n_jobs,
+            backend="loky",
+            return_as="generator",
         )(
             delayed(
-                function=_sharded_bootstrap_single_sample
+                function=_sharded_bootstrap_single_sample,
             )(
                 iteration=i,
                 base_seed=base_seed,
@@ -171,14 +170,14 @@ def run_sharded_block_bootstrap(
             )
             for i in range(n_samples)
         )
-        
+
         for idx, r in enumerate(source):
             if r is not None:
                 valid.append(r)
-                
+
     except Exception as e:
         logging.error(
-            msg=f"Parallel bootstrap failed: {e}"
+            msg=f"Parallel bootstrap failed: {e}",
         )
 
     return pd.DataFrame(data=valid)
@@ -189,11 +188,11 @@ def run_sharded_block_bootstrap(
 
 class ShardedValidationManager:
     def __init__(
-        self, 
+        self,
         run_mode:            str,
         shard_id:            int,
-        n_mc:                int, 
-        n_boot:              int, 
+        n_mc:                int,
+        n_boot:              int,
         run_weights_perturb: bool,
     ) -> None:
         self.run_mode = run_mode
@@ -203,14 +202,14 @@ class ShardedValidationManager:
         self.run_weights_perturb = run_weights_perturb
         self.creds_path = str(Path(tempfile.gettempdir()) / "credentials.json")
         self.folder_id = os.environ.get("GDRIVE_FOLDER_ID")
-        
+
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     def _save_validation_chart(
-        self, 
-        strategy_equity: pd.Series, 
-        bh_equity:       pd.Series | None, 
-        title:           str, 
+        self,
+        strategy_equity: pd.Series,
+        bh_equity:       pd.Series | None,
+        title:           str,
         filename:        str,
     ) -> None:
         chart_path = OUTPUT_DIR / filename
@@ -269,18 +268,18 @@ class ShardedValidationManager:
         thresholds:  dict,
         base_equity: pd.Series,
     ) -> None:
-        
+
         if self.run_mode == "worker":
             if self.n_mc > 0:
                 logging.info(
-                    msg=f"Worker {self.shard_id} running {self.n_mc} MC samples for {asset_name}..."
+                    msg=f"Worker {self.shard_id} running {self.n_mc} MC samples for {asset_name}...",
                 )
                 seed_offset = 42 + (self.shard_id * 10000)
                 windows = extract_windows_from_wf_results(
-                    wf_results=wf_results
+                    wf_results=wf_results,
                 )
                 best_params = extract_best_params_from_wf_results(
-                    wf_results=wf_results
+                    wf_results=wf_results,
                 )
                 mc_df = run_monte_carlo_robustness(
                     best_params=best_params,
@@ -297,16 +296,16 @@ class ShardedValidationManager:
                 )
                 out_path = OUTPUT_DIR / f"shard_{self.shard_id}_mc_{asset_name}.csv"
                 mc_df.to_csv(path_or_buf=out_path, index=False)
-                
+
         elif self.run_mode == "merge":
             files = list(OUTPUT_DIR.glob(pattern=f"shard_*_mc_{asset_name}.csv"))
             if files:
                 mc_df = pd.concat(
-                    objs=[pd.read_csv(filepath_or_buffer=f) for f in files], 
-                    ignore_index=True
+                    objs=[pd.read_csv(filepath_or_buffer=f) for f in files],
+                    ignore_index=True,
                 )
                 logging.info(
-                    msg=f"Merge: Found {len(files)} shards, total {len(mc_df)} MC samples for {asset_name}."
+                    msg=f"Merge: Found {len(files)} shards, total {len(mc_df)} MC samples for {asset_name}.",
                 )
                 analyze_robustness(
                     results_df=mc_df,
@@ -315,7 +314,7 @@ class ShardedValidationManager:
                 )
             else:
                 logging.warning(
-                    msg=f"No MC shard files found for {asset_name}"
+                    msg=f"No MC shard files found for {asset_name}",
                 )
 
     def handle_boot(
@@ -331,16 +330,16 @@ class ShardedValidationManager:
         base_equity: pd.Series,
         entry_gate:  pd.Series | None = None,
     ) -> None:
-        
+
         grids = BOND_GRIDS if grid_type == "BOND" else BASE_GRIDS
-        
+
         if self.run_mode == "worker":
             if self.n_boot > 0:
                 logging.info(
-                    msg=f"Worker {self.shard_id} running {self.n_boot} Bootstrap samples for {asset_name}..."
+                    msg=f"Worker {self.shard_id} running {self.n_boot} Bootstrap samples for {asset_name}...",
                 )
                 seed_offset = 1000 + (self.shard_id * 10000)
-                
+
                 bb_df = run_sharded_block_bootstrap(
                     df=df,
                     cash_df=cash_df,
@@ -361,16 +360,16 @@ class ShardedValidationManager:
                 )
                 out_path = OUTPUT_DIR / f"shard_{self.shard_id}_boot_{asset_name}.csv"
                 bb_df.to_csv(path_or_buf=out_path, index=False)
-                
+
         elif self.run_mode == "merge":
             files = list(OUTPUT_DIR.glob(pattern=f"shard_*_boot_{asset_name}.csv"))
             if files:
                 bb_df = pd.concat(
-                    objs=[pd.read_csv(filepath_or_buffer=f) for f in files], 
-                    ignore_index=True
+                    objs=[pd.read_csv(filepath_or_buffer=f) for f in files],
+                    ignore_index=True,
                 )
                 logging.info(
-                    msg=f"Merge: Found {len(files)} shards, total {len(bb_df)} Bootstrap samples for {asset_name}."
+                    msg=f"Merge: Found {len(files)} shards, total {len(bb_df)} Bootstrap samples for {asset_name}.",
                 )
                 analyze_bootstrap(
                     results_df=bb_df,
@@ -379,21 +378,21 @@ class ShardedValidationManager:
                 )
             else:
                 logging.warning(
-                    msg=f"No Bootstrap shard files found for {asset_name}"
+                    msg=f"No Bootstrap shard files found for {asset_name}",
                 )
 
     def validate_single(
-        self, 
-        asset_name: str, 
-        train_y:    int, 
-        test_y:     int, 
-        stop_type:  str, 
-        df:         pd.DataFrame, 
+        self,
+        asset_name: str,
+        train_y:    int,
+        test_y:     int,
+        stop_type:  str,
+        df:         pd.DataFrame,
         cash_df:    pd.DataFrame,
     ) -> None:
-        
+
         logging.info(
-            msg=f"VALIDATING SINGLE ASSET: {asset_name} | {train_y}+{test_y} | {stop_type}"
+            msg=f"VALIDATING SINGLE ASSET: {asset_name} | {train_y}+{test_y} | {stop_type}",
         )
         use_atr = stop_type == "atr"
 
@@ -435,9 +434,9 @@ class ShardedValidationManager:
 
         if self.run_mode == "merge":
             bh_eq, _ = compute_buy_and_hold(
-                df=df, 
-                price_col="Zamkniecie", 
-                start=wf_eq.index.min(), 
+                df=df,
+                price_col="Zamkniecie",
+                start=wf_eq.index.min(),
                 end=wf_eq.index.max(),
             )
             self._save_validation_chart(
@@ -448,26 +447,26 @@ class ShardedValidationManager:
             )
 
     def validate_pension(
-        self, 
-        train_y:      int, 
-        test_y:       int, 
+        self,
+        train_y:      int,
+        test_y:       int,
         stop_type_eq: str,
     ) -> None:
-        
+
         logging.info(
-            msg=f"VALIDATING PENSION PORTFOLIO | Train: {train_y} | Test: {test_y} | EQ Stop: {stop_type_eq}"
+            msg=f"VALIDATING PENSION PORTFOLIO | Train: {train_y} | Test: {test_y} | EQ Stop: {stop_type_eq}",
         )
 
         wig_df = load_local_csv(
-            ticker="wig", 
-            label="WIG"
+            ticker="wig",
+            label="WIG",
         ).loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
-        
+
         mmf_df = load_local_csv(
-            ticker="fund_2720", 
-            label="MMF"
+            ticker="fund_2720",
+            label="MMF",
         )
-        
+
         tbsp_df = build_and_upload(
             folder_id=self.folder_id,
             raw_filename="tbsp_extended_full.csv",
@@ -476,11 +475,11 @@ class ShardedValidationManager:
             extension_source="stooq",
             credentials_path=self.creds_path,
         )
-        
+
         wibor1m_df = load_local_csv(ticker="wibor1m", label="WIBOR1M", mandatory=False)
         pl10y_df = load_local_csv(ticker="pl10y", label="PL10Y")
         de10y_df = load_local_csv(ticker="de10y", label="DE10Y")
-        
+
         derived = build_standard_two_asset_data(
             wig=wig_df,
             tbsp=tbsp_df,
@@ -587,12 +586,12 @@ class ShardedValidationManager:
         )
 
         bh_wig, _ = compute_buy_and_hold(
-            df=wig_df, 
-            price_col="Zamkniecie", 
-            start=port_eq.index.min(), 
+            df=wig_df,
+            price_col="Zamkniecie",
+            start=port_eq.index.min(),
             end=port_eq.index.max(),
         )
-        
+
         self._save_validation_chart(
             strategy_equity=port_eq,
             bh_equity=bh_wig,
@@ -602,7 +601,7 @@ class ShardedValidationManager:
 
         if self.run_weights_perturb:
             logging.info(
-                msg="\n" + "=" * 80 + "\n--- Level 3: Allocation Weight Perturbation Test (PENSION) ---\n" + "=" * 80
+                msg="\n" + "=" * 80 + "\n--- Level 3: Allocation Weight Perturbation Test (PENSION) ---\n" + "=" * 80,
             )
             robust_df = allocation_weight_robustness(
                 alloc_results_df=alloc_df,
@@ -617,15 +616,15 @@ class ShardedValidationManager:
 
 
     def validate_global(
-        self, 
-        variant:      str, 
-        train_y:      int, 
-        test_y:       int, 
+        self,
+        variant:      str,
+        train_y:      int,
+        test_y:       int,
         stop_type_eq: str,
     ) -> None:
-        
+
         logging.info(
-            msg=f"VALIDATING GLOBAL - {variant} | Train: {train_y} | Test: {test_y} | Stop: {stop_type_eq}"
+            msg=f"VALIDATING GLOBAL - {variant} | Train: {train_y} | Test: {test_y} | Stop: {stop_type_eq}",
         )
 
         cfg = ASSET_REGISTRY[variant]
@@ -634,14 +633,14 @@ class ShardedValidationManager:
         use_atr = stop_type_eq == "atr"
 
         wig_df = load_local_csv(
-            ticker="wig", 
-            label="WIG"
+            ticker="wig",
+            label="WIG",
         ).loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
-        
+
         mmf_df = load_local_csv(ticker="fund_2720", label="MMF")
         wibor1m_df = load_local_csv(ticker="wibor1m", label="WIBOR1M", mandatory=False)
         mmf_ext = build_mmf_extended(mmf_df=mmf_df, wibor1m_df=wibor1m_df, floor_date="1995-01-02")
-        
+
         tbsp_df = build_and_upload(
             folder_id=self.folder_id,
             raw_filename="tbsp_extended_full.csv",
@@ -650,7 +649,7 @@ class ShardedValidationManager:
             extension_source="stooq",
             credentials_path=self.creds_path,
         )
-        
+
         fx_map = {
             c: load_local_csv(ticker=f"{c.lower()}pln", label=f"{c}PLN")["Zamkniecie"]
             for c in ["USD", "EUR", "JPY"]
@@ -691,7 +690,7 @@ class ShardedValidationManager:
             ret_s = build_return_series(price_df=px_df, fx_series=fx_s, hedged=fx_hedged)
             rets_dict[lbl] = ret_s.dropna()
             proc_px = (
-                px_df if fx_hedged or fx_s is None 
+                px_df if fx_hedged or fx_s is None
                 else build_price_df_from_returns(ret=ret_s, label=lbl)
             )
 
@@ -739,7 +738,7 @@ class ShardedValidationManager:
             wig=wig_df, tbsp=tbsp_df, mmf=mmf_df, wibor1m=wibor1m_df,
             pl10y=pl10y_df, de10y=de10y_df, mmf_floor="1995-01-02",
         )
-        
+
         wf_bd, wf_res_bd, wf_tr_bd = walk_forward(
             df=tbsp_df,
             cash_df=mmf_ext,
@@ -784,7 +783,7 @@ class ShardedValidationManager:
 
         # 3. Portfolio Allocation & Chart
         logging.info(
-            msg="\n" + "-" * 60 + "\nRunning N-Asset allocation walk-forward...\n" + "-" * 60
+            msg="\n" + "-" * 60 + "\nRunning N-Asset allocation walk-forward...\n" + "-" * 60,
         )
         port_eq, _, _, alloc_df = allocation_walk_forward_n(
             returns_dict=rets_dict,
@@ -797,12 +796,12 @@ class ShardedValidationManager:
         )
 
         bh_wig, _ = compute_buy_and_hold(
-            df=wig_df, 
-            price_col="Zamkniecie", 
-            start=port_eq.index.min(), 
+            df=wig_df,
+            price_col="Zamkniecie",
+            start=port_eq.index.min(),
             end=port_eq.index.max(),
         )
-        
+
         self._save_validation_chart(
             strategy_equity=port_eq,
             bh_equity=bh_wig,
@@ -813,7 +812,7 @@ class ShardedValidationManager:
         # 4. Weight Perturbation
         if self.run_weights_perturb:
             logging.info(
-                msg="\n" + "=" * 80 + "\n--- Level 3: Allocation Weight Perturbation Test (GLOBAL) ---\n" + "=" * 80
+                msg="\n" + "=" * 80 + "\n--- Level 3: Allocation Weight Perturbation Test (GLOBAL) ---\n" + "=" * 80,
             )
             robust_df = allocation_weight_robustness_n(
                 alloc_results_df=alloc_df,
@@ -825,8 +824,8 @@ class ShardedValidationManager:
                 focus_asset="WIG",
             )
             print_allocation_robustness_report_n(
-                results_df=robust_df, 
-                focus_asset="WIG"
+                results_df=robust_df,
+                focus_asset="WIG",
             )
 
 # =========================================================================
@@ -862,7 +861,7 @@ def main() -> None:
     )
 
     DataUpdater().run_full_update(get_funds=False)
-    
+
     manager = ShardedValidationManager(
         run_mode=args.run_mode,
         shard_id=args.shard_id,
@@ -884,16 +883,16 @@ def main() -> None:
         )
     elif args.mode == "PENSION":
         manager.validate_pension(
-            train_y=args.train, 
-            test_y=args.test, 
-            stop_type_eq=args.stop
+            train_y=args.train,
+            test_y=args.test,
+            stop_type_eq=args.stop,
         )
     elif args.mode == "GLOBAL":
         manager.validate_global(
-            variant=args.asset, 
-            train_y=args.train, 
-            test_y=args.test, 
-            stop_type_eq=args.stop
+            variant=args.asset,
+            train_y=args.train,
+            test_y=args.test,
+            stop_type_eq=args.stop,
         )
 
 
