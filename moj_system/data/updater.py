@@ -291,36 +291,37 @@ class DataUpdater:
         if not breaks.empty:
             df = df.loc[df.index > breaks[-1]]
 
-        # 2. LOGIKA PRZEBAZOWANIA (REBASING) DLA ZMIAN > 40%
-        price_cols = ["Otwarcie", "Najwyzszy", "Najnizszy", "Zamkniecie"]
-        available_cols = [c for c in price_cols if c in df.columns]
+        # 2. LOGIKA PRZEBAZOWANIA (REBASING) ZMIAN > 40% (TYLKO DLA FUNDUSZY)
+        if label.startswith("fund_"):
+            price_cols = ["Otwarcie", "Najwyzszy", "Najnizszy", "Zamkniecie"]
+            available_cols = [c for c in price_cols if c in df.columns]
 
-        if "Zamkniecie" in df.columns and len(df) > 1:
-            pct_change = df["Zamkniecie"].pct_change()
-            
-            # Wyszukanie indeksów, gdzie bezwzględna zmiana przekracza 40% (0.40)
-            split_indices = pct_change[pct_change.abs() > 0.40].index
-
-            for split_date in split_indices:
-                loc = df.index.get_loc(key=split_date)
+            if "Zamkniecie" in df.columns and len(df) > 1:
+                pct_change = df["Zamkniecie"].pct_change()
                 
-                # Upewniamy się, że loc to int (po drop_duplicates tak musi być) i > 0
-                if isinstance(loc, int) and loc > 0:
-                    prev_date = df.index[loc - 1]
-                    prev_price = float(df.loc[prev_date, "Zamkniecie"])
-                    curr_price = float(df.loc[split_date, "Zamkniecie"])
+                # Wyszukanie indeksów, gdzie bezwzględna zmiana przekracza 40% (0.40)
+                split_indices = pct_change[pct_change.abs() > 0.40].index
+
+                for split_date in split_indices:
+                    loc = df.index.get_loc(key=split_date)
                     
-                    if prev_price != 0.0:
-                        factor = curr_price / prev_price
+                    # Upewniamy się, że loc to int (po drop_duplicates tak musi być) i > 0
+                    if isinstance(loc, int) and loc > 0:
+                        prev_date = df.index[loc - 1]
+                        prev_price = float(df.loc[prev_date, "Zamkniecie"])
+                        curr_price = float(df.loc[split_date, "Zamkniecie"])
                         
-                        logging.info(
-                            msg=f"[{label}] REBASING EVENT on {split_date.date()}: Price jumped from {prev_price:.4f} to {curr_price:.4f} (Factor: {factor:.4f}). Adjusting older data."
-                        )
-                        
-                        # Wektorowe pomnożenie wszystkich wierszy przed datą podziału
-                        for col in available_cols:
-                            col_idx = df.columns.get_loc(key=col)
-                            df.iloc[:loc, col_idx] = df.iloc[:loc, col_idx] * factor
+                        if prev_price != 0.0:
+                            factor = curr_price / prev_price
+                            
+                            logging.info(
+                                msg=f"[{label}] REBASING EVENT on {split_date.date()}: Price jumped from {prev_price:.4f} to {curr_price:.4f} (Factor: {factor:.4f}). Adjusting older data."
+                            )
+                            
+                            # Wektorowe pomnożenie wszystkich wierszy przed datą podziału
+                            for col in available_cols:
+                                col_idx = df.columns.get_loc(key=col)
+                                df.iloc[:loc, col_idx] = df.iloc[:loc, col_idx] * factor
 
         return df.reset_index()
 
