@@ -478,7 +478,7 @@ def run_strategy_numba(
     atr_window: int = 20,
 ) -> dict[str, float] | None:
     """
-    Blazing fast strategy simulator resolving to Numba core. 
+    Blazing fast strategy simulator resolving to Numba core.
     Ideal for repeated calls in parameter evaluation sweeps.
     """
     df_copy = df.copy()
@@ -1850,9 +1850,11 @@ def walk_forward(
 
 def analyze_trades(
     trades: pd.DataFrame,
-    boundary_exits: set[str] = {"CARRY", "SAMPLE_END"},
+    boundary_exits: set[str] = None,
 ) -> dict[str, float] | None:
 
+    if boundary_exits is None:
+        boundary_exits = {"CARRY", "SAMPLE_END"}
     if trades.empty:
         return None
 

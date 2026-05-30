@@ -3,7 +3,7 @@
 moj_system/scripts/objective_benchmarker.py
 ===========================================
 Performs annual objective function review for the PENSION strategy.
-Compares different optimization targets (CalMAR, Sharpe, etc.) 
+Compares different optimization targets (CalMAR, Sharpe, etc.)
 using the validated 7+1 ATR configuration.
 """
 

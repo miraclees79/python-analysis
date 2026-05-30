@@ -33,7 +33,7 @@ def simulate_ppe_execution(
 ) -> tuple[pd.Series, dict[str, float], dict[str, float]]:
     """
     Symuluje faktyczne zachowanie portfela nakładając wagi teoretyczne
-    na stopy zwrotu funduszy PPE. Zwraca krzywą equity, metryki oraz 
+    na stopy zwrotu funduszy PPE. Zwraca krzywą equity, metryki oraz
     szczegółową dekompozycję błędów odwzorowania.
     """
     ret_df = pd.DataFrame(index=ppe_df.index)

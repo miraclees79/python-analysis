@@ -283,7 +283,7 @@ def regime_transition_matrix(
     s = regime_series.dropna()
     regimes = sorted(s.unique())
     mat = pd.DataFrame(0.0, index=regimes, columns=regimes)
-    for a, b in zip(s.iloc[:-1], s.iloc[1:]):
+    for a, b in zip(s.iloc[:-1], s.iloc[1:], strict=False):
         mat.loc[a, b] += 1
     mat = mat.div(mat.sum(axis=1), axis=0)
     return mat.round(3)
@@ -533,4 +533,4 @@ def analyze_production_candidates(
     )
 
     # Zwracamy tylko kandydatów, posortowanych od najlepszego wyniku
-    return df[df["is_candidate"] == True].sort_values(by="ranking_score", ascending=False)
+    return df[df["is_candidate"]].sort_values(by="ranking_score", ascending=False)

@@ -5,7 +5,7 @@ moj_system/core/fund_filter.py
 Moduł badawczy dla strategii opartych na "szerokości rynku" funduszy (fund breadth).
 
 Zawiera logikę do pobierania danych funduszy z archiwum ZIP (via DataUpdater),
-budowania zsynchronizowanego panelu NAV i generowania sygnału transakcyjnego 
+budowania zsynchronizowanego panelu NAV i generowania sygnału transakcyjnego
 na podstawie stóp zwrotu z najlepszych i najgorszych funduszy w danym okresie.
 """
 
@@ -142,7 +142,7 @@ def compute_fund_breadth_signal(
     exit_since_thresh:  float = -0.05,
 ) -> pd.Series:
     """
-    Compute a binary IN/OUT signal from a panel of fund NAV series 
+    Compute a binary IN/OUT signal from a panel of fund NAV series
     using comparative performance logic.
     """
     fund_rets = funds_df.pct_change()
@@ -219,7 +219,7 @@ def generate_fund_filter_signal(
     """
     Główna funkcja orkiestrująca. Pobiera dane funduszy, buduje zsynchronizowany panel
     i wylicza binarny sygnał na podstawie zdefiniowanych w fund_params progów.
-    
+
     Zwraca gotową serię `pd.Series`, którą można podpiąć jako `fund_signal`
     w silniku strategii.
     """

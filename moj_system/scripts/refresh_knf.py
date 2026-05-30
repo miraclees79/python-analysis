@@ -21,7 +21,7 @@ sys.path.append(project_root)
 from moj_system.data.knf_tools import KNFTools
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Refresh and Match KNF Subfunds")
     parser.add_argument(
         "--all",
