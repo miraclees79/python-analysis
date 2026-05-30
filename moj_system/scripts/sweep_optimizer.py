@@ -164,26 +164,41 @@ def _extract_window_rows(
 
 
 def _compile_window_stats(
-    window_rows:    list[dict],
+    window_rows: list[dict],
 ) -> dict:
 
     summary = {}
     if window_rows:
-        win_cagrs = [w["win_cagr"] for w in window_rows if pd.notna(w["win_cagr"])]
-        summary["window_cagr_mean"] = round(np.mean(win_cagrs), 2) if win_cagrs else pd.NA
-        summary["window_cagr_std"] = round(np.std(win_cagrs), 2) if len(win_cagrs) > 1 else pd.NA
-        summary["window_cagr_min"] = round(np.min(win_cagrs), 2) if win_cagrs else pd.NA
-        summary["window_cagr_max"] = round(np.max(win_cagrs), 2) if win_cagrs else pd.NA
+        win_cagrs = [w["win_cagr"] for w in window_rows if pd.notna(obj=w["win_cagr"])]
+        summary["window_cagr_mean"] = round(number=float(np.mean(a=win_cagrs)), ndigits=2) if win_cagrs else pd.NA
+        summary["window_cagr_std"] = round(number=float(np.std(a=win_cagrs)), ndigits=2) if len(win_cagrs) > 1 else pd.NA
+        summary["window_cagr_min"] = round(number=float(np.min(a=win_cagrs)), ndigits=2) if win_cagrs else pd.NA
+        summary["window_cagr_max"] = round(number=float(np.max(a=win_cagrs)), ndigits=2) if win_cagrs else pd.NA
         summary["param_change_count"] = sum(1 for w in window_rows if w["param_changed"])
 
         filter_modes = [w["filter_mode"] for w in window_rows if w["filter_mode"]]
         if filter_modes:
-            dominant_mode, dominant_count = Counter(filter_modes).most_common(1)[0]
+            dominant_mode, dominant_count = Counter(filter_modes).most_common(n=1)[0]
             summary["dominant_filter"] = dominant_mode
-            summary["filter_consistency"] = round((dominant_count / len(filter_modes)) * 100, 1)
+            summary["filter_consistency"] = round(number=(dominant_count / len(filter_modes)) * 100.0, ndigits=1)
         else:
             summary["dominant_filter"] = "unknown"
             summary["filter_consistency"] = pd.NA
+
+        # --- NOWE: Agregacja wag z poszczególnych okien ---
+        weight_keys = set()
+        for w_row in window_rows:
+            for key_name in w_row.keys():
+                if key_name.startswith("opt_w_") or key_name.startswith("actual_avg_w_"):
+                    weight_keys.add(key_name)
+        
+        for wk in sorted(list(weight_keys)):
+            vals = [w_row[wk] for w_row in window_rows if wk in w_row and pd.notna(obj=w_row[wk])]
+            if vals:
+                summary[f"mean_{wk}"] = round(number=float(np.mean(a=vals)), ndigits=3)
+            else:
+                summary[f"mean_{wk}"] = pd.NA
+
     else:
         for col in (
             "window_cagr_mean",
@@ -195,6 +210,7 @@ def _compile_window_stats(
             "filter_consistency",
         ):
             summary[col] = pd.NA
+
     return summary
 
 
@@ -981,10 +997,28 @@ def print_sweep_report(
             msg=f"\n{regime_df.to_string(index=False)}",
         )
 
-    # --- NOWA SEKCJA: PRODUCTION CANDIDATES ---
+    # --- NOWA SEKCJA: ASSET UTILIZATION (WAGI) ---
+    weight_cols = [c for c in results_df.columns if c.startswith("mean_opt_w_") or c.startswith("mean_actual_avg_w_")]
+    if weight_cols:
+        logging.info(
+            msg=f"\n{sep}\n--- 3. ASSET UTILIZATION (Mean Weights Across Windows) ---",
+        )
+        util_cols = ["Strategy", "train_years", "stop_mode"] + sorted(weight_cols)
+        avail_util_cols = [c for c in util_cols if c in results_df.columns]
+        util_df = results_df[avail_util_cols].copy()
+        for c in weight_cols:
+            if c in util_df.columns:
+                util_df[c] = util_df[c].apply(
+                    func=lambda x: f"{x * 100.0:.1f}%" if pd.notna(x) else "N/A"
+                )
+        logging.info(
+            msg=f"\n{util_df.to_string(index=False)}",
+        )
+
+    # --- SEKCJA: PRODUCTION CANDIDATES ---
     if candidates_df is not None and not candidates_df.empty:
         logging.info(
-            msg=f"\n{sep}\n--- 3. PRODUCTION CANDIDATES (Ranked by Weighted Score) ---",
+            msg=f"\n{sep}\n--- 4. PRODUCTION CANDIDATES (Ranked by Weighted Score) ---",
         )
         cand_cols =[
             "Strategy",
@@ -999,7 +1033,6 @@ def print_sweep_report(
         avail_cand_cols =[c for c in cand_cols if c in candidates_df.columns]
         cand_format_df = candidates_df[avail_cand_cols].copy()
 
-        # Zaokrąglenie punktacji (scores) do 3 miejsc po przecinku
         for score_col in["ranking_score", "score_protection", "score_uptrend", "score_excess"]:
             if score_col in cand_format_df.columns:
                 cand_format_df[score_col] = cand_format_df[score_col].apply(
@@ -1011,14 +1044,13 @@ def print_sweep_report(
         )
     elif candidates_df is not None:
         logging.info(
-            msg=f"\n{sep}\n--- 3. PRODUCTION CANDIDATES ---",
+            msg=f"\n{sep}\n--- 4. PRODUCTION CANDIDATES ---",
         )
         logging.info(
             msg="No configurations passed all mandatory production gates.",
         )
 
     logging.info(msg=sep)
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Professional Multi-Strategy Sweeper")
