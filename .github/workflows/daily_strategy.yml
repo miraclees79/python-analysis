@@ -41,10 +41,7 @@ jobs:
         env:
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          ZIP_URL: ${{ secrets.ZIP_URL }}
-          ZIP_PASSWORD: ${{ secrets.ZIP_PASSWORD }}
-          INT_FILE_NAME: ${{ secrets.INT_FILE_NAME }}
-          FOLDER_NAME: ${{ secrets.FOLDER_NAME }}
+          
         run: |
           # Zapisz credentials do pliku (wymagane przez GDriveClient)
           echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
