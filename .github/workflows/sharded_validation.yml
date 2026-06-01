@@ -1,11 +1,11 @@
 name: Sharded Deep Validation
 
 on:
-  workflow_dispatch:
   schedule:
-    # Uruchamia się w każdą sobotę o 0:30 UTC
-    - cron: '30 0 * * 6'
+    # Uruchomienie o 22:00 UTC w każdy piątek (5)
+    - cron: '0 22 * * 5'
   
+  workflow_dispatch:
     inputs:
       mode:
         description: 'Strategy Mode (SINGLE, PENSION, GLOBAL)'
@@ -85,16 +85,18 @@ jobs:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: |
           echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
+          
+          # Zastosowano bezpieczny mechanizm wartości domyślnych dla działania z Cron
           python -m moj_system.scripts.sharded_robustness \
             --run_mode worker \
             --shard_id ${{ matrix.shard }} \
-            --mode ${{ github.event.inputs.mode }} \
-            --asset ${{ github.event.inputs.asset }} \
-            --train ${{ github.event.inputs.train }} \
-            --test ${{ github.event.inputs.test }} \
-            --stop ${{ github.event.inputs.stop }} \
-            --n_mc ${{ github.event.inputs.worker_mc }} \
-            --n_boot ${{ github.event.inputs.worker_boot }}
+            --mode ${{ inputs.mode || 'PENSION' }} \
+            --asset ${{ inputs.asset || 'PENSION' }} \
+            --train ${{ inputs.train || '7' }} \
+            --test ${{ inputs.test || '1' }} \
+            --stop ${{ inputs.stop || 'atr' }} \
+            --n_mc ${{ inputs.worker_mc || '100' }} \
+            --n_boot ${{ inputs.worker_boot || '50' }}
             
       - name: Upload Shard Artifacts
         uses: actions/upload-artifact@v4
@@ -134,25 +136,28 @@ jobs:
         run: |
           echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
           
-          # Przygotuj opcjonalną flagę perturbacji wag
+          # Obsługa logiki booleana (jeśli wywołane ręcznie jako false to zostaw puste)
+          PERTURB_INPUT="${{ inputs.weights_perturb }}"
           PERTURB_FLAG=""
-          if [ "${{ github.event.inputs.weights_perturb }}" == "true" ]; then
+          
+          # Jeśli wejście jest puste (cron) LUB równe "true", stosujemy perturbację
+          if [ -z "$PERTURB_INPUT" ] || [ "$PERTURB_INPUT" == "true" ]; then
             PERTURB_FLAG="--weights_perturb"
           fi
 
           python -m moj_system.scripts.sharded_robustness \
             --run_mode merge \
-            --mode ${{ github.event.inputs.mode }} \
-            --asset ${{ github.event.inputs.asset }} \
-            --train ${{ github.event.inputs.train }} \
-            --test ${{ github.event.inputs.test }} \
-            --stop ${{ github.event.inputs.stop }} \
+            --mode ${{ inputs.mode || 'PENSION' }} \
+            --asset ${{ inputs.asset || 'PENSION' }} \
+            --train ${{ inputs.train || '7' }} \
+            --test ${{ inputs.test || '1' }} \
+            --stop ${{ inputs.stop || 'atr' }} \
             $PERTURB_FLAG
             
       - name: Upload Final Validation Report
         uses: actions/upload-artifact@v4
         with:
-          name: final-validation-report-${{ github.event.inputs.asset }}
+          name: final-validation-report-${{ inputs.asset || 'PENSION' }}
           path: |
             outputs/*.log
             outputs/*.png
