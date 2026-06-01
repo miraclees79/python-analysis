@@ -2,6 +2,10 @@ name: Sharded Deep Validation
 
 on:
   workflow_dispatch:
+  schedule:
+    # Uruchamia się w każdą sobotę o 0:30 UTC
+    - cron: '30 0 * * 6'
+  
     inputs:
       mode:
         description: 'Strategy Mode (SINGLE, PENSION, GLOBAL)'
