@@ -1,0 +1,159 @@
+name: Sharded Validation GLOBAL_B
+
+on:
+  schedule:
+    # Uruchomienie o 22:00 UTC w każdą niedzielę (0)
+    - cron: '0 22 * * 0'
+  
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Strategy Mode (SINGLE, PENSION, GLOBAL)'
+        required: true
+        type: choice
+        options:
+          - GLOBAL
+          - PENSION
+          - SINGLE
+        default: 'GLOBAL'
+      asset:
+        description: 'Asset Key (e.g., GLOBAL_B, GLOBAL_A)'
+        required: true
+        type: string
+        default: 'GLOBAL_B'
+      train:
+        description: 'Train window (years)'
+        required: true
+        type: string
+        default: '7'
+      test:
+        description: 'Test window (years)'
+        required: true
+        type: string
+        default: '2'
+      stop:
+        description: 'Stop mode (atr, fixed)'
+        required: true
+        type: choice
+        options:
+          - atr
+          - fixed
+        default: 'atr'
+      worker_mc:
+        description: 'MC samples per shard (e.g. 100 * 10 = 1000)'
+        required: true
+        type: string
+        default: '100'
+      worker_boot:
+        description: 'Boot samples per shard (e.g. 50 * 10 = 500)'
+        required: true
+        type: string
+        default: '50'
+      weights_perturb:
+        description: 'Run allocation weight perturbation (Merge step)'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  worker:
+    name: Worker Shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Sharded Worker
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
+          
+          python -m moj_system.scripts.sharded_robustness \
+            --run_mode worker \
+            --shard_id ${{ matrix.shard }} \
+            --mode ${{ inputs.mode || 'GLOBAL' }} \
+            --asset ${{ inputs.asset || 'GLOBAL_B' }} \
+            --train ${{ inputs.train || '7' }} \
+            --test ${{ inputs.test || '2' }} \
+            --stop ${{ inputs.stop || 'atr' }} \
+            --n_mc ${{ inputs.worker_mc || '100' }} \
+            --n_boot ${{ inputs.worker_boot || '50' }}
+            
+      - name: Upload Shard Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-global-${{ matrix.shard }}-results
+          path: outputs/shard_${{ matrix.shard }}_*.csv
+          retention-days: 1
+
+  merge:
+    name: Merge and Evaluate
+    needs: worker
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download Shard Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: outputs/
+          pattern: shard-global-*-results
+          merge-multiple: true
+
+      - name: Run Sharded Merge
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
+          
+          PERTURB_INPUT="${{ inputs.weights_perturb }}"
+          PERTURB_FLAG=""
+          if [ -z "$PERTURB_INPUT" ] || [ "$PERTURB_INPUT" == "true" ]; then
+            PERTURB_FLAG="--weights_perturb"
+          fi
+
+          python -m moj_system.scripts.sharded_robustness \
+            --run_mode merge \
+            --mode ${{ inputs.mode || 'GLOBAL' }} \
+            --asset ${{ inputs.asset || 'GLOBAL_B' }} \
+            --train ${{ inputs.train || '7' }} \
+            --test ${{ inputs.test || '2' }} \
+            --stop ${{ inputs.stop || 'atr' }} \
+            $PERTURB_FLAG
+            
+      - name: Upload Final Validation Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-validation-report-${{ inputs.asset || 'GLOBAL_B' }}
+          path: |
+            outputs/*.log
+            outputs/*.png

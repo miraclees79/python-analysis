@@ -1,0 +1,147 @@
+name: Sharded Validation WIG20TR
+
+on:
+  schedule:
+    # Uruchomienie o 22:00 UTC w każdą sobotę (6)
+    - cron: '0 22 * * 6'
+  
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Strategy Mode (SINGLE, PENSION, GLOBAL)'
+        required: true
+        type: choice
+        options:
+          - SINGLE
+          - PENSION
+          - GLOBAL
+        default: 'SINGLE'
+      asset:
+        description: 'Asset Key (e.g., WIG20TR, SP500)'
+        required: true
+        type: string
+        default: 'WIG20TR'
+      train:
+        description: 'Train window (years)'
+        required: true
+        type: string
+        default: '6'
+      test:
+        description: 'Test window (years)'
+        required: true
+        type: string
+        default: '2'
+      stop:
+        description: 'Stop mode (atr, fixed)'
+        required: true
+        type: choice
+        options:
+          - fixed
+          - atr
+        default: 'fixed'
+      worker_mc:
+        description: 'MC samples per shard (e.g. 100 * 10 = 1000)'
+        required: true
+        type: string
+        default: '100'
+      worker_boot:
+        description: 'Boot samples per shard (e.g. 50 * 10 = 500)'
+        required: true
+        type: string
+        default: '50'
+
+permissions:
+  contents: read
+
+jobs:
+  worker:
+    name: Worker Shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Sharded Worker
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
+          
+          python -m moj_system.scripts.sharded_robustness \
+            --run_mode worker \
+            --shard_id ${{ matrix.shard }} \
+            --mode ${{ inputs.mode || 'SINGLE' }} \
+            --asset ${{ inputs.asset || 'WIG20TR' }} \
+            --train ${{ inputs.train || '6' }} \
+            --test ${{ inputs.test || '2' }} \
+            --stop ${{ inputs.stop || 'fixed' }} \
+            --n_mc ${{ inputs.worker_mc || '100' }} \
+            --n_boot ${{ inputs.worker_boot || '50' }}
+            
+      - name: Upload Shard Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-single-${{ matrix.shard }}-results
+          path: outputs/shard_${{ matrix.shard }}_*.csv
+          retention-days: 1
+
+  merge:
+    name: Merge and Evaluate
+    needs: worker
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download Shard Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: outputs/
+          pattern: shard-single-*-results
+          merge-multiple: true
+
+      - name: Run Sharded Merge
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
+          
+          python -m moj_system.scripts.sharded_robustness \
+            --run_mode merge \
+            --mode ${{ inputs.mode || 'SINGLE' }} \
+            --asset ${{ inputs.asset || 'WIG20TR' }} \
+            --train ${{ inputs.train || '6' }} \
+            --test ${{ inputs.test || '2' }} \
+            --stop ${{ inputs.stop || 'fixed' }}
+            
+      - name: Upload Final Validation Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-validation-report-${{ inputs.asset || 'WIG20TR' }}
+          path: |
+            outputs/*.log
+            outputs/*.png
