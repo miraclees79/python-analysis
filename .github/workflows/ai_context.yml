@@ -1,0 +1,42 @@
+name: Generate AI Context Bundle
+
+on:
+  
+  workflow_dispatch: # Pozwala na ręczne uruchomienie z zakładki Actions
+
+jobs:
+  build-context:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+      
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install mypy pylint
+          pip install -r requirements.txt
+       
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-pol poppler-utils libgl1-mesa-dev
+      
+      
+      
+      - name: Run Context Generator
+        run: python prepare_ai_context.py
+
+      - name: Upload AI Context Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-context-bundle
+          path: ai_context/ai_context_bundle.md
