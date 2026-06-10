@@ -60,9 +60,21 @@ def main():
     # Generujemy stuby w folderze tymczasowym, aby móc je przefiltrować
     run_command("stubgen -o ai_context/stubs .")
 
-    print("--- Generowanie Diagramu Klas (DOT) ---")
-    run_command("pip install pylint")
-    run_command("pyreverse -o ai_context .")
+    print("--- Generowanie Mapy Zależności (Custom) ---")
+    dependencies = []
+    for path in Path('.').rglob('*.py'):
+        if should_ignore(path):
+            continue
+        
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                if line.startswith('from moj_system') or line.startswith('import moj_system'):
+                    # Prosta ekstrakcja: plik aktualny -> co importuje
+                    dependencies.append(f"{path.relative_to('.')} -> {line.strip()}")
+    
+    dep_graph = "\n".join(dependencies)
+    with open(output_dir / "dependencies.txt", "w", encoding="utf-8") as f:
+        f.write(dep_graph)
 
     print("--- Pakowanie przefiltrowanego kontekstu do MD ---")
     bundle_path = output_dir / "ai_context_bundle.md"
@@ -86,13 +98,14 @@ def main():
             bundle.write(pyi_file.read_text(encoding="utf-8"))
             bundle.write("\n```\n\n")
 
-        bundle.write("## Dependency Graph (DOT format)\n")
-        dot_files = list(output_dir.glob("*.dot"))
-        for dot_file in dot_files:
-            bundle.write(f"### Graph: {dot_file.name}\n")
-            bundle.write("```dot\n")
-            bundle.write(dot_file.read_text(encoding="utf-8"))
+        bundle.write("## Dependency Map (Custom Imports)\n")
+        dep_file = output_dir / "dependencies.txt"
+        if dep_file.exists():
+            bundle.write("```text\n")
+            bundle.write(dep_file.read_text(encoding="utf-8"))
             bundle.write("\n```\n\n")
+        else:
+            bundle.write("No dependencies found.\n\n")
 
     print(f"Sukces! Plik gotowy: {bundle_path}")
 
