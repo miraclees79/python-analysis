@@ -4,6 +4,9 @@ on:
   
   workflow_dispatch: # Pozwala na ręczne uruchomienie z zakładki Actions
 
+permissions:
+  contents: read
+
 jobs:
   build-context:
     runs-on: ubuntu-latest
