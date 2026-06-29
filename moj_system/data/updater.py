@@ -176,8 +176,11 @@ class DataUpdater:
                     (f for f in z.namelist() if f.lower().endswith(search_name)), None,
                 )
                 if target_file:
-                    with z.open(target_file) as f:
-                        df = pd.read_csv(f)
+                    with z.open(name=target_file) as f:
+                        # Twarde załadowanie bajtów do pamięci przed parsowaniem chroni przed Segfaultem w C-engine
+                        file_bytes = f.read()
+                        df = pd.read_csv(filepath_or_buffer=io.BytesIO(initial_bytes=file_bytes))
+                        
                         col_map = {
                             "<DATE>": "Data",
                             "<OPEN>": "Otwarcie",
