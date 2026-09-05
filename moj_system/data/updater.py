@@ -47,7 +47,7 @@ DEFAULT_TICKERS = [
     {"label": "wig20tr", "stooq": "wig20tr", "yf": "WIG20TR.WA", "type": "index_pl"},
     {"label": "mwig40tr", "stooq": "mwig40tr", "yf": "MWIG40TR.WA", "type": "index_pl"},
     {"label": "swig80tr", "stooq": "swig80tr", "yf": "SWIG80TR.WA", "type": "index_pl"},
-    {"label": "tbsp", "stooq": "^tbsp", "yf": None, "type": "index_pl"},  #{"label": "tbsp", "stooq": "^tbsp", "yf": "TBSP-INDEX.WA", "type": "index_pl"},
+    {"label": "tbsp", "stooq": "^tbsp", "yf": "TBSP-INDEX.WA", "type": "index_pl"}, #{"label": "tbsp", "stooq": "^tbsp", "yf": None, "type": "index_pl"},
     {"label": "sp500", "stooq": "^spx", "yf": "^GSPC", "type": "index_world"},
     {"label": "nikkei225", "stooq": "^nkx", "yf": "^N225", "type": "index_world"},
     {"label": "nasdaq100", "stooq": "^ndx", "yf": "^NDX", "type": "index_world"},
