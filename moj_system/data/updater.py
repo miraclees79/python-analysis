@@ -7,14 +7,13 @@ Hybrid data updater module. Handles default indices, ETFs, and KNF funds.
 
 import io
 import logging
-import os
 import zipfile
+from typing import Any, cast
 
 import pandas as pd
 import requests
 import yfinance as yf
 
-# --- PATH CONFIGURATION ---
 from moj_system.config import DATA_DIR
 from moj_system.data.gdrive import GDriveClient
 
@@ -39,7 +38,7 @@ CONFIRMED_FUNDS_FILE = "knf_stooq_confirmed.csv"
 GDRIVE_DATA_FOLDER_NAME = "Dane"
 
 # =========================================================================
-# TICKER LISTS (Ported from legacy stooq_hybrid_updater.py)
+# TICKER LISTS
 # =========================================================================
 
 DEFAULT_TICKERS = [
@@ -47,7 +46,7 @@ DEFAULT_TICKERS = [
     {"label": "wig20tr", "stooq": "wig20tr", "yf": "WIG20TR.WA", "gpw_isin": "PL9999999425", "type": "index_pl"},
     {"label": "mwig40tr", "stooq": "mwig40tr", "yf": "MWIG40TR.WA", "gpw_isin": "PL9999999078", "type": "index_pl"},
     {"label": "swig80tr", "stooq": "swig80tr", "yf": "SWIG80TR.WA", "gpw_isin": "PL9999999060", "type": "index_pl"},
-    {"label": "tbsp", "stooq": "^tbsp", "yf": None, "gpw_isin": "PL9999999474", "type": "index_pl"},#{"label": "tbsp", "stooq": "^tbsp", "yf": "TBSP-INDEX.WA", "type": "index_pl"}, #{"label": "tbsp", "stooq": "^tbsp", "yf": None, "type": "index_pl"},
+    {"label": "tbsp", "stooq": "^tbsp", "yf": None, "gpw_isin": "PL9999999474", "type": "index_pl"},
     {"label": "sp500", "stooq": "^spx", "yf": "^GSPC", "type": "index_world"},
     {"label": "nikkei225", "stooq": "^nkx", "yf": "^N225", "type": "index_world"},
     {"label": "nasdaq100", "stooq": "^ndx", "yf": "^NDX", "type": "index_world"},
@@ -58,7 +57,7 @@ DEFAULT_TICKERS = [
     {"label": "de10y", "stooq": "10ydey.b", "yf": None, "type": "bonds"},
     {"label": "pl10y", "stooq": "10yply.b", "yf": None, "type": "bonds"},
     {"label": "fund_2720", "stooq": "2720.n", "yf": None, "type": "fund_pl", "knf": "195983"},
-    {"label": "wbbw", "stooq": "^gpwbbwz", "yf": None,  "type": "index_pl"},
+    {"label": "wbbw", "stooq": "^gpwbbwz", "yf": None, "type": "index_pl"},
 ]
 
 ETF_TICKERS = [
@@ -68,12 +67,7 @@ ETF_TICKERS = [
     {"label": "etfbw20lv", "stooq": "etfbw20lv.pl", "yf": "ETFBW20LV.WA", "type": "etf_pl"},
     {"label": "etfbw20st", "stooq": "etfbw20st.pl", "yf": "ETFBW20ST.WA", "type": "etf_pl"},
     {"label": "etfbw20tr", "stooq": "etfbw20tr.pl", "yf": "ETFBW20TR.WA", "type": "etf_pl"},
-    {
-        "label": "etfpzuw20m40",
-        "stooq": "etfpzuw20m40.pl",
-        "yf": "ETFPZUW20M40.WA",
-        "type": "etf_pl",
-    },
+    {"label": "etfpzuw20m40", "stooq": "etfpzuw20m40.pl", "yf": "ETFPZUW20M40.WA", "type": "etf_pl"},
     {"label": "etfbcash", "stooq": "etfbcash.pl", "yf": "ETFBCASH.WA", "type": "etf_pl"},
     {"label": "etfbtbsp", "stooq": "etfbtbsp.pl", "yf": "ETFBTBSP.WA", "type": "etf_pl"},
     {"label": "etfbndxpl", "stooq": "etfbndxpl.pl", "yf": "ETFBNDXPL.WA", "type": "etf_pl"},
@@ -83,70 +77,72 @@ ETF_TICKERS = [
     {"label": "etfdax", "stooq": "etfdax.pl", "yf": "ETFDAX.WA", "type": "etf_pl"},
 ]
 
-
 class DataUpdater:
     def __init__(
         self, 
         gdrive_folder_id: str | None = None, 
         credentials_path: str | None = None,
     ) -> None:
-
-        self.gdrive = GDriveClient(credentials_path)
+        self.gdrive = GDriveClient(credentials_path=credentials_path)
         self.root_folder_id = gdrive_folder_id or os.environ.get("GDRIVE_FOLDER_ID")
         self.data_folder_id = None
-        if self.gdrive.service and self.root_folder_id:
-            self.data_folder_id = self._get_or_create_subfolder(GDRIVE_DATA_FOLDER_NAME)
+        
+        service: Any = self.gdrive.service
+        if service and self.root_folder_id:
+            self.data_folder_id = self._get_or_create_subfolder(folder_name=GDRIVE_DATA_FOLDER_NAME)
 
     def _get_or_create_subfolder(
         self, 
         folder_name: str,
     ) -> str | None:
-
-        """Gets or creates a subfolder on GDrive."""
-        if not self.gdrive.service:
+        service: Any = self.gdrive.service
+        if not service:
             return None
+        
         query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        results = self.gdrive.service.files().list(q=query, fields="files(id)").execute()
+        results = service.files().list(q=query, fields="files(id)").execute()
         items = results.get("files", [])
         if items:
             return items[0]["id"]
+            
         metadata = {
             "name": folder_name,
             "mimeType": "application/vnd.google-apps.folder",
             "parents": [self.root_folder_id],
         }
-        folder = self.gdrive.service.files().create(body=metadata, fields="id").execute()
+        folder = service.files().create(body=metadata, fields="id").execute()
         return folder.get("id")
 
     def _get_zip_content(
         self, 
         zip_type: str,
     ) -> bytes | None:
-
         zip_name = ZIP_MAPPING.get(zip_type)
         if not zip_name:
             return None
+        
         local_path = ZIP_DIR / zip_name
         if local_path.exists():
             return local_path.read_bytes()
-        if self.root_folder_id and self.gdrive.service:
-            logging.info(f"Downloading {zip_name} from GDrive...")
-            file_id = self.gdrive.find_file_id(self.root_folder_id, zip_name)
+            
+        service: Any = self.gdrive.service
+        if self.root_folder_id and service:
+            logging.info(msg=f"Downloading {zip_name} from GDrive...")
+            file_id = self.gdrive.find_file_id(parent_id=self.root_folder_id, filename=zip_name)
             if file_id:
                 try:
-                    request = self.gdrive.service.files().get_media(fileId=file_id)
+                    request = service.files().get_media(fileId=file_id)
                     fh = io.BytesIO()
                     from googleapiclient.http import MediaIoBaseDownload
-
-                    downloader = MediaIoBaseDownload(fh, request)
+                    downloader = MediaIoBaseDownload(fd=fh, request=request)
                     done = False
                     while not done:
                         _, done = downloader.next_chunk()
                     content = fh.getvalue()
-                    local_path.write_bytes(content)
+                    local_path.write_bytes(data=content)
                     return content
                 except Exception as e:
-                    logging.error(f"GDrive ZIP error: {e}")
+                    logging.error(msg=f"GDrive ZIP error: {e}")
         return None
 
     def _extract_from_zip(
@@ -154,30 +150,16 @@ class DataUpdater:
         zip_data:     bytes, 
         stooq_ticker: str,
     ) -> pd.DataFrame | None:
-
-        """
-        Wyodrebnia dane pojedynczego tickera z duzego archiwum ZIP pobranego ze Stooq.
-
-        Mechanism:
-        ----------
-        Przeszukuje plik ZIP w pamięci, parsuje plik tekstowy tickera, mapuje nazwy
-        kolumn Stooq (<DATE>, <CLOSE>) na systemowe ('Data', 'Zamkniecie') i konwertuje daty.
-
-        Returns:
-            --------
-            pd.DataFrame | None - Dane historyczne w formacie ramki danych.
-        """
         if not zip_data:
             return None
         try:
-            with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
+            with zipfile.ZipFile(file=io.BytesIO(initial_bytes=zip_data)) as z:
                 search_name = f"{stooq_ticker.lower()}.txt"
                 target_file = next(
                     (f for f in z.namelist() if f.lower().endswith(search_name)), None,
                 )
                 if target_file:
                     with z.open(name=target_file) as f:
-                        # Twarde załadowanie bajtów do pamięci przed parsowaniem chroni przed Segfaultem w C-engine
                         file_bytes = f.read()
                         df = pd.read_csv(filepath_or_buffer=io.BytesIO(initial_bytes=file_bytes))
                         
@@ -190,10 +172,10 @@ class DataUpdater:
                         }
                         cols_to_keep = [c for c in col_map.keys() if c in df.columns]
                         df = df[cols_to_keep].rename(columns={k: col_map[k] for k in cols_to_keep})
-                        df["Data"] = pd.to_datetime(df["Data"], format="%Y%m%d")
+                        df["Data"] = pd.to_datetime(arg=df["Data"], format="%Y%m%d")
                         return df
         except Exception as e:
-            logging.error(f"ZIP error for {stooq_ticker}: {e}")
+            logging.error(msg=f"ZIP error for {stooq_ticker}: {e}")
         return None
 
     def _fetch_yfinance_data(
@@ -203,18 +185,13 @@ class DataUpdater:
     ) -> pd.DataFrame | None:
         try:
             df = yf.download(tickers=ticker_yf, start=start_date, progress=False, auto_adjust=True)
-            if df.empty:
+            if df is None or df.empty:
                 return None
             
-            # Usunięcie poziomu MultiIndex (jeśli występuje np. w nowym yfinance)
             if isinstance(df.columns, pd.MultiIndex):
                 df = df.droplevel(level=1, axis=1)
             
-            # --- PANCERNA POPRAWKA ---
-            # Zamiast zgadywać czy Yahoo zwróciło "Date" czy "Datetime",
-            # po prostu na twardo nazywamy indeks jako "Data" przed resetem.
             df.index.name = "Data"
-            
             df = df.reset_index().rename(
                 columns={
                     "Open": "Otwarcie",
@@ -225,35 +202,24 @@ class DataUpdater:
             )
             
             df["Data"] = pd.to_datetime(arg=df["Data"]).dt.tz_localize(tz=None)
-            
             cols = ["Data", "Otwarcie", "Najwyzszy", "Najnizszy", "Zamkniecie"]
             return df[[c for c in cols if c in df.columns]]
             
         except Exception as e:
             logging.warning(msg=f"yfinance error ({ticker_yf}): {e}")
             return None
-        
+
     def _fetch_gpwbenchmark_data(
         self, 
         isin:       str, 
         start_date: pd.Timestamp,
     ) -> pd.DataFrame | None:
-        """
-        Pobiera czyste dane historyczne bezpośrednio z ukrytego API GPW Benchmark.
-        Używane jako super-dokładny fallback dla polskich indeksów (np. TBSP) zamiast YFinance.
-        """
         import json
         import time
         import urllib.parse
-        
-        import requests
 
-        # Budowa parametru GET (zgodnie z rzeczywistym ruchem)
-        # Payload musi być listą zawierającą słownik. Używamy sprawdzonego trybu "14D".
         payload = [{"isin": isin, "mode": "14D"}] 
         encoded_payload = urllib.parse.quote(string=json.dumps(obj=payload))
-        
-        # Cache-buster (aktualny czas w milisekundach)
         t_param = int(time.time() * 1000.0)
         url = f"https://gpwbenchmark.pl/chart-json.php?req={encoded_payload}&t={t_param}"
 
@@ -269,7 +235,6 @@ class DataUpdater:
             response.raise_for_status()
             data = response.json()
 
-            # Ekstrakcja zagnieżdżonych danych: data -> pierwszy element listy -> "data"
             if isinstance(data, list) and len(data) > 0:
                 dataset = data[0].get("data", [])
             else:
@@ -281,11 +246,8 @@ class DataUpdater:
 
             records = []
             for item in dataset:
-                # Sprawdzamy czy mamy wymagane klucze 't' (czas) i 'c' (close)
                 if "t" in item and "c" in item:
-                    # 't' jest w sekundach (unit="s")
                     date_val = pd.to_datetime(arg=item["t"], unit="s").tz_localize(tz=None).normalize()
-                    
                     if date_val > start_date:
                         records.append(
                             {
@@ -306,28 +268,30 @@ class DataUpdater:
         except Exception as e:
             logging.warning(msg=f"GPW Benchmark API error ({isin}): {e}")
             return None
-        
+
     def _fetch_knf_data(
         self, 
         subfund_id: str | None, 
         start_date: pd.Timestamp,
     ) -> pd.DataFrame | None:
-
-        if not subfund_id or pd.isna(subfund_id):
+        if not subfund_id or pd.isna(obj=subfund_id):
             return None
+        
         url = "https://wybieramfundusze-api.knf.gov.pl/v1/valuations"
         params = {
             "subfundId": int(float(subfund_id)),
-            "dateFrom": pd.to_datetime(start_date).normalize().strftime("%Y-%m-%d"),
+            "dateFrom": pd.to_datetime(arg=start_date).normalize().strftime(format="%Y-%m-%d"),
         }
+        
         try:
-            response = requests.get(url, params=params, timeout=20)
+            response = requests.get(url=url, params=params, timeout=20)
             response.raise_for_status()
             data = response.json()
             items = data.get("content", []) if isinstance(data, dict) else data
             records = []
+            
             for item in items:
-                v_date = pd.to_datetime(item.get("date")).normalize()
+                v_date = pd.to_datetime(arg=item.get("date")).normalize()
                 if v_date > start_date:
                     records.append(
                         {
@@ -336,11 +300,12 @@ class DataUpdater:
                             "Najwyzszy": item.get("valuation"),
                             "Najnizszy": item.get("valuation"),
                             "Zamkniecie": item.get("valuation"),
-                        },
+                        }
                     )
-            return pd.DataFrame(records).sort_values("Data") if records else None
+            return pd.DataFrame(data=records).sort_values(by="Data") if records else None
+            
         except Exception as e:
-            logging.warning(f"KNF API Error: {e}")
+            logging.warning(msg=f"KNF API Error: {e}")
             return None
 
     def _validate_and_clean(
@@ -348,7 +313,6 @@ class DataUpdater:
         df:    pd.DataFrame, 
         label: str,
     ) -> pd.DataFrame | None:
-
         if df is None or df.empty:
             return None
 
@@ -362,31 +326,31 @@ class DataUpdater:
             keys="Data"
         )
         
-        # 1. Usuwanie starych danych odciętych dziurą > 30 dni
         date_diffs = df.index.to_series().diff().dt.days
         breaks = date_diffs[date_diffs > 30].index
         if not breaks.empty:
             df = df.loc[df.index > breaks[-1]]
 
-        # 2. LOGIKA PRZEBAZOWANIA (REBASING) ZMIAN > 40% (TYLKO DLA FUNDUSZY)
         if label.startswith("fund_"):
             price_cols = ["Otwarcie", "Najwyzszy", "Najnizszy", "Zamkniecie"]
             available_cols = [c for c in price_cols if c in df.columns]
 
             if "Zamkniecie" in df.columns and len(df) > 1:
                 pct_change = df["Zamkniecie"].pct_change()
-                
-                # Wyszukanie indeksów, gdzie bezwzględna zmiana przekracza 40% (0.40)
                 split_indices = pct_change[pct_change.abs() > 0.40].index
 
                 for split_date in split_indices:
                     loc = df.index.get_loc(key=split_date)
                     
-                    # Upewniamy się, że loc to int (po drop_duplicates tak musi być) i > 0
                     if isinstance(loc, int) and loc > 0:
                         prev_date = df.index[loc - 1]
-                        prev_price = float(df.loc[prev_date, "Zamkniecie"])
-                        curr_price = float(df.loc[split_date, "Zamkniecie"])
+                        
+                        # Pobranie bezpieczne typologicznellement
+                        prev_val = cast(float, df.at[prev_date, "Zamkniecie"])
+                        curr_val = cast(float, df.at[split_date, "Zamkniecie"])
+                        
+                        prev_price = float(prev_val)
+                        curr_price = float(curr_val)
                         
                         if prev_price != 0.0:
                             factor = curr_price / prev_price
@@ -395,10 +359,10 @@ class DataUpdater:
                                 msg=f"[{label}] REBASING EVENT on {split_date.date()}: Price jumped from {prev_price:.4f} to {curr_price:.4f} (Factor: {factor:.4f}). Adjusting older data."
                             )
                             
-                            # Wektorowe pomnożenie wszystkich wierszy przed datą podziału
                             for col in available_cols:
                                 col_idx = df.columns.get_loc(key=col)
-                                df.iloc[:loc, col_idx] = df.iloc[:loc, col_idx] * factor
+                                if isinstance(col_idx, int):
+                                    df.iloc[:loc, col_idx] = df.iloc[:loc, col_idx] * factor
 
         return df.reset_index()
 
@@ -412,24 +376,8 @@ class DataUpdater:
         zip_type:        str        = "index_pl",
         upload_to_drive: bool       = False,
     ) -> bool:
-        """
-        Aktualizuje dane instrumentu korzystając z hybrydowych zrodeł (Stooq ZIP + API).
-
-        Mechanism:
-            ----------
-            1. Pobiera bazę historyczną z lokalnego lub zdalnego (GDrive) pliku ZIP.
-            2. Pobiera najnowsze dane z YFinance, GPW Benchmark lub KNF API.
-            3. Łączy serie, usuwa duplikaty i waliduje ciągłość danych (brak dziur > 30 dni).
-            4. Zapisuje wynik do raw_csv i opcjonalnie wysyła na GDrive.
-
-        Returns:
-            --------
-            bool - True jesli aktualizacja zakończyła się sukcesem.
-        """
-
         logging.info(msg=f"--- Updating: {label} ({stooq_ticker}) ---")
         
-        # 1. Pobieranie danych z ZIP (Stooq)
         zip_data = self._get_zip_content(zip_type=zip_type)
         if not zip_data:
             logging.error(msg=f"   [ZIP] Failed to retrieve ZIP content for type '{zip_type}'.")
@@ -443,24 +391,18 @@ class DataUpdater:
 
         last_date = df_hist["Data"].max() if df_hist is not None and not df_hist.empty else pd.Timestamp("1990-01-01")
 
-        # 2. Dynamiczny routing źródeł danych zewnętrznych (Kaskada / Fallback)
         df_new = None
-        
-        # Próba 1: Oficjalne źródło (GPW Benchmark)
         if gpw_isin:
             logging.info(msg=f"   [API] Fetching missing data from GPW Benchmark ({gpw_isin}) since {last_date.date()}...")
             df_new = self._fetch_gpwbenchmark_data(isin=gpw_isin, start_date=last_date)
             
-        # Próba 2: Zewnętrzny agregator (YFinance) - uruchamia się, jeśli GPW nie było skonfigurowane, LUB jeśli zawiodło
         if yf_ticker and (df_new is None or df_new.empty):
             if gpw_isin:
                 logging.warning(msg=f"   [API] GPW Benchmark failed or returned no data. Falling back to YFinance ({yf_ticker})...")
             else:
                 logging.info(msg=f"   [API] Fetching missing data from YFinance ({yf_ticker}) since {last_date.date()}...")
-            
             df_new = self._fetch_yfinance_data(ticker_yf=yf_ticker, start_date=last_date)
             
-        # Próba 3: KNF API dla funduszy
         if knf_id and (df_new is None or df_new.empty):
             logging.info(msg=f"   [API] Fetching missing data from KNF API (Fund ID: {knf_id}) since {last_date.date()}...")
             df_new = self._fetch_knf_data(subfund_id=knf_id, start_date=last_date)
@@ -468,13 +410,11 @@ class DataUpdater:
         if not (gpw_isin or yf_ticker or knf_id):
             logging.info(msg="   [API] No external API configured. Relying solely on Stooq ZIP history.")
 
-        # Logowanie wyniku z API
         if df_new is not None and not df_new.empty:
             logging.info(msg=f"   [API] Successfully retrieved {len(df_new)} new rows.")
         elif (yf_ticker or gpw_isin or knf_id):
             logging.warning(msg=f"   [API] External API returned no new data (or an error occurred) for {label}.")
 
-        # 3. Łączenie danych (Stooq + API)
         if df_hist is not None and not df_hist.empty and df_new is not None and not df_new.empty:
             df_final = pd.concat(objs=[df_hist, df_new], ignore_index=True)
         elif df_hist is not None and not df_hist.empty:
@@ -490,7 +430,6 @@ class DataUpdater:
             logging.error(msg=f"   [DATA] Final dataset for {label} is empty. Update failed.")
             return False
                 
-        # 4. Czyszczenie i zapis
         df_validated = self._validate_and_clean(df=df_final, label=label)
         
         if df_validated is not None and not df_validated.empty:
@@ -500,7 +439,8 @@ class DataUpdater:
             df_validated.to_csv(path_or_buf=out_path, index=False)
             logging.info(msg=f"   [SAVE] Saved {len(df_validated)} rows to {out_path.name}")
             
-            if upload_to_drive and self.gdrive.service and self.data_folder_id:
+            service: Any = self.gdrive.service
+            if upload_to_drive and service and self.data_folder_id:
                 fname = f"historia{stooq_ticker[:4] if zip_type == 'fund_pl' else stooq_ticker}.csv"
                 logging.info(msg=f"   [DRIVE] Uploading {fname} to Google Drive...")
                 self.gdrive.upload_csv(folder_id=self.data_folder_id, local_path=str(out_path), filename=fname)
@@ -514,22 +454,18 @@ class DataUpdater:
         self, 
         get_funds: bool = True,
     ) -> None:
-    
-        """Main entry point for hybrid update."""
-        logging.info(f"Full Update Started. Funds/ETFs: {get_funds}")
+        logging.info(msg=f"Full Update Started. Funds/ETFs: {get_funds}")
 
-        # 1. ALWAYS UPDATE DEFAULT TICKERS
         for item in DEFAULT_TICKERS:
             self.update_ticker(
                 label=item["label"],
                 stooq_ticker=item["stooq"],
                 yf_ticker=item.get("yf"),
                 knf_id=item.get("knf"),
-                gpw_isin=item.get("gpw_isin"), 
+                gpw_isin=item.get("gpw_isin"),
                 zip_type=item["type"],
             )
 
-        # 2. OPTIONAL: UPDATE ETFs AND DYNAMIC FUNDS
         if get_funds:
             for item in ETF_TICKERS:
                 self.update_ticker(
@@ -540,8 +476,12 @@ class DataUpdater:
                     upload_to_drive=True,
                 )
 
-            if self.gdrive.service and self.root_folder_id:
-                df_c = self.gdrive.download_csv(self.root_folder_id, CONFIRMED_FUNDS_FILE)
+            service: Any = self.gdrive.service
+            if service and self.root_folder_id:
+                df_c = self.gdrive.download_csv(
+                    folder_id=self.root_folder_id, 
+                    filename=CONFIRMED_FUNDS_FILE
+                )
                 if df_c is not None and not df_c.empty:
                     for _, row in df_c.dropna(subset=["stooq_id"]).iterrows():
                         sid = str(row["stooq_id"]).lower()
