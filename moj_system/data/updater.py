@@ -6,6 +6,7 @@ Hybrid data updater module. Handles default indices, ETFs, and KNF funds.
 """
 
 import io
+import os
 import logging
 import zipfile
 from typing import Any, cast
