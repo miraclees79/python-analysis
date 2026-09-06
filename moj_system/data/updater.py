@@ -47,7 +47,7 @@ DEFAULT_TICKERS = [
     {"label": "wig20tr", "stooq": "wig20tr", "yf": "WIG20TR.WA", "type": "index_pl"},
     {"label": "mwig40tr", "stooq": "mwig40tr", "yf": "MWIG40TR.WA", "type": "index_pl"},
     {"label": "swig80tr", "stooq": "swig80tr", "yf": "SWIG80TR.WA", "type": "index_pl"},
-    {"label": "tbsp", "stooq": "^tbsp", "yf": "TBSP-INDEX.WA", "type": "index_pl"}, #{"label": "tbsp", "stooq": "^tbsp", "yf": None, "type": "index_pl"},
+    {"label": "tbsp", "stooq": "^tbsp", "yf": None, "gpw_isin": "PL9999999474", "type": "index_pl"},#{"label": "tbsp", "stooq": "^tbsp", "yf": "TBSP-INDEX.WA", "type": "index_pl"}, #{"label": "tbsp", "stooq": "^tbsp", "yf": None, "type": "index_pl"},
     {"label": "sp500", "stooq": "^spx", "yf": "^GSPC", "type": "index_world"},
     {"label": "nikkei225", "stooq": "^nkx", "yf": "^N225", "type": "index_world"},
     {"label": "nasdaq100", "stooq": "^ndx", "yf": "^NDX", "type": "index_world"},
@@ -232,7 +232,81 @@ class DataUpdater:
         except Exception as e:
             logging.warning(msg=f"yfinance error ({ticker_yf}): {e}")
             return None
+        
+    def _fetch_gpwbenchmark_data(
+        self, 
+        isin:       str, 
+        start_date: pd.Timestamp,
+    ) -> pd.DataFrame | None:
+        """
+        Pobiera czyste dane historyczne bezpośrednio z ukrytego API GPW Benchmark.
+        Używane jako super-dokładny fallback dla polskich indeksów (np. TBSP) zamiast YFinance.
+        """
+        import json
+        import time
+        import urllib.parse
+        
+        import requests
 
+        # Budowa parametru GET (zgodnie z rzeczywistym ruchem)
+        # Payload musi być listą zawierającą słownik. Używamy sprawdzonego trybu "14D".
+        payload = [{"isin": isin, "mode": "14D"}] 
+        encoded_payload = urllib.parse.quote(string=json.dumps(obj=payload))
+        
+        # Cache-buster (aktualny czas w milisekundach)
+        t_param = int(time.time() * 1000.0)
+        url = f"https://gpwbenchmark.pl/chart-json.php?req={encoded_payload}&t={t_param}"
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": f"https://gpwbenchmark.pl/karta-indeksu?isin={isin}",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+
+        try:
+            response = requests.get(url=url, headers=headers, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+
+            # Ekstrakcja zagnieżdżonych danych: data -> pierwszy element listy -> "data"
+            if isinstance(data, list) and len(data) > 0:
+                dataset = data[0].get("data", [])
+            else:
+                dataset = []
+
+            if not dataset:
+                logging.warning(msg=f"GPW Benchmark returned empty dataset for {isin}")
+                return None
+
+            records = []
+            for item in dataset:
+                # Sprawdzamy czy mamy wymagane klucze 't' (czas) i 'c' (close)
+                if "t" in item and "c" in item:
+                    # 't' jest w sekundach (unit="s")
+                    date_val = pd.to_datetime(arg=item["t"], unit="s").tz_localize(tz=None).normalize()
+                    
+                    if date_val > start_date:
+                        records.append(
+                            {
+                                "Data": date_val,
+                                "Otwarcie": float(item.get("o", item["c"])),
+                                "Najwyzszy": float(item.get("h", item["c"])),
+                                "Najnizszy": float(item.get("l", item["c"])),
+                                "Zamkniecie": float(item["c"]),
+                            }
+                        )
+
+            if not records:
+                return None
+
+            df = pd.DataFrame(data=records).sort_values(by="Data")
+            return df
+
+        except Exception as e:
+            logging.warning(msg=f"GPW Benchmark API error ({isin}): {e}")
+            return None
+        
     def _fetch_knf_data(
         self, 
         subfund_id: str | None, 
@@ -334,6 +408,7 @@ class DataUpdater:
         stooq_ticker:    str,
         yf_ticker:       str | None = None,
         knf_id:          str | None = None,
+        gpw_isin:        str | None = None,
         zip_type:        str        = "index_pl",
         upload_to_drive: bool       = False,
     ) -> bool:
@@ -343,7 +418,7 @@ class DataUpdater:
         Mechanism:
             ----------
             1. Pobiera bazę historyczną z lokalnego lub zdalnego (GDrive) pliku ZIP.
-            2. Pobiera najnowsze dane z Yahoo Finance lub KNF API (dla funduszy).
+            2. Pobiera najnowsze dane z YFinance, GPW Benchmark lub KNF API.
             3. Łączy serie, usuwa duplikaty i waliduje ciągłość danych (brak dziur > 30 dni).
             4. Zapisuje wynik do raw_csv i opcjonalnie wysyła na GDrive.
 
@@ -352,34 +427,76 @@ class DataUpdater:
             bool - True jesli aktualizacja zakończyła się sukcesem.
         """
 
-        logging.info(f"--- Updating: {label} ({stooq_ticker}) ---")
-        zip_data = self._get_zip_content(zip_type)
-        df_hist = self._extract_from_zip(zip_data, stooq_ticker) if zip_data else None
-        last_date = df_hist["Data"].max() if df_hist is not None else pd.Timestamp("1990-01-01")
-
-        df_new = (
-            self._fetch_yfinance_data(yf_ticker, last_date)
-            if yf_ticker
-            else self._fetch_knf_data(knf_id, last_date)
-        )
-        df_final = (
-            pd.concat([df_hist, df_new], ignore_index=True)
-            if (df_hist is not None and df_new is not None)
-            else (df_hist if df_hist is not None else df_new)
-        )
-        if df_final is not None and not df_final.empty:
-            logging.info(f"   [DATA] {label} range: {df_final['Data'].min().date()} to {df_final['Data'].max().date()}")
+        logging.info(msg=f"--- Updating: {label} ({stooq_ticker}) ---")
         
+        # 1. Pobieranie danych z ZIP (Stooq)
+        zip_data = self._get_zip_content(zip_type=zip_type)
+        if not zip_data:
+            logging.error(msg=f"   [ZIP] Failed to retrieve ZIP content for type '{zip_type}'.")
+            df_hist = None
+        else:
+            df_hist = self._extract_from_zip(zip_data=zip_data, stooq_ticker=stooq_ticker)
+            if df_hist is None or df_hist.empty:
+                logging.warning(msg=f"   [ZIP] No historical data extracted for '{stooq_ticker}' from ZIP.")
+            else:
+                logging.info(msg=f"   [ZIP] Extracted {len(df_hist)} rows. Last date: {df_hist['Data'].max().date()}")
+
+        last_date = df_hist["Data"].max() if df_hist is not None and not df_hist.empty else pd.Timestamp("1990-01-01")
+
+        # 2. Dynamiczny routing źródeł danych zewnętrznych (API)
+        df_new = None
+        if yf_ticker:
+            logging.info(msg=f"   [API] Fetching missing data from YFinance ({yf_ticker}) since {last_date.date()}...")
+            df_new = self._fetch_yfinance_data(ticker_yf=yf_ticker, start_date=last_date)
+        elif gpw_isin:
+            logging.info(msg=f"   [API] Fetching missing data from GPW Benchmark ({gpw_isin}) since {last_date.date()}...")
+            df_new = self._fetch_gpwbenchmark_data(isin=gpw_isin, start_date=last_date)
+        elif knf_id:
+            logging.info(msg=f"   [API] Fetching missing data from KNF API (Fund ID: {knf_id}) since {last_date.date()}...")
+            df_new = self._fetch_knf_data(subfund_id=knf_id, start_date=last_date)
+        else:
+            logging.info(msg="   [API] No external API configured. Relying solely on Stooq ZIP history.")
+
+        # Logowanie wyniku z API
+        if df_new is not None and not df_new.empty:
+            logging.info(msg=f"   [API] Successfully retrieved {len(df_new)} new rows.")
+        elif (yf_ticker or gpw_isin or knf_id):
+            logging.warning(msg=f"   [API] External API returned no new data (or an error occurred) for {label}.")
+
+        # 3. Łączenie danych (Stooq + API)
+        if df_hist is not None and not df_hist.empty and df_new is not None and not df_new.empty:
+            df_final = pd.concat(objs=[df_hist, df_new], ignore_index=True)
+        elif df_hist is not None and not df_hist.empty:
+            df_final = df_hist
+        elif df_new is not None and not df_new.empty:
+            df_final = df_new
+        else:
+            df_final = None
+
+        if df_final is not None and not df_final.empty:
+            logging.info(msg=f"   [DATA] {label} combined range: {df_final['Data'].min().date()} to {df_final['Data'].max().date()}")
+        else:
+            logging.error(msg=f"   [DATA] Final dataset for {label} is empty. Update failed.")
+            return False
                 
-        df_validated = self._validate_and_clean(df_final, label)
-        if df_validated is not None:
+        # 4. Czyszczenie i zapis
+        df_validated = self._validate_and_clean(df=df_final, label=label)
+        
+        if df_validated is not None and not df_validated.empty:
             safe_name = label.replace(" ", "_").lower()
             out_path = RAW_DIR / f"{safe_name}.csv"
-            df_validated.to_csv(out_path, index=False)
+            
+            df_validated.to_csv(path_or_buf=out_path, index=False)
+            logging.info(msg=f"   [SAVE] Saved {len(df_validated)} rows to {out_path.name}")
+            
             if upload_to_drive and self.gdrive.service and self.data_folder_id:
                 fname = f"historia{stooq_ticker[:4] if zip_type == 'fund_pl' else stooq_ticker}.csv"
-                self.gdrive.upload_csv(self.data_folder_id, str(out_path), fname)
+                logging.info(msg=f"   [DRIVE] Uploading {fname} to Google Drive...")
+                self.gdrive.upload_csv(folder_id=self.data_folder_id, local_path=str(out_path), filename=fname)
+            
             return True
+            
+        logging.error(msg=f"   [DATA] Validation dropped all data for {label}. Update failed.")
         return False
 
     def run_full_update(
@@ -397,6 +514,7 @@ class DataUpdater:
                 stooq_ticker=item["stooq"],
                 yf_ticker=item.get("yf"),
                 knf_id=item.get("knf"),
+                gpw_isin=item.get("gpw_isin"), 
                 zip_type=item["type"],
             )
 
