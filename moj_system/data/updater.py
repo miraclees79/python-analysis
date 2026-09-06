@@ -43,10 +43,10 @@ GDRIVE_DATA_FOLDER_NAME = "Dane"
 # =========================================================================
 
 DEFAULT_TICKERS = [
-    {"label": "wig", "stooq": "wig", "yf": "WIG.WA", "type": "index_pl"},
-    {"label": "wig20tr", "stooq": "wig20tr", "yf": "WIG20TR.WA", "type": "index_pl"},
-    {"label": "mwig40tr", "stooq": "mwig40tr", "yf": "MWIG40TR.WA", "type": "index_pl"},
-    {"label": "swig80tr", "stooq": "swig80tr", "yf": "SWIG80TR.WA", "type": "index_pl"},
+    {"label": "wig", "stooq": "wig", "yf": "WIG.WA", "gpw_isin": "PL9999999995", "type": "index_pl"},
+    {"label": "wig20tr", "stooq": "wig20tr", "yf": "WIG20TR.WA", "gpw_isin": "PL9999999425", "type": "index_pl"},
+    {"label": "mwig40tr", "stooq": "mwig40tr", "yf": "MWIG40TR.WA", "gpw_isin": "PL9999999078", "type": "index_pl"},
+    {"label": "swig80tr", "stooq": "swig80tr", "yf": "SWIG80TR.WA", "gpw_isin": "PL9999999060", "type": "index_pl"},
     {"label": "tbsp", "stooq": "^tbsp", "yf": None, "gpw_isin": "PL9999999474", "type": "index_pl"},#{"label": "tbsp", "stooq": "^tbsp", "yf": "TBSP-INDEX.WA", "type": "index_pl"}, #{"label": "tbsp", "stooq": "^tbsp", "yf": None, "type": "index_pl"},
     {"label": "sp500", "stooq": "^spx", "yf": "^GSPC", "type": "index_world"},
     {"label": "nikkei225", "stooq": "^nkx", "yf": "^N225", "type": "index_world"},
@@ -58,7 +58,7 @@ DEFAULT_TICKERS = [
     {"label": "de10y", "stooq": "10ydey.b", "yf": None, "type": "bonds"},
     {"label": "pl10y", "stooq": "10yply.b", "yf": None, "type": "bonds"},
     {"label": "fund_2720", "stooq": "2720.n", "yf": None, "type": "fund_pl", "knf": "195983"},
-    {"label": "wbbw", "stooq": "^gpwbbwz", "yf": None, "type": "index_pl"},
+    {"label": "wbbw", "stooq": "^gpwbbwz", "yf": None,  "type": "index_pl"},
 ]
 
 ETF_TICKERS = [
@@ -443,18 +443,29 @@ class DataUpdater:
 
         last_date = df_hist["Data"].max() if df_hist is not None and not df_hist.empty else pd.Timestamp("1990-01-01")
 
-        # 2. Dynamiczny routing źródeł danych zewnętrznych (API)
+        # 2. Dynamiczny routing źródeł danych zewnętrznych (Kaskada / Fallback)
         df_new = None
-        if yf_ticker:
-            logging.info(msg=f"   [API] Fetching missing data from YFinance ({yf_ticker}) since {last_date.date()}...")
-            df_new = self._fetch_yfinance_data(ticker_yf=yf_ticker, start_date=last_date)
-        elif gpw_isin:
+        
+        # Próba 1: Oficjalne źródło (GPW Benchmark)
+        if gpw_isin:
             logging.info(msg=f"   [API] Fetching missing data from GPW Benchmark ({gpw_isin}) since {last_date.date()}...")
             df_new = self._fetch_gpwbenchmark_data(isin=gpw_isin, start_date=last_date)
-        elif knf_id:
+            
+        # Próba 2: Zewnętrzny agregator (YFinance) - uruchamia się, jeśli GPW nie było skonfigurowane, LUB jeśli zawiodło
+        if yf_ticker and (df_new is None or df_new.empty):
+            if gpw_isin:
+                logging.warning(msg=f"   [API] GPW Benchmark failed or returned no data. Falling back to YFinance ({yf_ticker})...")
+            else:
+                logging.info(msg=f"   [API] Fetching missing data from YFinance ({yf_ticker}) since {last_date.date()}...")
+            
+            df_new = self._fetch_yfinance_data(ticker_yf=yf_ticker, start_date=last_date)
+            
+        # Próba 3: KNF API dla funduszy
+        if knf_id and (df_new is None or df_new.empty):
             logging.info(msg=f"   [API] Fetching missing data from KNF API (Fund ID: {knf_id}) since {last_date.date()}...")
             df_new = self._fetch_knf_data(subfund_id=knf_id, start_date=last_date)
-        else:
+            
+        if not (gpw_isin or yf_ticker or knf_id):
             logging.info(msg="   [API] No external API configured. Relying solely on Stooq ZIP history.")
 
         # Logowanie wyniku z API
