@@ -187,7 +187,7 @@ class DataUpdater:
         try:
             df = yf.download(tickers=ticker_yf, start=start_date, progress=False, auto_adjust=True)
             if df is None or df.empty:
-                return None
+                return pd.DataFrame()  # Zmieniono z None na pusty DataFrame
             
             if isinstance(df.columns, pd.MultiIndex):
                 df = df.droplevel(level=1, axis=1)
@@ -261,7 +261,7 @@ class DataUpdater:
                         )
 
             if not records:
-                return None
+                return pd.DataFrame()  # Zmieniono z None na pusty DataFrame
 
             df = pd.DataFrame(data=records).sort_values(by="Data")
             return df
@@ -303,7 +303,7 @@ class DataUpdater:
                             "Zamkniecie": item.get("valuation"),
                         }
                     )
-            return pd.DataFrame(data=records).sort_values(by="Data") if records else None
+            return pd.DataFrame(data=records).sort_values(by="Data") if records else pd.DataFrame()
             
         except Exception as e:
             logging.warning(msg=f"KNF API Error: {e}")
@@ -392,29 +392,39 @@ class DataUpdater:
 
         last_date = df_hist["Data"].max() if df_hist is not None and not df_hist.empty else pd.Timestamp("1990-01-01")
 
+        # 2. Dynamiczny routing źródeł danych zewnętrznych (Kaskada / Fallback)
         df_new = None
+        
         if gpw_isin:
             logging.info(msg=f"   [API] Fetching missing data from GPW Benchmark ({gpw_isin}) since {last_date.date()}...")
             df_new = self._fetch_gpwbenchmark_data(isin=gpw_isin, start_date=last_date)
             
-        if yf_ticker and (df_new is None or df_new.empty):
+        # Uruchom YFinance TYLKO jeśli GPW_ISIN nie było, albo API padło i zwróciło None
+        if yf_ticker and df_new is None:
             if gpw_isin:
-                logging.warning(msg=f"   [API] GPW Benchmark failed or returned no data. Falling back to YFinance ({yf_ticker})...")
+                logging.warning(msg=f"   [API] GPW Benchmark API failed. Falling back to YFinance ({yf_ticker})...")
             else:
                 logging.info(msg=f"   [API] Fetching missing data from YFinance ({yf_ticker}) since {last_date.date()}...")
             df_new = self._fetch_yfinance_data(ticker_yf=yf_ticker, start_date=last_date)
             
-        if knf_id and (df_new is None or df_new.empty):
+        # KNF API dla funduszy
+        if knf_id and df_new is None:
             logging.info(msg=f"   [API] Fetching missing data from KNF API (Fund ID: {knf_id}) since {last_date.date()}...")
             df_new = self._fetch_knf_data(subfund_id=knf_id, start_date=last_date)
             
         if not (gpw_isin or yf_ticker or knf_id):
             logging.info(msg="   [API] No external API configured. Relying solely on Stooq ZIP history.")
 
+        # Logowanie wyniku z API
         if df_new is not None and not df_new.empty:
             logging.info(msg=f"   [API] Successfully retrieved {len(df_new)} new rows.")
-        elif (yf_ticker or gpw_isin or knf_id):
-            logging.warning(msg=f"   [API] External API returned no new data (or an error occurred) for {label}.")
+        elif df_new is not None and df_new.empty:
+            # To jest ten konkretny przypadek - API działa, ale giełda była zamknięta!
+            logging.info(msg=f"   [API] Already up-to-date. No new sessions since {last_date.date()}.")
+        elif df_new is None and (yf_ticker or gpw_isin or knf_id):
+            logging.warning(msg=f"   [API] External APIs failed or returned an error for {label}.")
+
+        # 3. Łączenie danych (Stooq + API)
 
         if df_hist is not None and not df_hist.empty and df_new is not None and not df_new.empty:
             df_final = pd.concat(objs=[df_hist, df_new], ignore_index=True)
