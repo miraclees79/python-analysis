@@ -28,20 +28,24 @@ class GDriveClient:
         self.service = self._get_service()
 
     def _get_service(self) -> object | None:
+        import socket
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
 
-        if not os.path.exists(self.credentials_path):
-            logging.warning(f"Brak pliku credentials w: {self.credentials_path}")
+        if not Path(self.credentials_path).exists():
+            logging.warning(msg=f"Brak pliku credentials w: {self.credentials_path}")
             return None
 
         try:
             creds = service_account.Credentials.from_service_account_file(
-                self.credentials_path,
+                filename=self.credentials_path,
                 scopes=["https://www.googleapis.com/auth/drive"],
             )
-            socket.setdefaulttimeout(60)
-            return build("drive", "v3", credentials=creds, cache_discovery=False)
+            # POPRAWKA: Zwiększony czas oczekiwania z 60 do 120 sekund
+            socket.setdefaulttimeout(120)
+            return build(serviceName="drive", version="v3", credentials=creds, cache_discovery=False)
         except Exception as e:
-            logging.error(f"Bląd inicjalizacji serwisu Drive: {e}")
+            logging.error(msg=f"Bląd inicjalizacji serwisu Drive: {e}")
             return None
 
     def find_file_id(
@@ -99,14 +103,16 @@ class GDriveClient:
         local_path: str, 
         filename:   str | None = None,
     ) -> str | None:
+        from googleapiclient.http import MediaFileUpload
+        import time
 
-        """Universal uploader for CSV, TXT, PNG and JSON files."""
-        if not self.service:
+        service: Any = self.service
+        if not service:
             return None
+            
         if not filename:
-            filename = os.path.basename(local_path)
+            filename = Path(local_path).name
 
-        # Automatyczne wykrywanie typu pliku
         mimetype = "text/csv"
         if filename.endswith(".png"):
             mimetype = "image/png"
@@ -115,20 +121,49 @@ class GDriveClient:
         elif filename.endswith(".txt"):
             mimetype = "text/plain"
 
-        existing_id = self.find_file_id(folder_id, filename)
-        media = MediaFileUpload(local_path, mimetype=mimetype, resumable=True)
-
-        if existing_id:
-            self.service.files().update(fileId=existing_id, media_body=media).execute()
-            logging.info(f"Zaktualizowano plik na Drive: {filename}")
-            return existing_id
-        else:
-            metadata = {"name": filename, "parents": [folder_id]}
-            result = (
-                self.service.files().create(body=metadata, media_body=media, fields="id").execute()
-            )
-            logging.info(f"Utworzono nowy plik na Drive: {filename}")
-            return result["id"]
+        existing_id = self.find_file_id(parent_id=folder_id, filename=filename)
+        
+        # POPRAWKA: Pancerna pętla uploadu z mechanizmem Retry
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                # Wymuszamy nowe otwarcie pliku przy każdej próbie, bo MediaFileUpload
+                # podczas błędu może zostawić kursor na końcu pliku.
+                media = MediaFileUpload(filename=local_path, mimetype=mimetype, resumable=True)
+                
+                if existing_id:
+                    service.files().update(
+                        fileId=existing_id, 
+                        media_body=media
+                    ).execute(num_retries=5) # Wbudowany mechanizm ponawiania pakietów
+                    
+                    logging.info(msg=f"Zaktualizowano plik na Drive: {filename}")
+                    return existing_id
+                else:
+                    metadata = {"name": filename, "parents": [folder_id]}
+                    result = service.files().create(
+                        body=metadata, 
+                        media_body=media, 
+                        fields="id"
+                    ).execute(num_retries=5)
+                    
+                    logging.info(msg=f"Utworzono nowy plik na Drive: {filename}")
+                    return result["id"]
+                    
+            except Exception as e:
+                logging.warning(msg=f"Upload attempt {attempt + 1}/{max_attempts} failed for {filename}: {e}")
+                if attempt < max_attempts - 1:
+                    time.sleep(5)  # Odczekanie przed ponowieniem
+                    
+                    # Czasami błąd wynika z wygasłego tokenu lub zerwanego gniazda.
+                    # Twardy reset połączenia z serwerami Google:
+                    self.service = self._get_service()
+                    service = self.service
+                else:
+                    logging.error(msg=f"All upload attempts failed for {filename}")
+                    return None
+                    
+        return None
 
     # Dla kompatybilności wstecznej z resztą skryptów (np. data_updater):
     def upload_csv(
