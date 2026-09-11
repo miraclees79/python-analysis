@@ -10,6 +10,7 @@ import os
 import logging
 import zipfile
 from typing import Any, cast
+from pathlib import Path  # <--- DODANY IMPORT
 
 import pandas as pd
 import requests
@@ -18,10 +19,9 @@ import yfinance as yf
 from moj_system.config import DATA_DIR
 from moj_system.data.gdrive import GDriveClient
 
-# RAW_DIR to bezpośrednio DATA_DIR z config.py (czyli .../data/raw_csv)
-RAW_DIR = DATA_DIR 
-# ZIP_DIR ląduje obok raw_csv, czyli w .../data/zips
-ZIP_DIR = DATA_DIR.parent / "zips"
+# --- JAWNE DEKLARACJE TYPÓW (naprawia błąd Pylance) ---
+RAW_DIR: Path = DATA_DIR 
+ZIP_DIR: Path = DATA_DIR.parent / "zips"
 
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 ZIP_DIR.mkdir(parents=True, exist_ok=True)
