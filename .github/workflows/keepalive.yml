@@ -1,0 +1,34 @@
+name: Keepalive
+
+on:
+  schedule:
+    # Uruchamia się o 12:00 pierwszego dnia każdego miesiąca
+    - cron: '0 12 1 * *'
+  
+  # Pozwala na ręczne uruchomienie w razie potrzeby
+  workflow_dispatch:
+
+# Wymagane uprawnienia do wypchnięcia commita z powrotem do repozytorium
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    name: Prevent Cron Suspension
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create and push empty commit
+        run: |
+          # Konfiguracja tożsamości bota GitHub Actions
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # Tworzenie pustego commita (nie zmienia żadnych plików)
+          git commit --allow-empty -m "chore: keepalive repository to prevent cron suspension"
+          
+          # Wypchnięcie zmian do repozytorium
+          git push
