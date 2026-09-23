@@ -15,6 +15,7 @@ import os
 import sys
 import tempfile
 from collections import Counter
+from typing import Any
 
 import matplotlib
 import numpy as np
@@ -31,13 +32,14 @@ from moj_system.config import (
     BOND_THRESHOLDS_MC,
     EQUITY_THRESHOLDS_BOOTSTRAP,
     EQUITY_THRESHOLDS_MC,
+    GRID_SETS,
     OUTPUT_DIR,
     SWEEP_WINDOW_CONFIGS,
+    THRESHOLDS_BOOTSTRAP,
+    THRESHOLDS_MC,
 )
 from moj_system.core.global_engine import (
     allocation_walk_forward_n,
-    build_price_df_from_returns,
-    build_return_series,
 )
 from moj_system.core.pension_engine import (
     allocation_walk_forward,
@@ -63,6 +65,12 @@ from moj_system.core.strategy_engine import (
     walk_forward,
 )
 from moj_system.core.utils import build_mmf_extended
+from moj_system.core.universe import (
+    build_global_assets,
+    get_allocation_settings,
+    prepare_asset_series,
+    resolve_train_years,
+)
 from moj_system.data.builder import build_and_upload
 from moj_system.data.data_manager import load_local_csv
 from moj_system.data.updater import DataUpdater
@@ -296,8 +304,17 @@ class SweepManager:
             f"  [WF CACHE MISS] Calculating WF: {asset_name} train: {train_y} test: {test_y}, stop type: {stop_type} ...",
         )
         cash_df = self.data_map.get("MMF_EXT")
-        grids = BOND_GRIDS if grid_type == "BOND" else BASE_GRIDS
+        grids = GRID_SETS[grid_type]
         use_atr = stop_type == "atr"
+        crypto_extra: dict[str, Any] = (
+            {
+                "tv_grid": grids["TV_GRID"],
+                "sl_grid": grids["SL_GRID"],
+                "mom_lookback_grid": grids["MOM_LB_GRID"],
+            }
+            if grid_type == "CRYPTO"
+            else {}
+        )
 
         wf_equity, wf_results, wf_trades = walk_forward(
             df=df,
@@ -312,7 +329,7 @@ class SweepManager:
             N_atr_grid=grids["N_ATR_GRID"] if use_atr else None,
             entry_gate_series=entry_gate,
             n_jobs=get_n_jobs(),
-
+            **crypto_extra,
         )
         self.wf_cache[cache_key] = (wf_equity, wf_results, wf_trades)
         return wf_equity, wf_results, wf_trades
@@ -379,7 +396,16 @@ class SweepManager:
             f"  [BOOT CACHE MISS] Running Boot: {asset_name} train: {train_y} test: {test_y}, stop type: {stop_type}",
         )
         use_atr = stop_type == "atr"
-        grids = BOND_GRIDS if grid_type == "BOND" else BASE_GRIDS
+        grids = GRID_SETS[grid_type]
+        crypto_extra: dict[str, Any] = (
+            {
+                "tv_grid": grids["TV_GRID"],
+                "sl_grid": grids["SL_GRID"],
+                "mom_lookback_grid": grids["MOM_LB_GRID"],
+            }
+            if grid_type == "CRYPTO"
+            else {}
+        )
         bb_df = self.rob_engine.run_bootstrap_test(
             df=df,
             cash_df=cash_df,
@@ -393,7 +419,7 @@ class SweepManager:
             fast_grid=grids["FAST_GRID"],
             slow_grid=grids["SLOW_GRID"],
             filter_modes_override=["ma"] if grid_type == "BOND" else None,
-
+            **crypto_extra,
         )
         result = analyze_bootstrap(
             results_df=bb_df, baseline_metrics=compute_metrics(base_equity), thresholds=thresholds,
@@ -731,44 +757,38 @@ class SweepManager:
 
         cfg = ASSET_REGISTRY[variant_key]
         mode, fx_hedged = cfg["mode"], cfg["fx_hedged"]
+        settings = get_allocation_settings(cfg=cfg)
 
         WIG = self.data_map.get("WIG")
         MMF_EXT = self.data_map.get("MMF_EXT")
         TBSP = self.data_map.get("TBSP")
         derived = self._prepare_pension_data()
         fx_map = {c: self.data_map.get(f"{c}PLN")["Zamkniecie"] for c in ["USD", "EUR", "JPY"]}
-
-        if mode == "global_equity":
-            assets = {
-                "WIG": (WIG, None),
-                "SP500": (self.data_map.get("SP500"), fx_map["USD"]),
-                "STOXX600": (self.data_map.get("STOXX600"), fx_map["EUR"]),
-                "NIKKEI225": (self.data_map.get("NIKKEI225"), fx_map["JPY"]),
-            }
-        else:
-            assets = {
-                "WIG": (WIG, None),
-                "MSCI_WORLD": (self.data_map.get("MSCI_WORLD"), fx_map["USD"]),
-            }
+        assets = build_global_assets(
+            mode=mode,
+            wig_df=WIG,
+            fx_map=fx_map,
+            fx_hedged=fx_hedged,
+            folder_id=self.folder_id,
+            credentials_path=self.creds_path,
+            preloaded=self.data_map,
+        )
 
         rets_dict, sigs_full, mc_res, bb_res = {}, {}, {}, {}
 
-        for lbl, (px_df, fx_s) in assets.items():
-            ret_s = build_return_series(price_df=px_df, fx_series=fx_s, hedged=fx_hedged)
-            rets_dict[lbl] = ret_s.dropna()
-            proc_px = (
-                px_df
-                if fx_hedged or fx_s is None
-                else build_price_df_from_returns(ret=ret_s, label=lbl)
-            )
+        for lbl, spec in assets.items():
+            ret_s, proc_px = prepare_asset_series(label=lbl, spec=spec)
+            rets_dict[lbl] = ret_s
+            leg_train = resolve_train_years(cfg=cfg, spec=spec, default_train=train_y)
 
             # POPRAWKA: Dodano df=proc_px i jawne nazewnictwo
             wf_e, wf_r, wf_t = self.get_cached_wf(
                 asset_name=lbl,
                 df=proc_px,
-                train_y=train_y,
+                train_y=leg_train,
                 test_y=test_y,
                 stop_type=stop_type_eq,
+                grid_type=spec.asset_class,
             )
 
             sigs_full[lbl] = build_signal_series(wf_equity=wf_e, wf_trades=wf_t)
@@ -781,8 +801,8 @@ class SweepManager:
                     df=proc_px,
                     cash_df=MMF_EXT,
                     n_samples=self.n_mc,
-                    thresholds=EQUITY_THRESHOLDS_MC,
-                    train_y=train_y,
+                    thresholds=THRESHOLDS_MC[spec.asset_class],
+                    train_y=leg_train,
                     test_y=test_y,
                     stop_type=stop_type_eq,
                     gate_id="RAW",
@@ -794,12 +814,12 @@ class SweepManager:
                     df=proc_px,
                     cash_df=MMF_EXT,
                     n_samples=self.n_boot,
-                    train_y=train_y,
+                    train_y=leg_train,
                     test_y=test_y,
                     stop_type=stop_type_eq,
-                    grid_type="EQUITY",
+                    grid_type=spec.asset_class,
                     entry_gate=None,
-                    thresholds=EQUITY_THRESHOLDS_BOOTSTRAP,
+                    thresholds=THRESHOLDS_BOOTSTRAP[spec.asset_class],
                     base_equity=wf_e,
                 )
 
@@ -850,6 +870,10 @@ class SweepManager:
             wf_bd_r,
             list(rets_dict.keys()),
             train_years=train_y,
+            asset_caps=settings.asset_caps,
+            optional_keys=settings.optional_keys,
+            min_delta=settings.min_delta,
+            delta_tol=settings.delta_tol,
         )
 
         trimmed = port_eq.loc[port_eq.index >= common_start]
@@ -1151,7 +1175,7 @@ def main() -> None:
                         results.append(res)
 
     if args.mode in ["GLOBAL", "ALL"]:
-        for var in ["GLOBAL_A", "GLOBAL_B"]:
+        for var in ["GLOBAL_A", "GLOBAL_B", "GLOBAL_CRYPTO"]:
             for ty, te in SWEEP_WINDOW_CONFIGS:
                 for st in ["fixed", "atr"]:
                     logging.info(

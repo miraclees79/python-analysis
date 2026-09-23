@@ -33,12 +33,12 @@ from moj_system.config import (
     EQUITY_THRESHOLDS_BOOTSTRAP,
     EQUITY_THRESHOLDS_MC,
     OUTPUT_DIR,
+    THRESHOLDS_BOOTSTRAP,
+    THRESHOLDS_MC,
 )
 from moj_system.core.global_engine import (
     allocation_walk_forward_n,
     allocation_weight_robustness_n,
-    build_price_df_from_returns,
-    build_return_series,
     print_allocation_robustness_report_n,
 )
 from moj_system.core.pension_engine import (
@@ -59,6 +59,14 @@ from moj_system.core.strategy_engine import (
     walk_forward,
 )
 from moj_system.core.utils import build_mmf_extended
+from moj_system.core.universe import (
+    build_global_assets,
+    get_allocation_settings,
+    load_fx_map,
+    prepare_asset_series,
+    resolve_train_years,
+    wf_grid_kwargs,
+)
 from moj_system.data.builder import build_and_upload
 from moj_system.data.data_manager import load_local_csv
 from moj_system.data.updater import DataUpdater
@@ -376,6 +384,7 @@ class ValidationManager:
 
         cfg = ASSET_REGISTRY[variant]
         mode, fx_hedged = cfg["mode"], cfg.get("fx_hedged", True)
+        settings = get_allocation_settings(cfg=cfg)
         use_atr = stop_type_eq == "atr"
 
         WIG = load_local_csv(ticker="wig", label="WIG").loc[
@@ -405,66 +414,35 @@ class ValidationManager:
             de10y=DE10Y,
             mmf_floor="1995-01-02",
         )
-        fx_map = {
-            c: load_local_csv(ticker=f"{c.lower()}pln", label=f"{c}PLN")["Zamkniecie"]
-            for c in ["USD", "EUR", "JPY"]
-        }
-
-        if mode == "global_equity":
-            stoxx = build_and_upload(
-                folder_id=self.folder_id,
-                raw_filename="stoxx600.csv",
-                combined_filename="stoxx600_combined.csv",
-                extension_ticker="^STOXX",
-                extension_source="yfinance",
-                credentials_path=self.creds_path,
-            )
-            assets = {
-                "WIG": (WIG, None),
-                "SP500": (load_local_csv(ticker="sp500", label="SP500"), fx_map["USD"]),
-                "STOXX600": (stoxx, fx_map["EUR"]),
-                "Nikkei225": (load_local_csv(ticker="nikkei225", label="Nikkei225"), fx_map["JPY"]),
-            }
-        else:
-            msciw = build_and_upload(
-                folder_id=self.folder_id,
-                raw_filename="msci_world_wsj_raw.csv",
-                combined_filename="msci_world_combined.csv",
-                extension_ticker="URTH",
-                extension_source="yfinance",
-                credentials_path=self.creds_path,
-                is_msci_world=True,
-            )
-            assets = {"WIG": (WIG, None), "MSCI_World": (msciw, fx_map["USD"])}
+        assets = build_global_assets(
+            mode=mode,
+            wig_df=WIG,
+            fx_map=load_fx_map(),
+            fx_hedged=fx_hedged,
+            folder_id=self.folder_id,
+            credentials_path=self.creds_path,
+        )
 
         rets_dict, sigs_full = {}, {}
 
         # 1. Equity Components Robustness (MC + Bootstrap)
-        for lbl, (px_df, fx_s) in assets.items():
+        for lbl, spec in assets.items():
             logging.info("\n" + "=" * 60 + f"\n--- Component Robustness: {lbl} ---\n" + "=" * 60)
 
-            ret_s = build_return_series(price_df=px_df, fx_series=fx_s, hedged=fx_hedged)
-            rets_dict[lbl] = ret_s.dropna()
-            proc_px = (
-                px_df
-                if fx_hedged or fx_s is None
-                else build_price_df_from_returns(ret=ret_s, label=lbl)
-            )
+            ret_s, proc_px = prepare_asset_series(label=lbl, spec=spec)
+            rets_dict[lbl] = ret_s
+            leg_train = resolve_train_years(cfg=cfg, spec=spec, default_train=train_y)
+            leg_kwargs = wf_grid_kwargs(spec=spec, use_atr=use_atr)
 
             # Base WF
             wf_e, wf_r, wf_t = walk_forward(
                 df=proc_px,
                 cash_df=mmf_ext,
-                train_years=train_y,
+                train_years=leg_train,
                 test_years=test_y,
-                X_grid=BASE_GRIDS["X_GRID"],
-                Y_grid=BASE_GRIDS["Y_GRID"],
-                fast_grid=BASE_GRIDS["FAST_GRID"],
-                slow_grid=BASE_GRIDS["SLOW_GRID"],
-                use_atr_stop=use_atr,
-                N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
                 n_jobs=get_n_jobs(),
-
+                use_atr_stop=use_atr,
+                **leg_kwargs,
             )
             sigs_full[lbl] = build_signal_series(wf_equity=wf_e, wf_trades=wf_t)
 
@@ -475,7 +453,7 @@ class ValidationManager:
                 analyze_robustness(
                     results_df=mc_res,
                     baseline_metrics=compute_metrics(equity=wf_e),
-                    thresholds=EQUITY_THRESHOLDS_MC,
+                    thresholds=THRESHOLDS_MC[spec.asset_class],
                 )
 
             if self.n_boot > 0:
@@ -483,20 +461,15 @@ class ValidationManager:
                     df=proc_px,
                     cash_df=mmf_ext,
                     n_samples=self.n_boot,
-                    train_years=train_y,
+                    train_years=leg_train,
                     test_years=test_y,
-                    X_grid=BASE_GRIDS["X_GRID"],
-                    Y_grid=BASE_GRIDS["Y_GRID"],
-                    fast_grid=BASE_GRIDS["FAST_GRID"],
-                    slow_grid=BASE_GRIDS["SLOW_GRID"],
                     use_atr_stop=use_atr,
-                    N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
-
+                    **leg_kwargs,
                 )
                 analyze_bootstrap(
                     results_df=bb_res,
                     baseline_metrics=compute_metrics(equity=wf_e),
-                    thresholds=EQUITY_THRESHOLDS_BOOTSTRAP,
+                    thresholds=THRESHOLDS_BOOTSTRAP[spec.asset_class],
                 )
 
         # 2. Bond Component Robustness (MC + Bootstrap)
@@ -558,6 +531,10 @@ class ValidationManager:
             wf_results_ref=wf_res_bd,
             asset_keys=list(rets_dict.keys()),
             train_years=train_y,
+            asset_caps=settings.asset_caps,
+            optional_keys=settings.optional_keys,
+            min_delta=settings.min_delta,
+            delta_tol=settings.delta_tol,
         )
 
         bh_wig, _ = compute_buy_and_hold(
@@ -586,6 +563,9 @@ class ValidationManager:
                 asset_keys=list(rets_dict.keys()),
                 baseline_metrics=compute_metrics(equity=port_eq),
                 focus_asset="WIG",
+                asset_caps=settings.asset_caps,
+                min_delta=settings.min_delta,
+                delta_tol=settings.delta_tol,
             )
             print_allocation_robustness_report_n(results_df=robust_df, focus_asset="WIG")
 

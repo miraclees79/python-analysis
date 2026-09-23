@@ -22,8 +22,6 @@ from moj_system.config import ASSET_REGISTRY, BASE_GRIDS, OUTPUT_DIR
 from moj_system.core.execution_engine import simulate_ppe_execution
 from moj_system.core.global_engine import (
     allocation_walk_forward_n,
-    build_price_df_from_returns,
-    build_return_series,
     print_global_equity_report,
 )
 from moj_system.core.pension_engine import (
@@ -47,6 +45,14 @@ from moj_system.core.strategy_engine import (
     walk_forward,
 )
 from moj_system.core.utils import build_mmf_extended
+from moj_system.core.universe import (
+    build_global_assets,
+    get_allocation_settings,
+    load_fx_map,
+    prepare_asset_series,
+    resolve_train_years,
+    wf_grid_kwargs,
+)
 from moj_system.data.builder import build_and_upload
 from moj_system.data.data_manager import load_local_csv
 from moj_system.data.ppe_manager import build_continuous_ppe_data
@@ -379,55 +385,16 @@ def run_global_portfolio(
     PL10Y, DE10Y = load_local_csv("pl10y", "PL10Y"), load_local_csv("de10y", "DE10Y")
     WIBOR = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
     derived = build_standard_two_asset_data(WIG, TBSP, MMF, WIBOR, PL10Y, DE10Y, "1995-01-02")
-    fx_map = {
-        curr: load_local_csv(
-            ticker=f"{curr.lower()}pln",
-            label=f"{curr}PLN",
-        )["Zamkniecie"]
-        for curr in["USD", "EUR", "JPY"]
-    }
-
-    if mode == "global_equity":
-        stoxx = build_and_upload(
-            folder_id=folder_id,
-            raw_filename="stoxx600.csv",
-            combined_filename="stoxx600_combined.csv",
-            extension_ticker="^STOXX",
-            extension_source="yfinance",
-            credentials_path=creds_path,
-        )
-        assets = {
-            "WIG": (WIG, None),
-            "SP500": (
-                load_local_csv(
-                    ticker="sp500",
-                    label="SP500",
-                ),
-                fx_map["USD"],
-            ),
-            "STOXX600": (stoxx, fx_map["EUR"]),
-            "Nikkei225": (
-                load_local_csv(
-                    ticker="nikkei225",
-                    label="Nikkei225",
-                ),
-                fx_map["JPY"],
-            ),
-        }
-    else:  # msci_world
-        msciw = build_and_upload(
-            folder_id=folder_id,
-            raw_filename="msci_world_wsj_raw.csv",
-            combined_filename="msci_world_combined.csv",
-            extension_ticker="URTH",
-            extension_source="yfinance",
-            credentials_path=creds_path,
-            is_msci_world=True,
-        )
-        assets = {
-            "WIG": (WIG, None),
-            "MSCI_World": (msciw, fx_map["USD"]),
-        }
+    fx_map = load_fx_map()
+    assets = build_global_assets(
+        mode=mode,
+        wig_df=WIG,
+        fx_map=fx_map,
+        fx_hedged=fx_h,
+        folder_id=folder_id,
+        credentials_path=creds_path,
+    )
+    settings = get_allocation_settings(cfg=cfg)
 
     rets_dict = {}
     sigs_full = {}
@@ -441,17 +408,9 @@ def run_global_portfolio(
     n_jobs = get_n_jobs()
 
     wig_wf_res = None
-    for lbl, (px_df, fx_s) in assets.items():
-        ret_s = build_return_series(
-            price_df=px_df,
-            fx_series=fx_s,
-            hedged=fx_h,
-        )
-        rets_dict[lbl] = ret_s.dropna()
-        proc_px = px_df if fx_h or fx_s is None else build_price_df_from_returns(
-            ret=ret_s,
-            label=lbl,
-        )
+    for lbl, spec in assets.items():
+        ret_s, proc_px = prepare_asset_series(label=lbl, spec=spec)
+        rets_dict[lbl] = ret_s
 
         logging.info(
             msg=f"========== RUNNING: {lbl} ==========",
@@ -460,10 +419,11 @@ def run_global_portfolio(
         wf_e, wf_r, wf_t = walk_forward(
             df=proc_px,
             cash_df=MMF,
-            train_years=train_y,
+            train_years=resolve_train_years(cfg=cfg, spec=spec, default_train=train_y),
             test_years=test_y,
             use_atr_stop=use_atr_eq,
             n_jobs=n_jobs,
+            **wf_grid_kwargs(spec=spec, use_atr=use_atr_eq),
         )
 
         if wf_e.empty:
@@ -530,6 +490,10 @@ def run_global_portfolio(
         wf_results_ref=wf_res_bd,
         asset_keys=list(rets_dict.keys()),
         train_years=train_y,
+        asset_caps=settings.asset_caps,
+        optional_keys=settings.optional_keys,
+        min_delta=settings.min_delta,
+        delta_tol=settings.delta_tol,
     )
 
     # --- PANCERNE USUWANIE DUPLIKATÓW DAT ---

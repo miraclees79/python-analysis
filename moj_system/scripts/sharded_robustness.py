@@ -15,6 +15,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import matplotlib
 import matplotlib.gridspec as gridspec
@@ -33,13 +34,14 @@ from moj_system.config import (
     BOND_THRESHOLDS_MC,
     EQUITY_THRESHOLDS_BOOTSTRAP,
     EQUITY_THRESHOLDS_MC,
+    GRID_SETS,
     OUTPUT_DIR,
+    THRESHOLDS_BOOTSTRAP,
+    THRESHOLDS_MC,
 )
 from moj_system.core.global_engine import (
     allocation_walk_forward_n,
     allocation_weight_robustness_n,
-    build_price_df_from_returns,
-    build_return_series,
     print_allocation_robustness_report_n,
 )
 from moj_system.core.pension_engine import (
@@ -64,6 +66,13 @@ from moj_system.core.strategy_engine import (
     walk_forward,
 )
 from moj_system.core.utils import build_mmf_extended
+from moj_system.core.universe import (
+    build_global_assets,
+    load_fx_map,
+    prepare_asset_series,
+    resolve_train_years,
+    wf_grid_kwargs,
+)
 from moj_system.data.builder import build_and_upload
 from moj_system.data.data_manager import load_local_csv
 from moj_system.data.updater import DataUpdater
@@ -331,7 +340,16 @@ class ShardedValidationManager:
         entry_gate:  pd.Series | None = None,
     ) -> None:
 
-        grids = BOND_GRIDS if grid_type == "BOND" else BASE_GRIDS
+        grids = GRID_SETS[grid_type]
+        crypto_extra: dict[str, Any] = (
+            {
+                "tv_grid": grids["TV_GRID"],
+                "sl_grid": grids["SL_GRID"],
+                "mom_lookback_grid": grids["MOM_LB_GRID"],
+            }
+            if grid_type == "CRYPTO"
+            else {}
+        )
 
         if self.run_mode == "worker":
             if self.n_boot > 0:
@@ -357,6 +375,7 @@ class ShardedValidationManager:
                     filter_modes_override=["ma"] if grid_type == "BOND" else None,
                     fast_mode=True,
                     entry_gate_series=entry_gate,
+                    **crypto_extra,
                 )
                 out_path = OUTPUT_DIR / f"shard_{self.shard_id}_boot_{asset_name}.csv"
                 bb_df.to_csv(path_or_buf=out_path, index=False)
@@ -650,63 +669,34 @@ class ShardedValidationManager:
             credentials_path=self.creds_path,
         )
 
-        fx_map = {
-            c: load_local_csv(ticker=f"{c.lower()}pln", label=f"{c}PLN")["Zamkniecie"]
-            for c in ["USD", "EUR", "JPY"]
-        }
-
-        if mode == "global_equity":
-            stoxx = build_and_upload(
-                folder_id=self.folder_id,
-                raw_filename="stoxx600.csv",
-                combined_filename="stoxx600_combined.csv",
-                extension_ticker="^STOXX",
-                extension_source="yfinance",
-                credentials_path=self.creds_path,
-            )
-            assets = {
-                "WIG": (wig_df, None),
-                "SP500": (load_local_csv(ticker="sp500", label="SP500"), fx_map["USD"]),
-                "STOXX600": (stoxx, fx_map["EUR"]),
-                "Nikkei225": (load_local_csv(ticker="nikkei225", label="Nikkei225"), fx_map["JPY"]),
-            }
-        else:
-            msciw = build_and_upload(
-                folder_id=self.folder_id,
-                raw_filename="msci_world_wsj_raw.csv",
-                combined_filename="msci_world_combined.csv",
-                extension_ticker="URTH",
-                extension_source="yfinance",
-                credentials_path=self.creds_path,
-                is_msci_world=True,
-            )
-            assets = {"WIG": (wig_df, None), "MSCI_World": (msciw, fx_map["USD"])}
+        assets = build_global_assets(
+            mode=mode,
+            wig_df=wig_df,
+            fx_map=load_fx_map(),
+            fx_hedged=fx_hedged,
+            folder_id=self.folder_id,
+            credentials_path=self.creds_path,
+        )
 
         rets_dict = {}
         sigs_full = {}
 
         # 1. Equity Components
-        for lbl, (px_df, fx_s) in assets.items():
-            ret_s = build_return_series(price_df=px_df, fx_series=fx_s, hedged=fx_hedged)
-            rets_dict[lbl] = ret_s.dropna()
-            proc_px = (
-                px_df if fx_hedged or fx_s is None
-                else build_price_df_from_returns(ret=ret_s, label=lbl)
-            )
+        for lbl, spec in assets.items():
+            ret_s, proc_px = prepare_asset_series(label=lbl, spec=spec)
+            rets_dict[lbl] = ret_s
+            leg_train = resolve_train_years(cfg=cfg, spec=spec, default_train=train_y)
+            leg_kwargs = wf_grid_kwargs(spec=spec, use_atr=use_atr)
 
             wf_e, wf_r, wf_t = walk_forward(
                 df=proc_px,
                 cash_df=mmf_ext,
-                train_years=train_y,
+                train_years=leg_train,
                 test_years=test_y,
-                X_grid=BASE_GRIDS["X_GRID"],
-                Y_grid=BASE_GRIDS["Y_GRID"],
-                fast_grid=BASE_GRIDS["FAST_GRID"],
-                slow_grid=BASE_GRIDS["SLOW_GRID"],
-                use_atr_stop=use_atr,
-                N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
                 n_jobs=get_n_jobs(),
                 fast_mode=True,
+                use_atr_stop=use_atr,
+                **leg_kwargs,
             )
             sigs_full[lbl] = build_signal_series(wf_equity=wf_e, wf_trades=wf_t)
 
@@ -715,7 +705,7 @@ class ShardedValidationManager:
                 wf_results=wf_r,
                 df=proc_px,
                 cash_df=mmf_ext,
-                thresholds=EQUITY_THRESHOLDS_MC,
+                thresholds=THRESHOLDS_MC[spec.asset_class],
                 base_equity=wf_e,
             )
 
@@ -723,11 +713,11 @@ class ShardedValidationManager:
                 asset_name=lbl,
                 df=proc_px,
                 cash_df=mmf_ext,
-                train_y=train_y,
+                train_y=leg_train,
                 test_y=test_y,
                 use_atr=use_atr,
-                grid_type="EQUITY",
-                thresholds=EQUITY_THRESHOLDS_BOOTSTRAP,
+                grid_type=spec.asset_class,
+                thresholds=THRESHOLDS_BOOTSTRAP[spec.asset_class],
                 base_equity=wf_e,
             )
 

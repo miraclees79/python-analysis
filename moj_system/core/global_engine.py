@@ -66,10 +66,12 @@ PORTFOLIO MODES
 ---------------
   "global_equity"  : PL_LARGE, PL_MID, EU, US, JPN, TBSP  + MMF residual
   "msci_world"     : PL_LARGE, PL_MID, WORLD, TBSP         + MMF residual
+  "global_crypto"  : PL_LARGE, SP500, BTC, ETH, TBSP       + MMF residual
 """
 
 import itertools
 import logging
+from collections.abc import Collection
 
 import numpy as np
 import pandas as pd
@@ -522,12 +524,20 @@ def align_to_reference(
 # ============================================================
 # N-ASSET ALLOCATION — WEIGHT GRID
 # ============================================================
+def _cap_for(asset_caps: dict[str, float] | None, key: str) -> float:
+    """Upper bound of a single asset's weight (1.0 when no cap is defined)."""
+    if asset_caps is None:
+        return 1.0
+    return float(asset_caps.get(key, 1.0))
 
-
-def generate_weight_grid(n_assets: int, step: float = 0.10) -> list[tuple]:
+def generate_weight_grid(
+    n_assets: int,
+    step: float = 0.10,
+    caps: tuple[float, ...] | None = None,
+) -> list[tuple[float, ...]]:
     """
     Enumerate all weight tuples (w1, ..., wN) at the given step size
-    where all weights are non-negative and sum(wi) <= 1.0.
+    where all weights are non-negative, wi <= caps[i] and sum(wi) <= 1.0.
 
     MMF is implicit — it receives the residual allocation 1 - sum(wi).
     A tuple of all zeros is included (all in MMF).
@@ -536,13 +546,22 @@ def generate_weight_grid(n_assets: int, step: float = 0.10) -> list[tuple]:
     ----------
     n_assets : int    — number of risky assets (excluding MMF)
     step     : float  — weight increment (default 0.10)
+    caps     : tuple  — per-asset upper bounds (None = 1.0 for every asset)
 
     Returns
     -------
     list[tuple]  — list of weight tuples, length = C(N + 1/step, N) roughly
     """
+    if caps is not None and len(caps) != n_assets:
+        raise ValueError(f"caps has {len(caps)} entries, expected {n_assets}")
     levels = [round(i * step, 10) for i in range(int(round(1.0 / step)) + 1)]
-    combos = [c for c in itertools.product(levels, repeat=n_assets) if sum(c) <= 1.0 + 1e-9]
+    per_asset_levels = [
+        [lvl for lvl in levels if lvl <= (1.0 if caps is None else caps[idx]) + 1e-9]
+        for idx in range(n_assets)
+    ]
+    combos = [
+        combo for combo in itertools.product(*per_asset_levels) if sum(combo) <= 1.0 + 1e-9
+    ]
     logging.info(
         "Weight grid: %d assets at step=%.2f → %d combinations",
         n_assets,
@@ -563,6 +582,8 @@ def optimise_asset_weights(
     mmf_returns: pd.Series,
     step: float = 0.10,
     objective: str = "calmar",
+    asset_caps: dict[str, float] | None = None,
+    optional_keys: Collection[str] | None = None,
 ) -> tuple[dict, float]:
     """
     Grid-search the best N-asset allocation weights on in-sample data.
@@ -584,6 +605,10 @@ def optimise_asset_weights(
     mmf_returns   : pd.Series             — in-sample MMF daily returns
     step          : float                 — weight grid step (default 0.10)
     objective     : str                   — "calmar", "sharpe", or "cagr"
+    asset_caps    : dict | None           — max weight per asset; also applied when
+                                            exactly one signal is ON (rest -> MMF)
+    optional_keys : Collection | None     — short-history assets (e.g. BTC/ETH) that
+                                            must not truncate the IS evaluation window
 
     Returns
     -------
@@ -593,7 +618,9 @@ def optimise_asset_weights(
     """
     asset_keys = list(returns_dict.keys())
     n = len(asset_keys)
-    combos = generate_weight_grid(n, step)
+    opt_keys = frozenset(optional_keys or ())
+    caps_tuple = tuple(_cap_for(asset_caps, k) for k in asset_keys)
+    combos = generate_weight_grid(n_assets=n, step=step, caps=caps_tuple)
 
     # Build common_idx from assets that have IS signal coverage only.
     # Assets with no IS signal (empty signals_dict entry) are excluded from
@@ -603,20 +630,23 @@ def optimise_asset_weights(
     # (e.g. PL_MID/MSCI data starts 2010 while WIG20TR/TBSP start 2005/2006;
     #  including them in the intersection cuts 4 years of IS history including
     #  the 2008-2009 crisis, which changes which assets appear favourable.)
+    # Optional (short-history) assets are excluded from the intersection: before
+    # their first signal they have signal=0 and returns are filled with 0, so they
+    # cannot influence IS scores, but intersecting would cut the IS history
+    # (e.g. ETH from 2016) for all other assets.
     keys_with_signal = [
-        k for k in asset_keys if signals_dict.get(k) is not None and len(signals_dict[k]) > 0
+        k
+        for k in asset_keys
+        if k not in opt_keys
+        and signals_dict.get(k) is not None
+        and len(signals_dict[k]) > 0
     ]
-
-
-    if keys_with_signal:
-        common_idx = mmf_returns.index
-        for key in keys_with_signal:
-            common_idx = common_idx.intersection(returns_dict[key].index)
-    else:
-        # No signals at all — use full intersection as fallback
-        common_idx = mmf_returns.index
-        for key in asset_keys:
-            common_idx = common_idx.intersection(returns_dict[key].index)
+    intersect_keys = (
+        keys_with_signal if keys_with_signal else [k for k in asset_keys if k not in opt_keys]
+    )
+    common_idx = mmf_returns.index
+    for key in intersect_keys:
+        common_idx = common_idx.intersection(returns_dict[key].index)
 
     if len(common_idx) < 252:
         logging.warning(
@@ -667,11 +697,15 @@ def optimise_asset_weights(
     # Fixed return: 0-on -> MMF; 1-on -> that asset; 2+-on -> handled per combo
     fixed_r = np.where(n_on_arr == 0, mmf_arr, 0.0)
 
-    # previous for i, key in enumerate(asset_keys):
-
     for i in range(len(asset_keys)):
+        cap_i = caps_tuple[i]
         only_this = (sig_mat[:, i] == 1) & (n_on_arr == 1)
-        fixed_r = np.where(only_this, ret_mat[:, i], fixed_r)
+        # single ON signal: cap_i in the asset, remainder in MMF (cap_i = 1.0 -> unchanged)
+        fixed_r = np.where(
+            only_this,
+            cap_i * ret_mat[:, i] + (1.0 - cap_i) * mmf_arr,
+            fixed_r,
+        )
 
     multi_on_mask = n_on_arr >= 2  # days where combo matters
 
@@ -736,6 +770,7 @@ def reallocation_gate_n(
     min_delta:        float = 0.10,
     annual_cap:       int   = 999,
     annual_counter:   dict | None = None,
+    delta_tol:        float = 0.0,
 ) -> tuple[dict, bool]:
     """
     Decide whether to apply a target N-asset reallocation or hold.
@@ -778,7 +813,7 @@ def reallocation_gate_n(
         abs(target_weights.get(k, 0.0) - current_weights.get(k, 0.0))
         for k in set(target_weights) | set(current_weights)
     )
-    if max_delta < min_delta:
+    if max_delta < min_delta - delta_tol:
         return current_weights, False
 
     # Gate 3: annual cap
@@ -800,6 +835,7 @@ def signals_to_target_weights_n(
     signals: dict,
     best_weights: dict,
     mmf_key: str = "mmf",
+    asset_caps: dict[str, float] | None = None,
 ) -> dict:
     """
     Map per-asset binary signals + optimised weights to a target weight dict.
@@ -808,7 +844,7 @@ def signals_to_target_weights_n(
     generalised to N assets:
 
       n_on == 0  :  100% MMF
-      n_on == 1  :  100% the single on-asset  (not its partial weight)
+    n_on == 1  :  asset_caps[asset] (default 100%) in the on-asset, rest MMF
       n_on >= 2  :  best_weights split applied across all on-assets
 
     This IS/OOS consistency is critical: the IS optimiser evaluates combos
@@ -837,9 +873,10 @@ def signals_to_target_weights_n(
         target[mmf_key] = 1.0
 
     elif n_on == 1:
-        # Exactly one signal on — 100% that asset, consistent with IS optimiser
-        target[on_keys[0]] = 1.0
-        target[mmf_key] = 0.0
+        # Exactly one signal on — capped weight (default 1.0), consistent with IS optimiser
+        cap = _cap_for(asset_caps, on_keys[0])
+        target[on_keys[0]] = cap
+        target[mmf_key] = 1.0 - cap
 
     else:
         # Multiple signals on — apply optimised weight split
@@ -847,7 +884,7 @@ def signals_to_target_weights_n(
         # MMF absorbs: residual (1 - sum of on-asset weights) + off-asset weights
         total_risky = 0.0
         for key in on_keys:
-            w = best_weights.get(key, 0.0)
+            w = min(best_weights.get(key, 0.0), _cap_for(asset_caps, key))
             target[key] = w
             total_risky += w
         target[mmf_key] = max(0.0, 1.0 - total_risky)
@@ -872,6 +909,10 @@ def allocation_walk_forward_n(
     cooldown_days: int = 10,
     annual_cap: int = 999,
     train_years: int = 9,
+    asset_caps: dict[str, float] | None = None,
+    optional_keys: Collection[str] | None = None,
+    min_delta: float = 0.10,
+    delta_tol: float = 0.0,
 ) -> tuple:
     """
     Walk-forward allocation optimisation for N risky assets + MMF residual.
@@ -928,6 +969,7 @@ def allocation_walk_forward_n(
     current_weights["mmf"] = 1.0
 
     prev_best_weights = {k: 0.0 for k in asset_keys}  # all-zero = no carry-forward
+    opt_keys = frozenset(optional_keys or ())
 
     for row_index, row in wf_results_ref.iterrows():
         train_end = pd.Timestamp(row["TestStart"])
@@ -948,8 +990,9 @@ def allocation_walk_forward_n(
         # the period where signals exist, rather than raw buy-and-hold returns.
         is_signals = {k: _is(signals_full_dict[k], train_end) for k in asset_keys}
 
-        # Require minimum in-sample length
-        min_is_len = min(len(s) for s in is_returns.values())
+        # Require minimum in-sample length for non-optional assets only
+        required_lens = [len(is_returns[k]) for k in asset_keys if k not in opt_keys]
+        min_is_len = min(required_lens) if required_lens else 0
         if min_is_len < 252:
             logging.warning(
                 "Skipping window %s–%s: insufficient in-sample data (%d days)",
@@ -966,6 +1009,8 @@ def allocation_walk_forward_n(
             mmf_returns=is_mmf,
             step=step,
             objective=objective,
+            asset_caps=asset_caps,
+            optional_keys=opt_keys,
         )
 
         # If all combos were identical in IS (indiscriminate), best_weights will
@@ -1041,6 +1086,7 @@ def allocation_walk_forward_n(
             target = signals_to_target_weights_n(
                 signals=sigs_today,
                 best_weights=best_weights,
+                asset_caps=asset_caps,
             )
 
             # Apply reallocation gate
@@ -1050,9 +1096,10 @@ def allocation_walk_forward_n(
                 last_change_date=last_change_date,
                 current_date=date,
                 cooldown_days=cooldown_days,
-                min_delta=0.10,
+                min_delta=min_delta,
                 annual_cap=annual_cap,
                 annual_counter=annual_counter,
+                delta_tol=delta_tol,
             )
 
             if did_reallocate:
@@ -1217,6 +1264,9 @@ def allocation_weight_robustness_n(
     max_weight: float = 1.0,
     cooldown_days: int = 10,
     annual_cap: int = 999,
+    asset_caps: dict[str, float] | None = None,
+    min_delta: float = 0.10,
+    delta_tol: float = 0.0,
 ) -> pd.DataFrame:
     """
     Level 2 robustness check: perturb one asset's optimised weight by fixed
@@ -1283,6 +1333,7 @@ def allocation_weight_robustness_n(
         return pd.DataFrame()
 
     other_keys = [k for k in asset_keys if k != focus_asset]
+    focus_ceiling = min(max_weight, _cap_for(asset_caps, focus_asset))
 
     # Pre-align returns and signals to a common OOS index (union of all signal calendars)
     all_signal_idx = None
@@ -1328,8 +1379,8 @@ def allocation_weight_robustness_n(
                 raw_focus = min_weight
                 n_floor_clamped += 1
                 clamped = True
-            elif raw_focus > max_weight:
-                raw_focus = max_weight
+            elif raw_focus > focus_ceiling:
+                raw_focus = focus_ceiling
                 n_ceil_clamped += 1
                 clamped = True
 
@@ -1401,8 +1452,9 @@ def allocation_weight_robustness_n(
                 # Apply 3-state portfolio weights (mirrors signals_to_target_weights_n)
                 if n_on == 0:
                     effective = {k: 0.0 for k in asset_keys}
-                    effective["mmf"] = 1.0
-                elif n_on == 1:
+                    cap_on = _cap_for(asset_caps, on_key)
+                    effective[on_key] = cap_on
+                    effective["mmf"] = 1.0 - cap_on
                     on_key = next(k for k in asset_keys if sigs_today[k] == 1)
                     effective = {k: 0.0 for k in asset_keys}
                     effective[on_key] = 1.0
@@ -1426,9 +1478,10 @@ def allocation_weight_robustness_n(
                     last_change_date=last_change_date,
                     current_date=date,
                     cooldown_days=cooldown_days,
-                    min_delta=0.10,
+                    min_delta=min_delta,
                     annual_cap=annual_cap,
                     annual_counter=annual_counter,
+                    delta_tol=delta_tol,
                 )
                 if did_reallocate:
                     current_weights = accepted

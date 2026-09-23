@@ -13,6 +13,7 @@ Centralized configuration for strategy grids and system paths.
 """
 
 from pathlib import Path
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "moj_system" / "data" / "raw_csv"
@@ -40,6 +41,26 @@ BOND_GRIDS = {
     "SL_GRID": [0.01, 0.02, 0.03],
     "MOM_LB_GRID": [252],
     "N_ATR_GRID": [0.05, 0.08, 0.10, 0.15],
+}
+
+CRYPTO_KEYS: frozenset[str] = frozenset({"BTC", "ETH"})
+
+CRYPTO_GRIDS: dict[str, Any] = {
+    "X_GRID": [0.15, 0.20, 0.25, 0.30, 0.40],
+    "Y_GRID": [0.05, 0.10, 0.15, 0.20],
+    "FAST_GRID": [20, 30, 50],
+    "SLOW_GRID": [100, 150, 200],
+    "TV_GRID": [0.10],
+    "SL_GRID": [0.15, 0.20, 0.30],
+    "MOM_LB_GRID": [90, 180, 252],
+    "ATR_WINDOW": 20,
+    "N_ATR_GRID": [0.02, 0.03, 0.04, 0.05, 0.06],
+}
+
+GRID_SETS: dict[str, dict[str, Any]] = {
+    "EQUITY": BASE_GRIDS,
+    "BOND": BOND_GRIDS,
+    "CRYPTO": CRYPTO_GRIDS,
 }
 
 # Research Window Configurations
@@ -89,6 +110,29 @@ BOND_THRESHOLDS_BOOTSTRAP = {
     "Sharpe": {"p05_min": -0.10, "label": "p05 Sharpe > -0.10"},
     "MaxDD": {"p05_min": -0.10, "label": "p05 MaxDD > -10%"},
     "p_loss": {"max": 0.20, "label": "P(CAGR < 0) < 20%"},
+}
+
+CRYPTO_THRESHOLDS_MC = {
+    "CAGR": {"p05_min": 0.00, "label": "p05 CAGR > 0%"},
+    "Sharpe": {"p05_min": 0.00, "label": "p05 Sharpe > 0"},
+    "MaxDD": {"p05_min": -0.60, "label": "p05 MaxDD > -60%"},
+}
+CRYPTO_THRESHOLDS_BOOTSTRAP = {
+    "CAGR": {"p05_min": -0.01, "label": "p05 CAGR > -1%"},
+    "Sharpe": {"p05_min": -0.10, "label": "p05 Sharpe > -0.10"},
+    "MaxDD": {"p05_min": -0.70, "label": "p05 MaxDD > -70%"},
+    "p_loss": {"max": 0.20, "label": "P(CAGR < 0) < 20%"},
+}
+
+THRESHOLDS_MC: dict[str, dict[str, Any]] = {
+    "EQUITY": EQUITY_THRESHOLDS_MC,
+    "BOND": BOND_THRESHOLDS_MC,
+    "CRYPTO": CRYPTO_THRESHOLDS_MC,
+}
+THRESHOLDS_BOOTSTRAP: dict[str, dict[str, Any]] = {
+    "EQUITY": EQUITY_THRESHOLDS_BOOTSTRAP,
+    "BOND": BOND_THRESHOLDS_BOOTSTRAP,
+    "CRYPTO": CRYPTO_THRESHOLDS_BOOTSTRAP,
 }
 
 # moj_system/config.py
@@ -161,6 +205,18 @@ ASSET_REGISTRY = {
         "test": 2,
         "fx_hedged": True,
         "default_stop_eq": "atr",
+    },
+    "GLOBAL_CRYPTO": {
+        "type": "portfolio_global",
+        "mode": "global_crypto",
+        "train": 7,
+        "test": 2,
+        "crypto_train": 4,
+        "fx_hedged": True,
+        "default_stop_eq": "atr",
+        "asset_caps": {"WIG": 1.0, "SP500": 1.0, "TBSP": 1.0, "BTC": 0.20, "ETH": 0.10},
+        "min_delta": 0.05,
+        "delta_tol": 1e-9,
     },
 }
 

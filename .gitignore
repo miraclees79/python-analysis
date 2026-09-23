@@ -62,3 +62,4 @@ top50ruff.py
 *.nbi
 /moj_system/data
 /moj_system/zips
+.continue/agents/new-config.yaml
