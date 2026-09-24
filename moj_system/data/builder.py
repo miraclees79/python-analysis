@@ -175,12 +175,12 @@ def build_and_upload(
     base_df = None
 
     # 1. Pobranie bazy z Drive
-    existing = client.download_csv(folder_id=folder_id, filename=combined_filename)
+    existing = client.download_csv(folder_id=folder_id, filename=raw_filename)
     if existing is not None:
         base_df = existing.set_index(keys="Data")
         # POPRAWKA: Usunięto .dt (operacja bezpośrednio na indeksie)
         base_df.index = pd.to_datetime(arg=base_df.index).tz_localize(tz=None).normalize()
-        logging.info(msg=f"Loaded {combined_filename} from Drive. Last date: {base_df.index.max().date()}")
+        logging.info(msg=f"Loaded {raw_filename} from Drive. Last date: {base_df.index.max().date()}")
 
     # 2. Pobranie danych rozszerzających
     ext_df = None
