@@ -567,6 +567,8 @@ def main() -> None:
     parser.add_argument("--stop_mode", type=str, choices=["fixed", "atr", "auto"], default="auto")
     args = parser.parse_args()
 
+    
+
     cfg = ASSET_REGISTRY.get(args.asset)
     if not cfg:
         sys.exit(f"Error: Unknown asset '{args.asset}'.")

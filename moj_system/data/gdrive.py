@@ -20,31 +20,39 @@ class GDriveClient:
         credentials_path: str | None = None,
     ) -> None:
 
-        # Automatyczne pobieranie głównego folderu projektu ze zmiennej środowiskowej
         self.root_folder_id = os.environ.get("GDRIVE_FOLDER_ID")
 
-        if credentials_path is None:
-            self.credentials_path = os.path.join(tempfile.gettempdir(), "credentials.json")
+        if os.name == 'nt' and os.environ.get("GOOGLE_CREDENTIALS"):
+            self.credentials_data = os.environ.get("GOOGLE_CREDENTIALS")
+            self.credentials_path = None
         else:
-            self.credentials_path = credentials_path
+            self.credentials_path = credentials_path or os.path.join(tempfile.gettempdir(), "credentials.json")
+            self.credentials_data = None
 
         self.service = self._get_service()
 
     def _get_service(self) -> object | None:
+        import json
         import socket
         from google.oauth2 import service_account
         from googleapiclient.discovery import build
 
-        if not Path(self.credentials_path).exists():
-            logging.warning(msg=f"Brak pliku credentials w: {self.credentials_path}")
-            return None
-
         try:
-            creds = service_account.Credentials.from_service_account_file(
-                filename=self.credentials_path,
+            if self.credentials_data:
+                creds_info = json.loads(self.credentials_data)
+                creds = service_account.Credentials.from_service_account_info(
+                    creds_info,
                 scopes=["https://www.googleapis.com/auth/drive"],
             )
-            # POPRAWKA: Zwiększony czas oczekiwania z 60 do 120 sekund
+            elif self.credentials_path and Path(self.credentials_path).exists():
+                creds = service_account.Credentials.from_service_account_file(
+                    filename=self.credentials_path,
+                    scopes=["https://www.googleapis.com/auth/drive"],
+                )
+            else:
+                logging.warning(msg=f"Brak poprawnych danych uwierzytelniających.")
+            return None
+
             socket.setdefaulttimeout(120)
             return build(serviceName="drive", version="v3", credentials=creds, cache_discovery=False)
         except Exception as e:
