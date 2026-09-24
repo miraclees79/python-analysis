@@ -205,12 +205,7 @@ def build_global_assets(
                 hedged=False,
                 is_crypto=True,
             ),
-            "ETH": AssetSpec(
-                price_df=load_crypto_asset(ticker="eth", label="ETH", calendar=wig_df.index),
-                fx_series=fx_map["USD"],
-                hedged=False,
-                is_crypto=True,
-            ),
+            
         }
 
     raise ValueError(f"Unknown global portfolio mode: {mode!r}")
