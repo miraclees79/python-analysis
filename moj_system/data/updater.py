@@ -10,7 +10,7 @@ import os
 import logging
 import zipfile
 from typing import Any, cast
-from pathlib import Path  # <--- DODANY IMPORT
+
 
 import pandas as pd
 import requests
@@ -161,7 +161,7 @@ class DataUpdater:
             with zipfile.ZipFile(file=io.BytesIO(initial_bytes=zip_data)) as z:
                 search_name = f"{stooq_ticker.lower()}.txt"
                 target_file = next(
-                   (f for f in z.namelist() if Path(f).name.lower() == search_name),
+                    (f for f in z.namelist() if Path(f).name.lower() == search_name),
                     None,
                     )
                 if target_file:

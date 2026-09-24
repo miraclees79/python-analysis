@@ -73,6 +73,9 @@ Walk-forward OOS → Monte Carlo parameter perturbation → block bootstrap → 
 | `refresh_knf.yml` | Friday 01:00 UTC | KNF subfund matching |
 | `research_sweep.yml` | Manual only | Parameter sweeps |
 | `keepalive` | 1st of month | Repository activity |
+| `sharded_validation.yml` |(PENSION, pt 22:00 UTC) | weekly revalidation |
+| `sharded_validation_single.yml` | (WIG20TR, sob 22:00 UTC) | weekly revalidation |
+| `sharded_validation_global.yml` | (GLOBAL_B, niedz. 22:00 UTC) | weekly revalidation |
 
 ---
 

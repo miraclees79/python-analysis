@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
+
 matplotlib.use("Agg")
 
 from moj_system.config import (
@@ -68,6 +69,7 @@ from moj_system.core.strategy_engine import (
 from moj_system.core.utils import build_mmf_extended
 from moj_system.core.universe import (
     build_global_assets,
+    get_allocation_settings,   
     load_fx_map,
     prepare_asset_series,
     resolve_train_years,
@@ -647,6 +649,7 @@ class ShardedValidationManager:
         )
 
         cfg = ASSET_REGISTRY[variant]
+        settings = get_allocation_settings(cfg=cfg)
         mode = cfg["mode"]
         fx_hedged = cfg.get("fx_hedged", True)
         use_atr = stop_type_eq == "atr"
@@ -783,6 +786,10 @@ class ShardedValidationManager:
             wf_results_ref=wf_res_bd,
             asset_keys=list(rets_dict.keys()),
             train_years=train_y,
+            asset_caps=settings.asset_caps,
+            optional_keys=settings.optional_keys,   # tylko allocation_walk_forward_n
+            min_delta=settings.min_delta,
+            delta_tol=settings.delta_tol,
         )
 
         bh_wig, _ = compute_buy_and_hold(
@@ -812,6 +819,9 @@ class ShardedValidationManager:
                 asset_keys=list(rets_dict.keys()),
                 baseline_metrics=compute_metrics(equity=port_eq),
                 focus_asset="WIG",
+                asset_caps=settings.asset_caps,
+                min_delta=settings.min_delta,
+                delta_tol=settings.delta_tol,
             )
             print_allocation_robustness_report_n(
                 results_df=robust_df,

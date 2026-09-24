@@ -1452,13 +1452,13 @@ def allocation_weight_robustness_n(
                 # Apply 3-state portfolio weights (mirrors signals_to_target_weights_n)
                 if n_on == 0:
                     effective = {k: 0.0 for k in asset_keys}
+                    effective["mmf"] = 1.0
+                elif n_on == 1:
+                    on_key = next(k for k in asset_keys if sigs_today[k] == 1)
                     cap_on = _cap_for(asset_caps, on_key)
+                    effective = {k: 0.0 for k in asset_keys}
                     effective[on_key] = cap_on
                     effective["mmf"] = 1.0 - cap_on
-                    on_key = next(k for k in asset_keys if sigs_today[k] == 1)
-                    effective = {k: 0.0 for k in asset_keys}
-                    effective[on_key] = 1.0
-                    effective["mmf"] = 0.0
                 else:
                     # Distribute signal-off assets to MMF within each weight bucket
                     effective = {}
