@@ -61,7 +61,7 @@ DEFAULT_TICKERS = [
     {"label": "pl10y", "stooq": "10yply.b", "yf": None, "type": "bonds"},
     {"label": "fund_2720", "stooq": "2720.n", "yf": None, "type": "fund_pl", "knf": "195983"},
     {"label": "wbbw", "stooq": "^gpwbbwz", "yf": None, "type": "index_pl"},
-    {"label": "btc", "stooq": "btc.v", "yf": None, "type": "crypto"},
+    {"label": "btc", "stooq": "btc.v", "yf": "BTC-USD", "type": "crypto"},
     {"label": "eth", "stooq": "eth.v", "yf": None, "type": "crypto"},
 ]
 

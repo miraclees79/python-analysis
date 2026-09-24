@@ -89,7 +89,7 @@ def load_crypto_asset(
     label: str,
     calendar: pd.DatetimeIndex,
 ) -> pd.DataFrame:
-    raw = load_local_csv(ticker=ticker, label=label)
+    raw = load_local_csv(ticker=ticker, label=label, data_start="2013-01-01")
     if raw is None:
         raise FileNotFoundError(f"Missing data file for {label}")
     return align_to_calendar(df=raw, calendar=calendar)
