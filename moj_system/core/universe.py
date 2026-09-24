@@ -152,16 +152,16 @@ def build_global_assets(
         return df
 
     wig = AssetSpec(price_df=wig_df, fx_series=None, hedged=fx_hedged)
-    sp500 = AssetSpec(
-        price_df=_local(key="SP500", ticker="sp500", label="SP500"),
-        fx_series=fx_map["USD"],
-        hedged=fx_hedged,
-    )
+   
 
     if mode == "global_equity":
         return {
             "WIG": wig,
-            "SP500": sp500,
+            "SP500": AssetSpec(
+                price_df=_local(key="SP500", ticker="sp500", label="SP500"),
+                fx_series=fx_map["USD"],
+                hedged=fx_hedged,
+            ),
             "STOXX600": AssetSpec(
                 price_df=_drive("STOXX600", "stoxx600.csv", "stoxx600_combined.csv", "^STOXX"),
                 fx_series=fx_map["EUR"],
@@ -194,7 +194,11 @@ def build_global_assets(
         # No PLN-hedged BTC/ETH exist -> always unhedged (USD -> PLN via FX series)
         return {
             "WIG": wig,
-            "SP500": sp500,
+            "SP500": AssetSpec(
+                price_df=_local(key="SP500", ticker="sp500", label="SP500"),
+                fx_series=fx_map["USD"],
+                hedged=fx_hedged,
+            ),
             "BTC": AssetSpec(
                 price_df=load_crypto_asset(ticker="btc", label="BTC", calendar=wig_df.index),
                 fx_series=fx_map["USD"],
@@ -261,3 +265,4 @@ def wf_grid_kwargs(
         kwargs["sl_grid"] = grids["SL_GRID"]
         kwargs["mom_lookback_grid"] = grids["MOM_LB_GRID"]
     return kwargs
+    

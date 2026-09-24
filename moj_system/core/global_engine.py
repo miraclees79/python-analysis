@@ -524,11 +524,14 @@ def align_to_reference(
 # ============================================================
 # N-ASSET ALLOCATION — WEIGHT GRID
 # ============================================================
+
+
 def _cap_for(asset_caps: dict[str, float] | None, key: str) -> float:
     """Upper bound of a single asset's weight (1.0 when no cap is defined)."""
     if asset_caps is None:
         return 1.0
     return float(asset_caps.get(key, 1.0))
+
 
 def generate_weight_grid(
     n_assets: int,
@@ -844,7 +847,7 @@ def signals_to_target_weights_n(
     generalised to N assets:
 
       n_on == 0  :  100% MMF
-    n_on == 1  :  asset_caps[asset] (default 100%) in the on-asset, rest MMF
+      n_on == 1  :  asset_caps[asset] (default 100%) in the on-asset, rest MMF
       n_on >= 2  :  best_weights split applied across all on-assets
 
     This IS/OOS consistency is critical: the IS optimiser evaluates combos
