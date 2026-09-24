@@ -18,6 +18,7 @@ import yfinance as yf
 
 from moj_system.config import DATA_DIR
 from moj_system.data.gdrive import GDriveClient
+from pathlib import Path
 
 # --- JAWNE DEKLARACJE TYPÓW (naprawia błąd Pylance) ---
 RAW_DIR: Path = DATA_DIR 
@@ -33,6 +34,7 @@ ZIP_MAPPING = {
     "fund_pl": "d_pl_txt.zip",
     "etf_pl": "d_pl_txt.zip",
     "bonds": "d_world_txt.zip",
+    "crypto": "d_world_txt.zip",
 }
 
 CONFIRMED_FUNDS_FILE = "knf_stooq_confirmed.csv"
@@ -59,6 +61,8 @@ DEFAULT_TICKERS = [
     {"label": "pl10y", "stooq": "10yply.b", "yf": None, "type": "bonds"},
     {"label": "fund_2720", "stooq": "2720.n", "yf": None, "type": "fund_pl", "knf": "195983"},
     {"label": "wbbw", "stooq": "^gpwbbwz", "yf": None, "type": "index_pl"},
+    {"label": "btc", "stooq": "btc.v", "yf": None, "type": "crypto"},
+    {"label": "eth", "stooq": "eth.v", "yf": None, "type": "crypto"},
 ]
 
 ETF_TICKERS = [
@@ -157,8 +161,9 @@ class DataUpdater:
             with zipfile.ZipFile(file=io.BytesIO(initial_bytes=zip_data)) as z:
                 search_name = f"{stooq_ticker.lower()}.txt"
                 target_file = next(
-                    (f for f in z.namelist() if f.lower().endswith(search_name)), None,
-                )
+                   (f for f in z.namelist() if Path(f).name.lower() == search_name),
+                    None,
+                    )
                 if target_file:
                     with z.open(name=target_file) as f:
                         file_bytes = f.read()
