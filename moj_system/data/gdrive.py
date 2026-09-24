@@ -32,6 +32,7 @@ class GDriveClient:
         self.service = self._get_service()
 
     def _get_service(self) -> object | None:
+        import ast
         import json
         import socket
         from google.oauth2 import service_account
@@ -39,19 +40,31 @@ class GDriveClient:
 
         try:
             if self.credentials_data:
-                creds_info = json.loads(self.credentials_data)
+                try:
+                    creds_info = json.loads(self.credentials_data)
+                except json.JSONDecodeError:
+                    try:
+                        creds_info = ast.literal_eval(self.credentials_data)
+                    except (SyntaxError, ValueError):
+                        logging.error(
+                            "GOOGLE_CREDENTIALS musi zawierac poprawny JSON lub slownik Pythona."
+                        )
+                        return None
+                    logging.warning(
+                        "GOOGLE_CREDENTIALS ma format repr(dict); ustaw sekret jako poprawny JSON."
+                    )
                 creds = service_account.Credentials.from_service_account_info(
                     creds_info,
-                scopes=["https://www.googleapis.com/auth/drive"],
-            )
+                    scopes=["https://www.googleapis.com/auth/drive"],
+                )
             elif self.credentials_path and Path(self.credentials_path).exists():
                 creds = service_account.Credentials.from_service_account_file(
                     filename=self.credentials_path,
                     scopes=["https://www.googleapis.com/auth/drive"],
                 )
             else:
-                logging.warning(msg=f"Brak poprawnych danych uwierzytelniających.")
-            return None
+                logging.warning(msg="Brak poprawnych danych uwierzytelniających.")
+                return None
 
             socket.setdefaulttimeout(120)
             return build(serviceName="drive", version="v3", credentials=creds, cache_discovery=False)

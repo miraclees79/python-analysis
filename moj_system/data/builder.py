@@ -137,6 +137,38 @@ def _extend_series(
     return out
 
 
+def _normalise_downloaded_base(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalise a Drive CSV before the builder expects a ``Data`` column."""
+    result = df.copy()
+
+    if "Data" not in result.columns:
+        date_column = next(
+            (column for column in result.columns if str(column).strip().lower() in ("date", "data")),
+            None,
+        )
+        if date_column is None and result.index.name == "Data":
+            result = result.reset_index()
+        elif date_column is not None and date_column != "Data":
+            result = result.rename(columns={date_column: "Data"})
+
+    if "Data" not in result.columns:
+        raise ValueError(f"CSV bazowy nie zawiera kolumny daty (dostepne: {list(result.columns)})")
+
+    if CLOSE_COL not in result.columns:
+        close_column = next(
+            (
+                column
+                for column in result.columns
+                if str(column).strip().lower() in ("close", "price", "last", "adj close")
+            ),
+            None,
+        )
+        if close_column is not None:
+            result = result.rename(columns={close_column: CLOSE_COL})
+
+    return result
+
+
 def _build_full_msci_world(
     client:          GDriveClient, 
     folder_id:       str, 
@@ -153,6 +185,7 @@ def _build_full_msci_world(
     if synth_df is None:
         return wsj_combined_df
 
+    synth_df = _normalise_downloaded_base(synth_df)
     # 'Data' to kolumna (Series), więc .dt jest tutaj poprawne
     synth_df["Data"] = pd.to_datetime(arg=synth_df["Data"]).dt.tz_localize(tz=None).dt.normalize()
     synth_df = synth_df.set_index(keys="Data").sort_index()
@@ -177,6 +210,7 @@ def build_and_upload(
     # 1. Pobranie bazy z Drive
     existing = client.download_csv(folder_id=folder_id, filename=raw_filename)
     if existing is not None:
+        existing = _normalise_downloaded_base(existing)
         base_df = existing.set_index(keys="Data")
         # POPRAWKA: Usunięto .dt (operacja bezpośrednio na indeksie)
         base_df.index = pd.to_datetime(arg=base_df.index).tz_localize(tz=None).normalize()
