@@ -137,6 +137,26 @@ def _get_current_weights(weights_series: pd.Series | None) -> dict:
     return {k: round(number=float(v), ndigits=4) for k, v in dict(weights_series.iloc[-1]).items()}
 
 
+def _log_allocation_changes(weights_series: pd.Series | None, asset_keys: list) -> None:
+    if weights_series is None or weights_series.empty:
+        return
+
+    weights_df = pd.DataFrame(weights_series.tolist(), index=weights_series.index).sort_index()
+    columns = [*asset_keys, "mmf"]
+    weights_df = weights_df.reindex(columns=columns, fill_value=0.0).fillna(0.0)
+
+    changed = weights_df.diff().abs().gt(1e-9).any(axis=1)
+    changed.iloc[0] = True
+    changes = weights_df.loc[changed].mul(100.0)
+    changes.index.name = "Date"
+    changes = changes.rename(columns={"mmf": "MMF"})
+
+    logging.info(
+        "APPLIED ALLOCATION CHANGES (%%):\n%s",
+        changes.to_string(float_format=lambda value: f"{value:.1f}"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Action determination
 # ---------------------------------------------------------------------------
@@ -580,6 +600,7 @@ def build_daily_outputs(
         asset_keys=asset_keys,
     )
     logging.info(msg=f"\n{status_text}")
+    _log_allocation_changes(weights_series=weights_series, asset_keys=asset_keys)
     atomic_write(path=status_path, content=status_text)
     logging.info(msg=f"build_daily_outputs: status written to {status_path}")
 
