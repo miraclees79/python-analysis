@@ -171,6 +171,25 @@ def _get_current_weights(weights_series: pd.Series | None) -> dict:
     }
 
 
+def _log_allocation_changes(weights_series: pd.Series | None) -> None:
+    if weights_series is None or weights_series.empty:
+        return
+
+    columns = ["equity", "bond", "mmf"]
+    weights_df = pd.DataFrame(weights_series.tolist(), index=weights_series.index).sort_index()
+    weights_df = weights_df.reindex(columns=columns, fill_value=0.0).fillna(0.0)
+
+    changed = weights_df.diff().abs().gt(1e-9).any(axis=1)
+    changed.iloc[0] = True
+    changes = weights_df.loc[changed].mul(100.0)
+    changes.index.name = "Date"
+
+    logging.info(
+        "APPLIED ALLOCATION CHANGES (%%):\n%s",
+        changes.to_string(float_format=lambda value: f"{value:.1f}"),
+    )
+
+
 def _realloc_today(reallocation_log: list, run_date: dt.date) -> bool:
     if not reallocation_log:
         return False
@@ -758,6 +777,7 @@ def build_daily_outputs(
 
     status_text = _build_status_text(snap, action)
     logging.info("\n%s", status_text)
+    _log_allocation_changes(weights_series=weights_series)
     atomic_write(status_path, status_text)
     logging.info("multiasset_daily_output: status written to %s", status_path)
 
