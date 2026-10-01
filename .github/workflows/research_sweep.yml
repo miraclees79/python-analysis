@@ -30,7 +30,7 @@ jobs:
           echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
           # Uruchamiamy skrypt za pomocą modułu 
           python -m moj_system.scripts.sweep_optimizer --mode ALL --assets WIG20TR SP500 NASDAQ100 Nikkei225 MSCI_World STOXX600 --n_mc 100 --n_boot 0 
-
+          # all possible: python -m moj_system.scripts.sweep_optimizer --mode ALL --assets WIG20TR MWIG40TR SWIG80TR SP500 NASDAQ100 Nikkei225 MSCI_World STOXX600 --n_mc 100 --n_boot 0 
       - name: Upload Logs
         if: always()
         uses: actions/upload-artifact@v4
