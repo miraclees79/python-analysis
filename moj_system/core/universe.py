@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from moj_system.config import BASE_GRIDS, CRYPTO_GRIDS, CRYPTO_KEYS
+from moj_system.config import BASE_GRIDS, CRYPTO_GRIDS
 from moj_system.core.global_engine import (
     build_price_df_from_returns,
     build_return_series,
@@ -47,11 +47,19 @@ class AllocationSettings:
     delta_tol: float
 
 
-def get_allocation_settings(cfg: Mapping[str, Any]) -> AllocationSettings:
+def get_allocation_settings(
+    cfg: Mapping[str, Any],
+    assets: Mapping[str, AssetSpec],
+) -> AllocationSettings:
+    """Derive AllocationSettings for a global-portfolio variant.
+
+    optional_keys comes from the asset specs (AssetSpec.is_crypto), not the
+    mode string, so any mode with a crypto leg gets the short-history exemption.
+    """
     caps = cfg.get("asset_caps")
     return AllocationSettings(
         asset_caps=dict(caps) if caps else None,
-        optional_keys=CRYPTO_KEYS if cfg.get("mode") == "global_crypto" else frozenset(),
+        optional_keys=frozenset(key for key, spec in assets.items() if spec.is_crypto),
         min_delta=float(cfg.get("min_delta", 0.10)),
         delta_tol=float(cfg.get("delta_tol", 0.0)),
     )
@@ -88,8 +96,9 @@ def load_crypto_asset(
     ticker: str,
     label: str,
     calendar: pd.DatetimeIndex,
+    data_start: str = "1990-01-01",
 ) -> pd.DataFrame:
-    raw = load_local_csv(ticker=ticker, label=label, data_start="2013-01-01")
+    raw = load_local_csv(ticker=ticker, label=label, data_start=data_start)
     if raw is None:
         raise FileNotFoundError(f"Missing data file for {label}")
     return align_to_calendar(df=raw, calendar=calendar)
@@ -113,6 +122,7 @@ def build_global_assets(
     folder_id: str | None = None,
     credentials_path: str | None = None,
     preloaded: Mapping[str, pd.DataFrame] | None = None,
+    crypto_data_start: str = "1990-01-01",
 ) -> dict[str, AssetSpec]:
     """Return {label: AssetSpec} for the equity legs of a global portfolio.
 
@@ -152,16 +162,16 @@ def build_global_assets(
         return df
 
     wig = AssetSpec(price_df=wig_df, fx_series=None, hedged=fx_hedged)
-   
 
     if mode == "global_equity":
+        sp500 = AssetSpec(
+            price_df=_local(key="SP500", ticker="sp500", label="SP500"),
+            fx_series=fx_map["USD"],
+            hedged=fx_hedged,
+        )
         return {
             "WIG": wig,
-            "SP500": AssetSpec(
-                price_df=_local(key="SP500", ticker="sp500", label="SP500"),
-                fx_series=fx_map["USD"],
-                hedged=fx_hedged,
-            ),
+            "SP500": sp500,
             "STOXX600": AssetSpec(
                 price_df=_drive("STOXX600", "stoxx600.csv", "stoxx600_combined.csv", "^STOXX"),
                 fx_series=fx_map["EUR"],
@@ -190,17 +200,44 @@ def build_global_assets(
             ),
         }
 
-    if mode == "global_crypto":
-        # No PLN-hedged BTC/ETH exist -> always unhedged (USD -> PLN via FX series)
+    if mode == "msci_world_crypto":
         return {
             "WIG": wig,
-            "SP500": AssetSpec(
-                price_df=_local(key="SP500", ticker="sp500", label="SP500"),
+            "MSCI_World": AssetSpec(
+                price_df=_drive(
+                    "MSCI_WORLD",
+                    "msci_world_wsj_raw.csv",
+                    "msci_world_combined.csv",
+                    "URTH",
+                    is_msci_world=True,
+                ),
                 fx_series=fx_map["USD"],
                 hedged=fx_hedged,
             ),
             "BTC": AssetSpec(
-                price_df=load_crypto_asset(ticker="btc", label="BTC", calendar=wig_df.index),
+                price_df=load_crypto_asset(
+                    ticker="btc", label="BTC", calendar=wig_df.index, data_start=crypto_data_start,
+                ),
+                fx_series=fx_map["USD"],
+                hedged=False,
+                is_crypto=True,
+            ),
+        }
+
+    if mode == "global_crypto":
+        sp500 = AssetSpec(
+            price_df=_local(key="SP500", ticker="sp500", label="SP500"),
+            fx_series=fx_map["USD"],
+            hedged=fx_hedged,
+        )
+        # No PLN-hedged BTC/ETH exist -> always unhedged (USD -> PLN via FX series)
+        return {
+            "WIG": wig,
+            "SP500": sp500,
+            "BTC": AssetSpec(
+                price_df=load_crypto_asset(
+                    ticker="btc", label="BTC", calendar=wig_df.index, data_start=crypto_data_start,
+                ),
                 fx_series=fx_map["USD"],
                 hedged=False,
                 is_crypto=True,

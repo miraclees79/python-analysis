@@ -757,7 +757,6 @@ class SweepManager:
 
         cfg = ASSET_REGISTRY[variant_key]
         mode, fx_hedged = cfg["mode"], cfg["fx_hedged"]
-        settings = get_allocation_settings(cfg=cfg)
 
         WIG = self.data_map.get("WIG")
         MMF_EXT = self.data_map.get("MMF_EXT")
@@ -773,6 +772,7 @@ class SweepManager:
             credentials_path=self.creds_path,
             preloaded=self.data_map,
         )
+        settings = get_allocation_settings(cfg=cfg, assets=assets)
 
         rets_dict, sigs_full, mc_res, bb_res = {}, {}, {}, {}
 
@@ -1027,7 +1027,7 @@ def print_sweep_report(
         logging.info(
             msg=f"\n{sep}\n--- 3. ASSET UTILIZATION (Mean Weights Across Windows) ---",
         )
-        util_cols = ["Strategy", "train_years", "stop_mode"] + sorted(weight_cols)
+        util_cols = ["Strategy", "train_years", "test_years", "stop_mode"] + sorted(weight_cols)
         avail_util_cols = [c for c in util_cols if c in results_df.columns]
         util_df = results_df[avail_util_cols].copy()
         for c in weight_cols:
@@ -1175,7 +1175,7 @@ def main() -> None:
                         results.append(res)
 
     if args.mode in ["GLOBAL", "ALL"]:
-        for var in ["GLOBAL_A", "GLOBAL_B", "GLOBAL_CRYPTO"]:
+        for var in ["GLOBAL_A", "GLOBAL_B", "GLOBAL_CRYPTO", "GLOBAL_B_CRYPTO"]:
             for ty, te in SWEEP_WINDOW_CONFIGS:
                 for st in ["fixed", "atr"]:
                     logging.info(

@@ -649,7 +649,6 @@ class ShardedValidationManager:
         )
 
         cfg = ASSET_REGISTRY[variant]
-        settings = get_allocation_settings(cfg=cfg)
         mode = cfg["mode"]
         fx_hedged = cfg.get("fx_hedged", True)
         use_atr = stop_type_eq == "atr"
@@ -680,6 +679,7 @@ class ShardedValidationManager:
             folder_id=self.folder_id,
             credentials_path=self.creds_path,
         )
+        settings = get_allocation_settings(cfg=cfg, assets=assets)
 
         rets_dict = {}
         sigs_full = {}

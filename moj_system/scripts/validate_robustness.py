@@ -384,7 +384,6 @@ class ValidationManager:
 
         cfg = ASSET_REGISTRY[variant]
         mode, fx_hedged = cfg["mode"], cfg.get("fx_hedged", True)
-        settings = get_allocation_settings(cfg=cfg)
         use_atr = stop_type_eq == "atr"
 
         WIG = load_local_csv(ticker="wig", label="WIG").loc[
@@ -422,6 +421,7 @@ class ValidationManager:
             folder_id=self.folder_id,
             credentials_path=self.creds_path,
         )
+        settings = get_allocation_settings(cfg=cfg, assets=assets)
 
         rets_dict, sigs_full = {}, {}
 

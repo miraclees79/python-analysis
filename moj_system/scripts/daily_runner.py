@@ -394,7 +394,7 @@ def run_global_portfolio(
         folder_id=folder_id,
         credentials_path=creds_path,
     )
-    settings = get_allocation_settings(cfg=cfg)
+    settings = get_allocation_settings(cfg=cfg, assets=assets)
 
     rets_dict = {}
     sigs_full = {}
