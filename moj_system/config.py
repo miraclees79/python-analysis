@@ -169,6 +169,51 @@ THRESHOLDS_BOOTSTRAP: dict[str, dict[str, Any]] = {
                  },
 """
 
+GLOBAL_ASSET_CATALOG: dict[str, dict[str, Any]] = {
+    "WIG": {
+        "source": "provided",
+        "hedge": "portfolio",
+    },
+    "SP500": {
+        "source": "local",
+        "ticker": "sp500",
+        "fx": "USD",
+        "hedge": "portfolio",
+    },
+    "STOXX600": {
+        "source": "drive",
+        "data_key": "STOXX600",
+        "raw_filename": "stoxx600.csv",
+        "combined_filename": "stoxx600_combined.csv",
+        "extension_ticker": "^STOXX",
+        "fx": "EUR",
+        "hedge": "portfolio",
+    },
+    "Nikkei225": {
+        "source": "local",
+        "ticker": "nikkei225",
+        "fx": "JPY",
+        "hedge": "portfolio",
+    },
+    "MSCI_World": {
+        "source": "drive",
+        "data_key": "MSCI_WORLD",
+        "raw_filename": "msci_world_wsj_raw.csv",
+        "combined_filename": "msci_world_combined.csv",
+        "extension_ticker": "URTH",
+        "is_msci_world": True,
+        "fx": "USD",
+        "hedge": "portfolio",
+    },
+    "BTC": {
+        "source": "crypto",
+        "ticker": "btc",
+        "fx": "USD",
+        "hedge": "never",
+        "is_crypto": True,
+    },
+}
+
 
 ASSET_REGISTRY = {
     "WIG20TR": {
@@ -192,6 +237,7 @@ ASSET_REGISTRY = {
     # GLOBAL_A config inactive
     "GLOBAL_A": {"type": "portfolio_global",
                  "mode": "global_equity",
+                 "assets": ["WIG", "SP500", "STOXX600", "Nikkei225"],
                  "train": 7,
                  "test": 2,
                  "fx_hedged": True,
@@ -201,6 +247,7 @@ ASSET_REGISTRY = {
     "GLOBAL_B": {
         "type": "portfolio_global",
         "mode": "msci_world",
+        "assets": ["WIG", "MSCI_World"],
         "train": 7,
         "test": 2,
         "fx_hedged": True,
@@ -209,6 +256,7 @@ ASSET_REGISTRY = {
     "GLOBAL_CRYPTO": {
         "type": "portfolio_global",
         "mode": "global_crypto",
+        "assets": ["WIG", "SP500", "BTC"],
         "train": 6,
         "test": 1,
         "crypto_train": 4,
@@ -222,6 +270,7 @@ ASSET_REGISTRY = {
     "GLOBAL_B_CRYPTO": {
         "type": "portfolio_global",
         "mode": "msci_world_crypto",
+        "assets": ["WIG", "MSCI_World", "BTC"],
         "train": 7,
         "test": 2,
         "crypto_train": 4,

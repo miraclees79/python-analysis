@@ -9,14 +9,14 @@ sharded_robustness and sweep_optimizer.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from moj_system.config import BASE_GRIDS, CRYPTO_GRIDS
+from moj_system.config import BASE_GRIDS, CRYPTO_GRIDS, GLOBAL_ASSET_CATALOG
 from moj_system.core.global_engine import (
     build_price_df_from_returns,
     build_return_series,
@@ -25,6 +25,13 @@ from moj_system.data.builder import build_and_upload
 from moj_system.data.data_manager import load_local_csv
 
 CLOSE_COL: str = "Zamkniecie"
+
+_LEGACY_MODE_ASSETS: dict[str, tuple[str, ...]] = {
+    "global_equity": ("WIG", "SP500", "STOXX600", "Nikkei225"),
+    "msci_world": ("WIG", "MSCI_World"),
+    "global_crypto": ("WIG", "SP500", "BTC"),
+    "msci_world_crypto": ("WIG", "MSCI_World", "BTC"),
+}
 
 
 @dataclass(frozen=True, eq=False)
@@ -115,7 +122,7 @@ def load_fx_map() -> dict[str, pd.Series]:
 
 
 def build_global_assets(
-    mode: str,
+    mode: str | None,
     wig_df: pd.DataFrame,
     fx_map: Mapping[str, pd.Series],
     fx_hedged: bool,
@@ -123,129 +130,83 @@ def build_global_assets(
     credentials_path: str | None = None,
     preloaded: Mapping[str, pd.DataFrame] | None = None,
     crypto_data_start: str = "1990-01-01",
+    asset_keys: Sequence[str] | None = None,
 ) -> dict[str, AssetSpec]:
     """Return {label: AssetSpec} for the equity legs of a global portfolio.
 
     TBSP is NOT included – it stays a separate, gated bond component.
     `preloaded` (sweep_optimizer.data_map, UPPERCASE keys) avoids re-downloading
     Drive series on every sweep iteration. Crypto is always read from local CSV.
+    When supplied, `asset_keys` selects assets from GLOBAL_ASSET_CATALOG.
+    `mode` remains supported for callers not yet migrated to that interface.
     """
+    if asset_keys is None:
+        try:
+            selected_keys = _LEGACY_MODE_ASSETS[mode or ""]
+        except KeyError as exc:
+            raise ValueError(f"Unknown global portfolio mode: {mode!r}") from exc
+    else:
+        selected_keys = tuple(asset_keys)
 
-    def _local(key: str, ticker: str, label: str) -> pd.DataFrame:
-        if preloaded is not None and key in preloaded:
-            return preloaded[key]
-        df = load_local_csv(ticker=ticker, label=label)
-        if df is None:
-            raise FileNotFoundError(f"Missing data file for {label}")
-        return df
+    assets: dict[str, AssetSpec] = {}
+    for key in selected_keys:
+        try:
+            spec = GLOBAL_ASSET_CATALOG[key]
+        except KeyError as exc:
+            raise ValueError(f"Unknown global portfolio asset: {key!r}") from exc
 
-    def _drive(
-        key: str,
-        raw_filename: str,
-        combined_filename: str,
-        extension_ticker: str,
-        is_msci_world: bool = False,
-    ) -> pd.DataFrame:
-        if preloaded is not None and key in preloaded:
-            return preloaded[key]
-        df = build_and_upload(
-            folder_id=folder_id or "",
-            raw_filename=raw_filename,
-            combined_filename=combined_filename,
-            extension_ticker=extension_ticker,
-            extension_source="yfinance",
-            credentials_path=credentials_path,
-            is_msci_world=is_msci_world,
+        source = spec["source"]
+        fx_currency = spec.get("fx")
+        try:
+            fx_series = fx_map[fx_currency] if fx_currency is not None else None
+        except KeyError as exc:
+            raise ValueError(f"Missing FX series for {fx_currency} required by {key}") from exc
+        hedged = fx_hedged if spec["hedge"] == "portfolio" else False
+
+        if source == "provided":
+            price_df = wig_df
+        elif source == "local":
+            data_key = key.upper()
+            if preloaded is not None and data_key in preloaded:
+                price_df = preloaded[data_key]
+            else:
+                price_df = load_local_csv(ticker=spec["ticker"], label=key)
+                if price_df is None:
+                    raise FileNotFoundError(f"Missing data file for {key}")
+        elif source == "drive":
+            data_key = spec["data_key"]
+            if preloaded is not None and data_key in preloaded:
+                price_df = preloaded[data_key]
+            else:
+                price_df = build_and_upload(
+                    folder_id=folder_id or "",
+                    raw_filename=spec["raw_filename"],
+                    combined_filename=spec["combined_filename"],
+                    extension_ticker=spec["extension_ticker"],
+                    extension_source="yfinance",
+                    credentials_path=credentials_path,
+                    is_msci_world=spec.get("is_msci_world", False),
+                )
+                if price_df is None:
+                    raise ValueError(f"Could not build series {data_key}")
+        elif source == "crypto":
+            price_df = load_crypto_asset(
+                ticker=spec["ticker"],
+                label=key,
+                calendar=wig_df.index,
+                data_start=crypto_data_start,
+            )
+        else:
+            raise ValueError(f"Unknown data source {source!r} for global portfolio asset {key!r}")
+
+        assets[key] = AssetSpec(
+            price_df=price_df,
+            fx_series=fx_series,
+            hedged=hedged,
+            is_crypto=spec.get("is_crypto", False),
         )
-        if df is None:
-            raise ValueError(f"Could not build series {key}")
-        return df
 
-    wig = AssetSpec(price_df=wig_df, fx_series=None, hedged=fx_hedged)
-
-    if mode == "global_equity":
-        sp500 = AssetSpec(
-            price_df=_local(key="SP500", ticker="sp500", label="SP500"),
-            fx_series=fx_map["USD"],
-            hedged=fx_hedged,
-        )
-        return {
-            "WIG": wig,
-            "SP500": sp500,
-            "STOXX600": AssetSpec(
-                price_df=_drive("STOXX600", "stoxx600.csv", "stoxx600_combined.csv", "^STOXX"),
-                fx_series=fx_map["EUR"],
-                hedged=fx_hedged,
-            ),
-            "Nikkei225": AssetSpec(
-                price_df=_local(key="NIKKEI225", ticker="nikkei225", label="Nikkei225"),
-                fx_series=fx_map["JPY"],
-                hedged=fx_hedged,
-            ),
-        }
-
-    if mode == "msci_world":
-        return {
-            "WIG": wig,
-            "MSCI_World": AssetSpec(
-                price_df=_drive(
-                    "MSCI_WORLD",
-                    "msci_world_wsj_raw.csv",
-                    "msci_world_combined.csv",
-                    "URTH",
-                    is_msci_world=True,
-                ),
-                fx_series=fx_map["USD"],
-                hedged=fx_hedged,
-            ),
-        }
-
-    if mode == "msci_world_crypto":
-        return {
-            "WIG": wig,
-            "MSCI_World": AssetSpec(
-                price_df=_drive(
-                    "MSCI_WORLD",
-                    "msci_world_wsj_raw.csv",
-                    "msci_world_combined.csv",
-                    "URTH",
-                    is_msci_world=True,
-                ),
-                fx_series=fx_map["USD"],
-                hedged=fx_hedged,
-            ),
-            "BTC": AssetSpec(
-                price_df=load_crypto_asset(
-                    ticker="btc", label="BTC", calendar=wig_df.index, data_start=crypto_data_start,
-                ),
-                fx_series=fx_map["USD"],
-                hedged=False,
-                is_crypto=True,
-            ),
-        }
-
-    if mode == "global_crypto":
-        sp500 = AssetSpec(
-            price_df=_local(key="SP500", ticker="sp500", label="SP500"),
-            fx_series=fx_map["USD"],
-            hedged=fx_hedged,
-        )
-        # No PLN-hedged BTC/ETH exist -> always unhedged (USD -> PLN via FX series)
-        return {
-            "WIG": wig,
-            "SP500": sp500,
-            "BTC": AssetSpec(
-                price_df=load_crypto_asset(
-                    ticker="btc", label="BTC", calendar=wig_df.index, data_start=crypto_data_start,
-                ),
-                fx_series=fx_map["USD"],
-                hedged=False,
-                is_crypto=True,
-            ),
-            
-        }
-
-    raise ValueError(f"Unknown global portfolio mode: {mode!r}")
+    return assets
 
 
 def prepare_asset_series(
