@@ -117,9 +117,13 @@ python moj_system/scripts/refresh_knf.py --all
 All strategy parameters are in `moj_system/config.py`:
 
 - `ASSET_REGISTRY` — per-asset source, ticker, train/test windows, default stop mode, grid overrides
+- `GLOBAL_ASSET_CATALOG` — global-portfolio data source, FX currency and hedge policy for each selectable asset (including BTC and ETH)
+- Global portfolio variants select their equity/crypto legs with `assets`; TBSP and MMF remain shared portfolio components outside that list
 - `BASE_GRIDS` / `BOND_GRIDS` — parameter search grids for equity and bond assets
 - `SWEEP_WINDOW_CONFIGS` — (train_years, test_years) combinations used in sweeps
 - `EQUITY_THRESHOLDS_MC` / `BOND_THRESHOLDS_MC` / `*_BOOTSTRAP` — robustness verdict thresholds per asset class
+
+For global portfolios, `WIG` is supplied to the universe builder by each caller after the normal data update and local load. The `DataUpdater` keeps its GPW Benchmark and YFinance fallback chain for WIG; STOXX600 and MSCI World retain their Drive-history plus YFinance extension through `build_and_upload`.
 
 ---
 

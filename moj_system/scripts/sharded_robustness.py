@@ -647,9 +647,8 @@ class ShardedValidationManager:
         logging.info(
             msg=f"VALIDATING GLOBAL - {variant} | Train: {train_y} | Test: {test_y} | Stop: {stop_type_eq}",
         )
-
         cfg = ASSET_REGISTRY[variant]
-        mode = cfg["mode"]
+        cfg = ASSET_REGISTRY[variant]
         fx_hedged = cfg.get("fx_hedged", True)
         use_atr = stop_type_eq == "atr"
 
@@ -672,12 +671,13 @@ class ShardedValidationManager:
         )
 
         assets = build_global_assets(
-            mode=mode,
             wig_df=wig_df,
             fx_map=load_fx_map(),
             fx_hedged=fx_hedged,
+            asset_keys=cfg["assets"],
             folder_id=self.folder_id,
             credentials_path=self.creds_path,
+            crypto_data_start=cfg.get("crypto_data_start", "1990-01-01"),
         )
         settings = get_allocation_settings(cfg=cfg, assets=assets)
 

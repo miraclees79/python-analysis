@@ -383,7 +383,7 @@ class ValidationManager:
         )
 
         cfg = ASSET_REGISTRY[variant]
-        mode, fx_hedged = cfg["mode"], cfg.get("fx_hedged", True)
+        fx_hedged = cfg.get("fx_hedged", True)
         use_atr = stop_type_eq == "atr"
 
         WIG = load_local_csv(ticker="wig", label="WIG").loc[
@@ -414,12 +414,13 @@ class ValidationManager:
             mmf_floor="1995-01-02",
         )
         assets = build_global_assets(
-            mode=mode,
             wig_df=WIG,
             fx_map=load_fx_map(),
             fx_hedged=fx_hedged,
+            asset_keys=cfg["assets"],
             folder_id=self.folder_id,
             credentials_path=self.creds_path,
+            crypto_data_start=cfg.get("crypto_data_start", "1990-01-01"),
         )
         settings = get_allocation_settings(cfg=cfg, assets=assets)
 

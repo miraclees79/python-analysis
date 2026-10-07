@@ -756,7 +756,7 @@ class SweepManager:
     ) -> dict | None:
 
         cfg = ASSET_REGISTRY[variant_key]
-        mode, fx_hedged = cfg["mode"], cfg["fx_hedged"]
+        fx_hedged = cfg["fx_hedged"]
 
         WIG = self.data_map.get("WIG")
         MMF_EXT = self.data_map.get("MMF_EXT")
@@ -764,13 +764,14 @@ class SweepManager:
         derived = self._prepare_pension_data()
         fx_map = {c: self.data_map.get(f"{c}PLN")["Zamkniecie"] for c in ["USD", "EUR", "JPY"]}
         assets = build_global_assets(
-            mode=mode,
             wig_df=WIG,
             fx_map=fx_map,
             fx_hedged=fx_hedged,
+            asset_keys=cfg["assets"],
             folder_id=self.folder_id,
             credentials_path=self.creds_path,
             preloaded=self.data_map,
+            crypto_data_start=cfg.get("crypto_data_start", "1990-01-01"),
         )
         settings = get_allocation_settings(cfg=cfg, assets=assets)
 

@@ -171,6 +171,7 @@ THRESHOLDS_BOOTSTRAP: dict[str, dict[str, Any]] = {
 
 GLOBAL_ASSET_CATALOG: dict[str, dict[str, Any]] = {
     "WIG": {
+        # WIG is supplied by the caller as the reference calendar and price series.
         "source": "provided",
         "hedge": "portfolio",
     },
@@ -212,6 +213,13 @@ GLOBAL_ASSET_CATALOG: dict[str, dict[str, Any]] = {
         "hedge": "never",
         "is_crypto": True,
     },
+    "ETH": {
+        "source": "crypto",
+        "ticker": "eth",
+        "fx": "USD",
+        "hedge": "never",
+        "is_crypto": True,
+    },
 }
 
 
@@ -234,7 +242,7 @@ ASSET_REGISTRY = {
 
 
 
-    # GLOBAL_A config inactive
+    # Keep the established variant keys; `assets` now determines composition.
     "GLOBAL_A": {"type": "portfolio_global",
                  "mode": "global_equity",
                  "assets": ["WIG", "SP500", "STOXX600", "Nikkei225"],

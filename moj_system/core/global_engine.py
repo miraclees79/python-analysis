@@ -62,11 +62,12 @@ DEPENDENCIES
   strategy_test_library (download_csv, load_csv, compute_metrics,
                          )
 
-PORTFOLIO MODES
----------------
-  "global_equity"  : PL_LARGE, PL_MID, EU, US, JPN, TBSP  + MMF residual
-  "msci_world"     : PL_LARGE, PL_MID, WORLD, TBSP         + MMF residual
-  "global_crypto"  : PL_LARGE, SP500, BTC, ETH, TBSP       + MMF residual
+GLOBAL PORTFOLIO CONFIGURATION
+------------------------------
+  ASSET_REGISTRY[variant]["assets"] selects legs from GLOBAL_ASSET_CATALOG.
+  TBSP remains a shared, gated bond component; MMF is the residual cash asset.
+  The optional portfolio_mode argument used by reporting is a display label,
+  not an asset-universe selector.
 """
 
 import itertools
@@ -1188,7 +1189,7 @@ def print_global_equity_report(
     signals_oos_dict  : dict[str, pd.Series]  — OOS binary signals per asset
     oos_start         : date-like
     oos_end           : date-like
-    portfolio_mode    : str                   — "global_equity" or "msci_world"
+    portfolio_mode    : str                   — display label configured for the variant
     fx_hedged         : bool                  — FX treatment used
     """
     sep = "=" * 80

@@ -387,12 +387,13 @@ def run_global_portfolio(
     derived = build_standard_two_asset_data(WIG, TBSP, MMF, WIBOR, PL10Y, DE10Y, "1995-01-02")
     fx_map = load_fx_map()
     assets = build_global_assets(
-        mode=mode,
         wig_df=WIG,
         fx_map=fx_map,
         fx_hedged=fx_h,
+        asset_keys=cfg["assets"],
         folder_id=folder_id,
         credentials_path=creds_path,
+        crypto_data_start=cfg.get("crypto_data_start", "1990-01-01"),
     )
     settings = get_allocation_settings(cfg=cfg, assets=assets)
 

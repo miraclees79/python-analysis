@@ -26,13 +26,6 @@ from moj_system.data.data_manager import load_local_csv
 
 CLOSE_COL: str = "Zamkniecie"
 
-_LEGACY_MODE_ASSETS: dict[str, tuple[str, ...]] = {
-    "global_equity": ("WIG", "SP500", "STOXX600", "Nikkei225"),
-    "msci_world": ("WIG", "MSCI_World"),
-    "global_crypto": ("WIG", "SP500", "BTC"),
-    "msci_world_crypto": ("WIG", "MSCI_World", "BTC"),
-}
-
 
 @dataclass(frozen=True, eq=False)
 class AssetSpec:
@@ -122,31 +115,23 @@ def load_fx_map() -> dict[str, pd.Series]:
 
 
 def build_global_assets(
-    mode: str | None,
     wig_df: pd.DataFrame,
     fx_map: Mapping[str, pd.Series],
     fx_hedged: bool,
+    asset_keys: Sequence[str],
     folder_id: str | None = None,
     credentials_path: str | None = None,
     preloaded: Mapping[str, pd.DataFrame] | None = None,
     crypto_data_start: str = "1990-01-01",
-    asset_keys: Sequence[str] | None = None,
 ) -> dict[str, AssetSpec]:
     """Return {label: AssetSpec} for the equity legs of a global portfolio.
 
     TBSP is NOT included – it stays a separate, gated bond component.
     `preloaded` (sweep_optimizer.data_map, UPPERCASE keys) avoids re-downloading
     Drive series on every sweep iteration. Crypto is always read from local CSV.
-    When supplied, `asset_keys` selects assets from GLOBAL_ASSET_CATALOG.
-    `mode` remains supported for callers not yet migrated to that interface.
+    `asset_keys` selects assets from GLOBAL_ASSET_CATALOG.
     """
-    if asset_keys is None:
-        try:
-            selected_keys = _LEGACY_MODE_ASSETS[mode or ""]
-        except KeyError as exc:
-            raise ValueError(f"Unknown global portfolio mode: {mode!r}") from exc
-    else:
-        selected_keys = tuple(asset_keys)
+    selected_keys = tuple(asset_keys)
 
     assets: dict[str, AssetSpec] = {}
     for key in selected_keys:
