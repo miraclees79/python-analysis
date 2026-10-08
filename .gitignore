@@ -16,7 +16,7 @@ __pycache__/
 *.temp
 
 # Dane i wyniki (prośba użytkownika)
-tests/__pycache__/
+tests/
 ai_context/
 analiza wynikow/
 outputs/
