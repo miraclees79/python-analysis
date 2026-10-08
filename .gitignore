@@ -16,12 +16,18 @@ __pycache__/
 *.temp
 
 # Dane i wyniki (prośba użytkownika)
-tests/
+tests/__pycache__/
 ai_context/
 analiza wynikow/
 outputs/
 *.xlsx
 
+# Pliki tymczasowe w głównym katalogu
+
+
 # Katalogi systemowe / techniczne
-/moj_system/data/
+/moj_system/data/fund_names_stooq
+/moj_system/data/raw_csv
+/moj_system/data/zips
 /moj_system/zips/
+/moj_system/__pycache__
