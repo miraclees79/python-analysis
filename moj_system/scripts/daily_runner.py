@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 import tempfile
+from pathlib import Path
 
 import matplotlib
 import pandas as pd
@@ -44,7 +45,6 @@ from moj_system.core.strategy_engine import (
     print_backtest_report,
     walk_forward,
 )
-from moj_system.core.utils import build_mmf_extended
 from moj_system.core.universe import (
     build_display_price_df,
     build_global_assets,
@@ -55,6 +55,7 @@ from moj_system.core.universe import (
     resolve_train_years,
     wf_grid_kwargs,
 )
+from moj_system.core.utils import build_mmf_extended
 from moj_system.data.builder import build_and_upload
 from moj_system.data.data_manager import load_local_csv
 from moj_system.data.ppe_manager import build_continuous_ppe_data
@@ -88,24 +89,23 @@ def setup_logging(
 
 
 def run_single_asset(
-    asset_name:    str,
+    asset_name: str,
     stop_mode_arg: str,
-    creds_path:    str,
+    creds_path: str,
 ) -> None:
 
     cfg = ASSET_REGISTRY[asset_name]
     output_prefix = asset_name.lower()
-    selected_stop_mode = (
-        cfg.get("default_stop", "fixed") if stop_mode_arg == "auto" else stop_mode_arg
-    )
+    selected_stop_mode = cfg.get("default_stop", "fixed") if stop_mode_arg == "auto" else stop_mode_arg
     use_atr_stop = selected_stop_mode == "atr"
-    logging.info(f"SINGLE ASSET ENGINE: {asset_name} | Stop Mode: {selected_stop_mode} | Train: {cfg["train"]} y | Test: {cfg["test"]} y")
+    logging.info(
+        f"SINGLE ASSET ENGINE: {asset_name} | Stop Mode: {selected_stop_mode} | "
+        f"Train: {cfg['train']} y | Test: {cfg['test']} y"
+    )
 
     MMF = load_local_csv("fund_2720", "MMF")
     WIBOR1M = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
-    cash_df = (
-        build_mmf_extended(MMF, WIBOR1M, floor_date="1995-01-02") if WIBOR1M is not None else MMF
-    )
+    cash_df = build_mmf_extended(MMF, WIBOR1M, floor_date="1995-01-02") if WIBOR1M is not None else MMF
 
     if cfg["source"] == "drive":
         is_msci = asset_name == "MSCI_World"
@@ -193,19 +193,22 @@ def run_single_asset(
         price_col="Zamkniecie",
         logfile_name=f"{output_prefix}_signal_log.csv",
         gdrive_folder_id=os.environ.get("GDRIVE_FOLDER_ID"),
-        gdrive_credentials=creds_path if os.path.exists(creds_path) else None,
+        gdrive_credentials=creds_path if Path(creds_path).exists() else None,
     )
 
 
 def run_pension_portfolio(
     stop_mode_arg: str,
-    creds_path:    str,
+    creds_path: str,
 ) -> None:
 
     cfg = ASSET_REGISTRY["PENSION"]
     selected_stop = cfg.get("default_stop_eq", "atr") if stop_mode_arg == "auto" else stop_mode_arg
     use_atr_eq = selected_stop == "atr"
-    logging.info(f"PENSION PORTFOLIO ENGINE (WIG+TBSP+MMF) | WIG Stop: {selected_stop} | Train: {cfg["train"]} y | Test: {cfg["test"]} y")
+    logging.info(
+        f"PENSION PORTFOLIO ENGINE (WIG+TBSP+MMF) | WIG Stop: {selected_stop} | "
+        f"Train: {cfg['train']} y | Test: {cfg['test']} y"
+    )
 
     WIG = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
     MMF = load_local_csv("fund_2720", "MMF")
@@ -227,7 +230,12 @@ def run_pension_portfolio(
     logging.info("========== RUNNING: WIG ==========")
 
     wf_eq, wf_res_eq, wf_tr_eq = walk_forward(
-        WIG, derived["mmf_ext"], cfg["train"], cfg["test"], use_atr_stop=use_atr_eq, n_jobs=n_jobs,
+        WIG,
+        derived["mmf_ext"],
+        cfg["train"],
+        cfg["test"],
+        use_atr_stop=use_atr_eq,
+        n_jobs=n_jobs,
     )
     if wf_eq.empty:
         sys.exit("Walk-forward returned no results for WIG.")
@@ -282,7 +290,16 @@ def run_pension_portfolio(
     bh_bd, bh_m_bd = compute_buy_and_hold(TBSP, "Zamkniecie", oos_s, oos_e)
 
     print_multiasset_report(
-        m_p, bh_m_eq, bh_m_bd, alloc_df, realloc, sig_eq_oos, sig_bd_oos, oos_s, oos_e, sig_bd,
+        m_p,
+        bh_m_eq,
+        bh_m_bd,
+        alloc_df,
+        realloc,
+        sig_eq_oos,
+        sig_bd_oos,
+        oos_s,
+        oos_e,
+        sig_bd,
     )
 
     ppe_df = build_continuous_ppe_data(
@@ -307,7 +324,6 @@ def run_pension_portfolio(
         exec_metrics = {}
         exec_decomp = {}
         logging.warning(msg="PPE Data unavailable. Skipping execution simulation.")
-
 
     # Raportowanie reżimów
     regime_inputs = prepare_regime_inputs(WIG, wf_res_eq, port_eq, bh_eq)
@@ -363,7 +379,10 @@ def run_global_portfolio(
 
     folder_id = os.environ.get("GDRIVE_FOLDER_ID")
     logging.info(
-        msg=f"GLOBAL PORTFOLIO ENGINE: {mode} | Equity Stop: {selected_stop} | FX Hedged: {fx_h} | Train: {train_y} y | Test: {test_y} y",
+        msg=(
+            f"GLOBAL PORTFOLIO ENGINE: {mode} | Equity Stop: {selected_stop} | "
+            f"FX Hedged: {fx_h} | Train: {train_y} y | Test: {test_y} y"
+        ),
     )
 
     WIG = load_local_csv(
@@ -571,19 +590,20 @@ def run_global_portfolio(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Universal Daily Strategy Runner")
     parser.add_argument(
-        "--asset", type=str, required=True, help="Asset key: WIG20TR, PENSION, GLOBAL_A, etc.",
+        "--asset",
+        type=str,
+        required=True,
+        help="Asset key: WIG20TR, PENSION, GLOBAL_A, etc.",
     )
     parser.add_argument("--stop_mode", type=str, choices=["fixed", "atr", "auto"], default="auto")
     args = parser.parse_args()
-
-    
 
     cfg = ASSET_REGISTRY.get(args.asset)
     if not cfg:
         sys.exit(f"Error: Unknown asset '{args.asset}'.")
     setup_logging(args.asset.lower())
 
-    creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
+    creds_path = str(Path(tempfile.gettempdir()) / "credentials.json")
     updater = DataUpdater(credentials_path=creds_path)
     updater.run_full_update(get_funds=False)
 

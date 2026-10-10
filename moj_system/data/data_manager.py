@@ -7,31 +7,30 @@ Replaces legacy load_stooq_local.
 """
 
 import logging
-import os
 
 import pandas as pd
 
 # Target data path: moj_system/data/raw_csv/
-from moj_system.config import DATA_DIR # Importuj z configa!
+from moj_system.config import DATA_DIR  # Importuj z configa!
 
 
-def ensure_data_dir_exists():
-    if not os.path.exists(DATA_DIR):
-        os.makedirs(DATA_DIR)
+def ensure_data_dir_exists() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_local_csv(
-    ticker: str, label: str, data_start: str = "1990-01-01", mandatory: bool = True,
+    ticker: str,
+    label: str,
+    data_start: str = "1990-01-01",
+    mandatory: bool = True,
 ) -> pd.DataFrame | None:
     """
     Loads a local CSV file from moj_system/data/raw_csv/.
     """
-        # Używamy bezpośrednio DATA_DIR
+    # Używamy bezpośrednio DATA_DIR
     path = DATA_DIR / f"{ticker}.csv"
-    
 
-
-    if not os.path.exists(path):
+    if not path.exists():
         if mandatory:
             logging.error(f"Missing data file: {path}")
             import sys
@@ -42,7 +41,11 @@ def load_local_csv(
     try:
         # utf-8-sig removes BOM if present
         df = pd.read_csv(
-            path, on_bad_lines="skip", delimiter=",", decimal=".", encoding="utf-8-sig",
+            path,
+            on_bad_lines="skip",
+            delimiter=",",
+            decimal=".",
+            encoding="utf-8-sig",
         )
     except Exception as e:
         logging.error(f"Error reading {path}: {e}")

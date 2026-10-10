@@ -35,11 +35,10 @@ from moj_system.core.strategy_engine import compute_metrics, run_strategy_with_t
 
 # Hack for legacy code compatibility
 def compute_fund_breadth_signal(
-    *args:  object,
-    **kwargs: object,
+    *args: object,  # noqa: ARG001 - compatibility shim accepts the legacy call signature.
+    **kwargs: object,  # noqa: ARG001 - compatibility shim accepts the legacy call signature.
 ) -> pd.Series | None:
     return None
-
 
 
 # ---------------------------------------------------------------------------
@@ -72,9 +71,8 @@ MIN_VALUES = {
 
 def build_perturbation_grid(
     base_params: dict,
-    pct:         float = 0.20,
+    pct: float = 0.20,
 ) -> list[dict]:
-
     """
     Build the cartesian product of ±pct perturbations around base_params.
 
@@ -115,7 +113,7 @@ def build_perturbation_grid(
 
     combos = []
     for vals in itertools.product(*grid.values()):
-        p = dict(zip(grid.keys(), vals))
+        p = dict(zip(grid.keys(), vals, strict=True))
 
         # Preserve non-perturbed keys unchanged
         for key in base_params:
@@ -150,7 +148,7 @@ def build_perturbation_grid(
 
 def build_all_perturbation_grids(
     best_params: dict[int, dict],
-    pct:         float = 0.20,
+    pct: float = 0.20,
 ) -> dict[int, list[dict]]:
 
     return {w_id: build_perturbation_grid(params, pct=pct) for w_id, params in best_params.items()}
@@ -163,7 +161,7 @@ def build_all_perturbation_grids(
 
 def sample_universe(
     window_variants: dict[int, list[dict]],
-    rng:             random.Random,
+    rng: random.Random,
 ) -> dict[int, dict]:
 
     return {w_id: rng.choice(variants) for w_id, variants in window_variants.items()}
@@ -175,16 +173,15 @@ def sample_universe(
 
 
 def run_universe(
-    universe:      dict[int, dict],
-    windows:       list[dict],
-    df:            pd.DataFrame,
-    cash_df:       pd.DataFrame,
-    vol_window:    int,
+    universe: dict[int, dict],
+    windows: list[dict],
+    df: pd.DataFrame,
+    cash_df: pd.DataFrame,
+    vol_window: int,
     selected_mode: str,
-    funds_df:      pd.DataFrame | None = None,
-    price_col:     str = "Zamkniecie",
+    funds_df: pd.DataFrame | None = None,
+    price_col: str = "Zamkniecie",
 ) -> tuple[pd.Series | None, list[dict]]:
-
     """
     Stitch the full OOS equity curve using perturbed params — no retraining.
 
@@ -218,9 +215,7 @@ def run_universe(
 
         fund_signal = None
         if params.get("filter_mode") == "fund" and funds_df is not None:
-            fund_slice = funds_df.loc[
-                (funds_df.index >= warmup_start) & (funds_df.index < test_end)
-            ]
+            fund_slice = funds_df.loc[(funds_df.index >= warmup_start) & (funds_df.index < test_end)]
             full_signal = compute_fund_breadth_signal(
                 fund_slice,
                 **params["fund_params"],
@@ -277,15 +272,15 @@ def run_universe(
 
 
 def _run_single_sample(
-    seed:            int,
+    seed: int,
     window_variants: dict[int, list[dict]],
-    windows:         list[dict],
-    df:              pd.DataFrame,
-    cash_df:         pd.DataFrame,
-    vol_window:      int,
-    selected_mode:   str,
-    funds_df:        pd.DataFrame | None,
-    price_col:       str,
+    windows: list[dict],
+    df: pd.DataFrame,
+    cash_df: pd.DataFrame,
+    vol_window: int,
+    selected_mode: str,
+    funds_df: pd.DataFrame | None,
+    price_col: str,
 ) -> dict | None:
 
     rng = random.Random(seed)
@@ -317,20 +312,19 @@ def _run_single_sample(
 
 
 def run_monte_carlo_robustness(
-    best_params:   dict[int, dict],
-    windows:       list[dict],
-    df:            pd.DataFrame,
-    cash_df:       pd.DataFrame,
-    vol_window:    int,
+    best_params: dict[int, dict],
+    windows: list[dict],
+    df: pd.DataFrame,
+    cash_df: pd.DataFrame,
+    vol_window: int,
     selected_mode: str,
-    funds_df:      pd.DataFrame | None = None,
-    n_samples:     int   = 1000,
-    n_jobs:        int   = 1,
-    perturb_pct:   float = 0.20,
-    seed:          int   = 42,
-    price_col:     str   = "Zamkniecie",
+    funds_df: pd.DataFrame | None = None,
+    n_samples: int = 1000,
+    n_jobs: int = 1,
+    perturb_pct: float = 0.20,
+    seed: int = 42,
+    price_col: str = "Zamkniecie",
 ) -> pd.DataFrame:
-
     """
     Run the full Monte Carlo robustness test.
 
@@ -448,9 +442,9 @@ def run_monte_carlo_robustness(
 
 
 def analyze_robustness(
-    results_df:       pd.DataFrame,
+    results_df: pd.DataFrame,
     baseline_metrics: dict[str, float],
-    thresholds:       dict | None = None,
+    thresholds: dict | None = None,
 ) -> dict:
 
     if thresholds is None:
@@ -593,8 +587,8 @@ def analyze_robustness(
 
 
 def extract_windows_from_wf_results(
-    wf_results:  pd.DataFrame,
-    train_years: int = 8,
+    wf_results: pd.DataFrame,
+    train_years: int = 8,  # noqa: ARG001 - kept for compatibility; windows are read from wf_results.
 ) -> list[dict]:
 
     windows = []
@@ -617,7 +611,6 @@ def extract_windows_from_wf_results(
 def extract_best_params_from_wf_results(
     wf_results: pd.DataFrame,
 ) -> dict[int, dict]:
-
     """
     Extract best_params dict from the wf_results DataFrame.
 
@@ -652,13 +645,12 @@ def extract_best_params_from_wf_results(
 
 
 def block_bootstrap_history(
-    df:         pd.DataFrame,
-    price_col:  str,
-    cash_col:   str,
+    df: pd.DataFrame,
+    price_col: str,
+    cash_col: str,
     block_size: int = 250,
-    seed:       int | None = None,
+    seed: int | None = None,
 ) -> pd.DataFrame:
-
     """
     Reshuffle (index_return, cash_return) pairs in blocks.
     """
@@ -692,14 +684,14 @@ def block_bootstrap_history(
 
 
 def _bootstrap_single_sample(
-    i:              int,
-    combined:       pd.DataFrame,
-    df:             pd.DataFrame,
-    cash_df:        pd.DataFrame,
-    price_col:      str,
+    i: int,
+    combined: pd.DataFrame,
+    df: pd.DataFrame,  # noqa: ARG001 - retained to match the worker dispatch contract.
+    cash_df: pd.DataFrame,  # noqa: ARG001 - retained to match the worker dispatch contract.
+    price_col: str,
     cash_price_col: str,
-    block_size:     int,
-    wf_kwargs:      dict,
+    block_size: int,
+    wf_kwargs: dict,
 ) -> dict | None:
     """
     Single bootstrap sample — designed for joblib.Parallel dispatch.
@@ -760,13 +752,13 @@ def _bootstrap_single_sample(
 
 
 def run_block_bootstrap_robustness(
-    df:             pd.DataFrame,
-    cash_df:        pd.DataFrame,
-    price_col:      str = "Zamkniecie",
+    df: pd.DataFrame,
+    cash_df: pd.DataFrame,
+    price_col: str = "Zamkniecie",
     cash_price_col: str = "Zamkniecie",
-    n_samples:      int = 500,
-    block_size:     int = 250,
-    **wf_kwargs:    object,
+    n_samples: int = 500,
+    block_size: int = 250,
+    **wf_kwargs: object,
 ) -> pd.DataFrame:
     """
     Run full walk-forward re-optimisation on n_samples block-bootstrapped
@@ -823,10 +815,10 @@ def run_block_bootstrap_robustness(
     log_every = max(1, n_samples // 20)
     success = False
 
-    N_OUTER_JOBS = n_jobs
+    n_outer_jobs = n_jobs
     for backend, n_jobs, label in [
-        ("loky", N_OUTER_JOBS, "multiprocessing"),
-        ("threading", N_OUTER_JOBS, "threading"),
+        ("loky", n_outer_jobs, "multiprocessing"),
+        ("threading", n_outer_jobs, "threading"),
         (None, 1, "sequential"),
     ]:
         try:
@@ -957,9 +949,9 @@ def run_block_bootstrap_robustness(
 
 
 def analyze_bootstrap(
-    results_df:       pd.DataFrame,
+    results_df: pd.DataFrame,
     baseline_metrics: dict[str, float],
-    thresholds:       dict | None = None,
+    thresholds: dict | None = None,
 ) -> dict:
 
     if thresholds is None:
@@ -1012,12 +1004,12 @@ def analyze_bootstrap(
 
         p_loss_display = f"{p_loss:.1%}" if col == "CAGR" else ""
 
-        if col in ("CAGR", "Sharpe", "CalMAR"):
-            fmt = lambda v: f"{v:.2f}" if col != "CAGR" else f"{v:.1%}"
-        elif col == "MaxDD":
-            fmt = lambda v: f"{v:.1%}"
-        else:
-            fmt = lambda v: f"{v:.1%}"
+        def fmt(value: float, metric: str = col) -> str:
+            if metric in ("CAGR", "MaxDD"):
+                return f"{value:.1%}"
+            if metric in ("Sharpe", "CalMAR"):
+                return f"{value:.2f}"
+            return f"{value:.1%}"
 
         row = (
             f"{col:<10} {fmt(base):>10} {fmt(mean):>10} {fmt(p05):>10} "

@@ -25,6 +25,7 @@ from moj_system.core.fund_filter import compute_fund_breadth_signal
 # CANONICAL N_JOBS CALCULATION
 # ============================================================
 
+
 def get_n_jobs() -> int:
     cpu_count = os.cpu_count() or 1
     if cpu_count > 3 and sys.platform == "win32":
@@ -35,6 +36,7 @@ def get_n_jobs() -> int:
 # ============================================================
 # ANNUAL PERFORMANCE UTILITIES
 # ============================================================
+
 
 def annual_cagr_by_year(
     portfolio_equity: pd.Series,
@@ -78,6 +80,7 @@ def count_year_wins(
 # IO & PREPARATION
 # ============================================================
 
+
 def load_csv(
     filename: str,
 ) -> pd.DataFrame | None:
@@ -108,7 +111,7 @@ def load_csv(
 
     date_column = "Data"
     if date_column not in df.columns:
-        exact_matches =[col for col in df.columns if col.strip() == date_column]
+        exact_matches = [col for col in df.columns if col.strip() == date_column]
         if exact_matches:
             date_column = exact_matches[0]
             logging.info(
@@ -186,6 +189,7 @@ def prepare_cash_returns(
 # INDICATORS & METRICS
 # ============================================================
 
+
 def compute_momentum(
     series: pd.Series,
     lookback: int = 252,
@@ -197,7 +201,7 @@ def compute_momentum(
     if not blend:
         return series.shift(periods=skip) / series.shift(periods=lookback) - 1.0
 
-    signals =[]
+    signals = []
     for lb in blend_lookbacks:
         sig = series.shift(periods=blend_skip) / series.shift(periods=lb) - 1.0
         signals.append(sig)
@@ -261,9 +265,9 @@ def neighbour_mean(
     si = min(range(len(stop_grid)), key=lambda i: abs(stop_grid[i] - stop_param))
     yi = min(range(len(Y_grid)), key=lambda i: abs(Y_grid[i] - Y))
 
-    neighbours =[]
+    neighbours = []
     for ds in [-1, 0, 1]:
-        for dy in[-1, 0, 1]:
+        for dy in [-1, 0, 1]:
             nsi, nyi = si + ds, yi + dy
             if 0 <= nsi < len(stop_grid) and 0 <= nyi < len(Y_grid):
                 nkey = (
@@ -322,6 +326,7 @@ def compute_buy_and_hold(
 # ============================================================
 # NUMBA CORE ENGINE
 # ============================================================
+
 
 @njit(cache=True, nogil=True)
 def _numba_simulation_loop(
@@ -423,7 +428,8 @@ def _numba_simulation_loop(
                 exit_reason_triggered = True
 
         if position > 0.0 and exit_reason_triggered:
-            # Slippage COST jest używane w logu trades, ale nie odejmuje się od samej krzywej equity w kodzie źródłowym
+            # Slippage cost appears in the trade log but is not deducted from
+            # the equity curve in the source strategy.
             position = 0.0
             entry_price = 0.0
             M = 0.0
@@ -516,12 +522,16 @@ def run_strategy_numba(
         df_copy["_warmup"] = False
 
     if entry_gate is not None:
-        gate_aligned = entry_gate.reindex(
-            index=df_copy.index,
-            method="ffill",
-        ).fillna(
-            value=1.0,
-        ).astype(int)
+        gate_aligned = (
+            entry_gate.reindex(
+                index=df_copy.index,
+                method="ffill",
+            )
+            .fillna(
+                value=1.0,
+            )
+            .astype(int)
+        )
     else:
         gate_aligned = None
 
@@ -558,8 +568,12 @@ def run_strategy_numba(
             right_index=True,
             how="left",
         )
-        df_copy["fund_filter"] = df_copy["fund_filter"].ffill().fillna(
-            value=0.0,
+        df_copy["fund_filter"] = (
+            df_copy["fund_filter"]
+            .ffill()
+            .fillna(
+                value=0.0,
+            )
         )
     else:
         df_copy["fund_filter"] = 1.0
@@ -571,15 +585,25 @@ def run_strategy_numba(
     df_copy["vol"] = vol.shift(
         periods=1,
     )
-    df_copy["ma_fast"] = df_copy["price"].rolling(
-        window=fast,
-    ).mean().shift(
-        periods=1,
+    df_copy["ma_fast"] = (
+        df_copy["price"]
+        .rolling(
+            window=fast,
+        )
+        .mean()
+        .shift(
+            periods=1,
+        )
     )
-    df_copy["ma_slow"] = df_copy["price"].rolling(
-        window=slow,
-    ).mean().shift(
-        periods=1,
+    df_copy["ma_slow"] = (
+        df_copy["price"]
+        .rolling(
+            window=slow,
+        )
+        .mean()
+        .shift(
+            periods=1,
+        )
     )
     df_copy["trend"] = (df_copy["ma_fast"] > df_copy["ma_slow"]).astype(int)
 
@@ -607,15 +631,24 @@ def run_strategy_numba(
         )
         tr = np.maximum(df_copy["high"], prev_close) - np.minimum(df_copy["low"], prev_close)
         df_copy["relative_tr"] = tr / prev_close
-        df_copy["atr"] = df_copy["relative_tr"].rolling(
-            window=atr_window,
-        ).mean().shift(
-            periods=1,
-        ) * 100.0
+        df_copy["atr"] = (
+            df_copy["relative_tr"]
+            .rolling(
+                window=atr_window,
+            )
+            .mean()
+            .shift(
+                periods=1,
+            )
+            * 100.0
+        )
     else:
-        df_copy["atr"] = (df_copy["price"].diff().abs() / df_copy["price"].shift(
-            periods=1,
-        )).rolling(
+        df_copy["atr"] = (
+            df_copy["price"].diff().abs()
+            / df_copy["price"].shift(
+                periods=1,
+            )
+        ).rolling(
             window=atr_window,
         ).mean().shift(
             periods=1,
@@ -634,7 +667,7 @@ def run_strategy_numba(
     else:
         filter_mode_active = 0
 
-    position_mode_dynamic = (position_mode == "vol_dynamic")
+    position_mode_dynamic = position_mode == "vol_dynamic"
 
     prices_arr = df_copy["price"].to_numpy(dtype=np.float64)
     rets_arr = df_copy["ret"].to_numpy(dtype=np.float64)
@@ -646,12 +679,16 @@ def run_strategy_numba(
     warmups_arr = df_copy["_warmup"].to_numpy(dtype=np.bool_)
 
     if gate_aligned is not None:
-        gate_vals_arr = gate_aligned.reindex(
-            index=df_copy.index,
-        ).fillna(
-            value=1.0,
-        ).to_numpy(
-            dtype=np.int64,
+        gate_vals_arr = (
+            gate_aligned.reindex(
+                index=df_copy.index,
+            )
+            .fillna(
+                value=1.0,
+            )
+            .to_numpy(
+                dtype=np.int64,
+            )
         )
     else:
         gate_vals_arr = np.ones(
@@ -712,6 +749,7 @@ def run_strategy_numba(
 # ============================================================
 # PYTHON STRATEGY ENGINE
 # ============================================================
+
 
 def run_strategy_with_trades(
     df: pd.DataFrame,
@@ -774,12 +812,16 @@ def run_strategy_with_trades(
         df["_warmup"] = False
 
     if entry_gate is not None:
-        gate_aligned = entry_gate.reindex(
-            index=df.index,
-            method="ffill",
-        ).fillna(
-            value=1,
-        ).astype(int)
+        gate_aligned = (
+            entry_gate.reindex(
+                index=df.index,
+                method="ffill",
+            )
+            .fillna(
+                value=1,
+            )
+            .astype(int)
+        )
     else:
         gate_aligned = None
 
@@ -821,8 +863,12 @@ def run_strategy_with_trades(
             right_index=True,
             how="left",
         )
-        df["fund_filter"] = df["fund_filter"].ffill().fillna(
-            value=0,
+        df["fund_filter"] = (
+            df["fund_filter"]
+            .ffill()
+            .fillna(
+                value=0,
+            )
         )
     else:
         df["fund_filter"] = 1
@@ -834,15 +880,25 @@ def run_strategy_with_trades(
     df["vol"] = vol.shift(
         periods=1,
     )
-    df["ma_fast"] = df["price"].rolling(
-        window=fast,
-    ).mean().shift(
-        periods=1,
+    df["ma_fast"] = (
+        df["price"]
+        .rolling(
+            window=fast,
+        )
+        .mean()
+        .shift(
+            periods=1,
+        )
     )
-    df["ma_slow"] = df["price"].rolling(
-        window=slow,
-    ).mean().shift(
-        periods=1,
+    df["ma_slow"] = (
+        df["price"]
+        .rolling(
+            window=slow,
+        )
+        .mean()
+        .shift(
+            periods=1,
+        )
     )
     df["trend"] = (df["ma_fast"] > df["ma_slow"]).astype(int)
 
@@ -871,16 +927,23 @@ def run_strategy_with_trades(
         tr = np.maximum(df["high"], prev_close) - np.minimum(df["low"], prev_close)
         df["relative_tr"] = tr / prev_close
         df["atr"] = (
-            df["relative_tr"].rolling(
+            df["relative_tr"]
+            .rolling(
                 window=atr_window,
-            ).mean().shift(
+            )
+            .mean()
+            .shift(
                 periods=1,
-            ) * 100.0
+            )
+            * 100.0
         )
     else:
-        df["atr"] = (df["price"].diff().abs() / df["price"].shift(
-            periods=1,
-        )).rolling(
+        df["atr"] = (
+            df["price"].diff().abs()
+            / df["price"].shift(
+                periods=1,
+            )
+        ).rolling(
             window=atr_window,
         ).mean().shift(
             periods=1,
@@ -938,9 +1001,12 @@ def run_strategy_with_trades(
         gate_vals_arr = (
             gate_aligned.reindex(
                 index=df.index,
-            ).fillna(
+            )
+            .fillna(
                 value=1,
-            ).to_numpy().astype(int)
+            )
+            .to_numpy()
+            .astype(int)
             if gate_aligned is not None
             else None
         )
@@ -974,7 +1040,7 @@ def run_strategy_with_trades(
             else:
                 equity *= 1.0 + cash_ret
 
-            exit_reasons =[]
+            exit_reasons = []
 
             if position > 0.0:
                 dd = (price - entry_price) / entry_price
@@ -1088,7 +1154,7 @@ def run_strategy_with_trades(
             else:
                 equity *= 1.0 + cash_ret
 
-            exit_reasons =[]
+            exit_reasons = []
 
             if position > 0.0:
                 dd = (price - entry_price) / entry_price
@@ -1180,7 +1246,11 @@ def run_strategy_with_trades(
 
     if position_mode == "vol_dynamic" and rebal_count > 0:
         logging.debug(
-            msg=f"vol_dynamic rebalancing: {rebal_count} adjustments, total cost drag {rebal_cost_total * 100.0:.4f}% ({rebal_cost_total * 10000.0:.1f} bps)",
+            msg=(
+                f"vol_dynamic rebalancing: {rebal_count} adjustments, "
+                f"total cost drag {rebal_cost_total * 100.0:.4f}% "
+                f"({rebal_cost_total * 10000.0:.1f} bps)"
+            ),
         )
 
     end_state = None
@@ -1193,7 +1263,10 @@ def run_strategy_with_trades(
 
         if entry_date < test_start:
             logging.debug(
-                msg=f"CARRY trade entry date {entry_date} predates test window {test_start} — trade return and equity curve are on different bases",
+                msg=(
+                    f"CARRY trade entry date {entry_date} predates test window {test_start} — "
+                    "trade return and equity curve are on different bases"
+                ),
             )
 
         trades.append(
@@ -1244,7 +1317,9 @@ def run_strategy_with_trades(
     first_val = df["equity"].iloc[0]
     if initial_state is not None and abs(first_val - 1.0) > 0.001:
         logging.debug(
-            msg=f"Warmup P&L on carried position: {(first_val - 1.0) * 100.0:.2f}% — excluded from OOS equity",
+            msg=(
+                f"Warmup P&L on carried position: {(first_val - 1.0) * 100.0:.2f}% — excluded from OOS equity"
+            ),
         )
     if first_val != 0.0:
         df["equity"] = df["equity"] / first_val
@@ -1262,6 +1337,7 @@ def run_strategy_with_trades(
 # ============================================================
 # EVALUATE PARAMS & WALK FORWARD
 # ============================================================
+
 
 def evaluate_params(
     filter_mode: str,
@@ -1406,22 +1482,22 @@ def walk_forward(
 ) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame]:
 
     if X_grid is None:
-        X_grid =[0.08, 0.10, 0.12, 0.15, 0.20]
+        X_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
     if Y_grid is None:
-        Y_grid =[0.02, 0.03, 0.05, 0.07, 0.10]
+        Y_grid = [0.02, 0.03, 0.05, 0.07, 0.10]
     if fast_grid is None:
         fast_grid = [50, 75, 100]
     if slow_grid is None:
         slow_grid = [150, 200, 250]
     if tv_grid is None:
-        tv_grid =[0.08, 0.10, 0.12, 0.15, 0.20]
+        tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
     if sl_grid is None:
-        sl_grid =[0.05, 0.08, 0.10, 0.15]
+        sl_grid = [0.05, 0.08, 0.10, 0.15]
     if mom_lookback_grid is None:
         mom_lookback_grid = [126, 252]
 
     if N_atr_grid is None:
-        N_atr_grid =[0.08, 0.10, 0.12, 0.15, 0.20]
+        N_atr_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
 
     stop_grid = N_atr_grid if use_atr_stop else X_grid
 
@@ -1433,12 +1509,15 @@ def walk_forward(
         msg=f"Objective function: {objective}",
     )
     logging.info(
-        msg=f"Trailing stop mode: {'ATR-scaled (Chandelier)' if use_atr_stop else 'fixed percentage'}  (ATR window={atr_window})",
+        msg=(
+            f"Trailing stop mode: {'ATR-scaled (Chandelier)' if use_atr_stop else 'fixed percentage'}  "
+            f"(ATR window={atr_window})"
+        ),
     )
 
     oos_equity_slices = []
-    results =[]
-    all_oos_trades =[]
+    results = []
+    all_oos_trades = []
 
     start = df.index.min()
     carry_state = None
@@ -1450,18 +1529,18 @@ def walk_forward(
 
     while True:
         gate_train = None
-        gate_oos   = None
+        gate_oos = None
         train_start = start
-        train_end   = train_start + pd.DateOffset(years=train_years)
-        test_end    = train_end   + pd.DateOffset(years=test_years)
+        train_end = train_start + pd.DateOffset(years=train_years)
+        test_end = train_end + pd.DateOffset(years=test_years)
 
         train = df.loc[(df.index >= train_start) & (df.index < train_end)]
         test = df.loc[(df.index >= train_end) & (df.index < test_end)]
 
         logging.info(
             msg=f"Iteration: train={train_start.date()} to {train_end.date()} ({len(train)} rows) | "
-                f"test={train_end.date()} to {test_end.date()} ({len(test)} rows) | "
-                f"data_end={data_end.date()}",
+            f"test={train_end.date()} to {test_end.date()} ({len(test)} rows) | "
+            f"data_end={data_end.date()}",
         )
 
         if train.empty or test.empty:
@@ -1494,14 +1573,16 @@ def walk_forward(
         if filter_modes_override is not None:
             filter_modes = filter_modes_override
 
-        param_combinations =[]
+        param_combinations = []
 
         for filter_mode in filter_modes:
             fast_iter = fast_grid if filter_mode == "ma" else [50]
             slow_iter = slow_grid if filter_mode == "ma" else [200]
-            mom_lb_iter = mom_lookback_grid if filter_mode == "mom" else[252]
+            mom_lb_iter = mom_lookback_grid if filter_mode == "mom" else [252]
             fund_iter = (
-                list(enumerate(fund_params_grid)) if filter_mode == "fund" and fund_params_grid is not None else [(None, None)]
+                list(enumerate(fund_params_grid))
+                if filter_mode == "fund" and fund_params_grid is not None
+                else [(None, None)]
             )
             stop_iter = N_atr_grid if use_atr_stop else X_grid
 
@@ -1532,14 +1613,14 @@ def walk_forward(
                                                 ),
                                             )
 
-        for backend, n_jobs_inner, label in[
+        for backend, n_jobs_inner, label in [
             ("loky", n_jobs, "multiprocessing"),
             ("threading", n_jobs, "threading"),
             (None, 1, "sequential"),
         ]:
             try:
                 if backend is None:
-                    results_list =[
+                    results_list = [
                         evaluate_params(
                             filter_mode=filter_mode,
                             fund_idx=fund_idx,
@@ -1644,7 +1725,7 @@ def walk_forward(
             continue
 
         param_scores = {
-            key: score for result in results_list if result is not None for key, score in[result]
+            key: score for result in results_list if result is not None for key, score in [result]
         }
 
         if not param_scores:
@@ -1694,23 +1775,30 @@ def walk_forward(
         if best_params is None:
             break
         else:
-            stop_label = (
-                f"N_atr={best_params['N_atr']:.2f}" if use_atr_stop else f"X={best_params['X']:.2f}"
-            )
+            stop_label = f"N_atr={best_params['N_atr']:.2f}" if use_atr_stop else f"X={best_params['X']:.2f}"
             logging.info(
-                msg=f"Window {train_start.date()}: best raw_{objective}={best_raw_score:.4f} | penalised_{objective}={best_score:.4f} | filter={best_params['filter_mode']} | {stop_label} Y={best_params['Y']:.2f} fast={best_params['fast']} slow={best_params['slow']} sl={best_params['stop_loss']:.2f} tv={best_params.get('target_vol', 'N/A')} mom_lookback={best_params['mom_lookback']}",
+                msg=(
+                    f"Window {train_start.date()}: best raw_{objective}={best_raw_score:.4f} | "
+                    f"penalised_{objective}={best_score:.4f} | filter={best_params['filter_mode']} | "
+                    f"{stop_label} Y={best_params['Y']:.2f} fast={best_params['fast']} "
+                    f"slow={best_params['slow']} sl={best_params['stop_loss']:.2f} "
+                    f"tv={best_params.get('target_vol', 'N/A')} "
+                    f"mom_lookback={best_params['mom_lookback']}"
+                ),
             )
 
-        WARMUP_BARS = best_params["slow"] + vol_window + 10
-        warmup = train.iloc[-WARMUP_BARS:]
+        warmup_bars = best_params["slow"] + vol_window + 10
+        warmup = train.iloc[-warmup_bars:]
 
         warmup_start = warmup.index.min()
-        cash_warmup_and_test = cash_df.loc[
-            (cash_df.index >= warmup_start) & (cash_df.index < test_end)
-        ]
+        cash_warmup_and_test = cash_df.loc[(cash_df.index >= warmup_start) & (cash_df.index < test_end)]
 
         oos_fund_signal = None
-        if best_params["filter_mode"] == "fund" and best_params["fund_params"] is not None and funds_df is not None:
+        if (
+            best_params["filter_mode"] == "fund"
+            and best_params["fund_params"] is not None
+            and funds_df is not None
+        ):
             funds_warmup_and_test = funds_df.loc[
                 (funds_df.index >= warmup.index.min()) & (funds_df.index < test_end)
             ]
@@ -1774,7 +1862,7 @@ def walk_forward(
                 msg=f"Stub window detected ({len(test)} days). Muting OOS statistics.",
             )
             for k in test_metrics.keys():
-                test_metrics[k] = float('nan')
+                test_metrics[k] = float("nan")
 
         equity_slice = bt_oos["equity"].copy()
         if oos_equity_slices:
@@ -1837,9 +1925,13 @@ def walk_forward(
     results_df = pd.DataFrame(
         data=results,
     )
-    oos_trades_df = pd.concat(
-        objs=all_oos_trades,
-    ) if all_oos_trades else pd.DataFrame()
+    oos_trades_df = (
+        pd.concat(
+            objs=all_oos_trades,
+        )
+        if all_oos_trades
+        else pd.DataFrame()
+    )
 
     return oos_equity, results_df, oos_trades_df
 
@@ -1847,6 +1939,7 @@ def walk_forward(
 # ============================================================
 # TRADE ANALYSIS & REPORTING
 # ============================================================
+
 
 def analyze_trades(
     trades: pd.DataFrame,
@@ -1888,7 +1981,7 @@ def print_backtest_report(
     metrics: dict[str, float],
     trades: pd.DataFrame,
     trade_stats: dict[str, float] | None,
-    best_params: dict | None = None,
+    best_params: dict | None = None,  # noqa: ARG001 - retained for compatibility with existing report callers.
     wf_results: pd.DataFrame | None = None,
     position_mode: str | None = None,
     filter_modes_override: list[str] | None = None,
@@ -1917,7 +2010,7 @@ def print_backtest_report(
         use_atr = "use_atr_stop" in wf_results.columns and wf_results["use_atr_stop"].any()
         stop_col = "N_atr" if use_atr else "X"
 
-        cols =[
+        cols = [
             "TrainStart",
             "TestStart",
             "filter_mode",
@@ -1929,7 +2022,7 @@ def print_backtest_report(
             "stop_loss",
             "mom_lookback",
         ]
-        cols =[c for c in cols if c in wf_results.columns]
+        cols = [c for c in cols if c in wf_results.columns]
 
         if "fund_params" in wf_results.columns and wf_results["filter_mode"].eq("fund").any():
             cols.insert(3, "fund_params")
@@ -1952,7 +2045,11 @@ def print_backtest_report(
         msg="METRICS:",
     )
     logging.info(
-        msg=f"CAGR:  {metrics['CAGR'] * 100.0:.2f}% | Vol: {metrics['Vol'] * 100.0:.2f}% | Sharpe: {metrics['Sharpe']:.2f} | MaxDD: {metrics['MaxDD'] * 100.0:.2f}% | CalMAR: {metrics['CalMAR']:.2f} | Sortino: {metrics['Sortino']:.2f}",
+        msg=(
+            f"CAGR:  {metrics['CAGR'] * 100.0:.2f}% | Vol: {metrics['Vol'] * 100.0:.2f}% | "
+            f"Sharpe: {metrics['Sharpe']:.2f} | MaxDD: {metrics['MaxDD'] * 100.0:.2f}% | "
+            f"CalMAR: {metrics['CalMAR']:.2f} | Sortino: {metrics['Sortino']:.2f}"
+        ),
     )
 
     logging.info(
@@ -1964,7 +2061,14 @@ def print_backtest_report(
             msg="TRADE STATISTICS:",
         )
         logging.info(
-            msg=f"Total Trades: {int(trade_stats['Trades'])} | Win Rate: {trade_stats['WinRate'] * 100.0:.1f}% | Avg Win: {trade_stats['AvgWin'] * 100.0:.2f}% | Avg Loss: {trade_stats['AvgLoss'] * 100.0:.2f}% | Profit Factor: {trade_stats['ProfitFactor']:.2f} | Avg Days: {trade_stats['AvgDays']:.1f}",
+            msg=(
+                f"Total Trades: {int(trade_stats['Trades'])} | "
+                f"Win Rate: {trade_stats['WinRate'] * 100.0:.1f}% | "
+                f"Avg Win: {trade_stats['AvgWin'] * 100.0:.2f}% | "
+                f"Avg Loss: {trade_stats['AvgLoss'] * 100.0:.2f}% | "
+                f"Profit Factor: {trade_stats['ProfitFactor']:.2f} | "
+                f"Avg Days: {trade_stats['AvgDays']:.1f}"
+            ),
         )
         logging.info(
             msg="-" * 80,
@@ -1984,7 +2088,10 @@ def print_backtest_report(
         n_carry = len(carry_trades)
         if n_carry > 0:
             logging.info(
-                msg=f"Note: trade log includes {n_carry} CARRY boundary records excluded from statistics above.",
+                msg=(
+                    f"Note: trade log includes {n_carry} CARRY boundary records "
+                    "excluded from statistics above."
+                ),
             )
 
         trades_fmt = trade_log.copy()
@@ -2004,7 +2111,12 @@ def print_backtest_report(
     if not trade_log.empty and trade_log.iloc[-1]["Exit Reason"] == "CARRY":
         last_carry = trade_log.iloc[-1]
         logging.info(
-            msg=f"Open position at report date: entry {last_carry['EntryDate']} at {last_carry['EntryPrice']:.2f}, current value {last_carry['ExitPrice']:.2f}, unrealised return {last_carry['Return'] * 100.0:.1f}%",
+            msg=(
+                f"Open position at report date: entry {last_carry['EntryDate']} "
+                f"at {last_carry['EntryPrice']:.2f}, current value "
+                f"{last_carry['ExitPrice']:.2f}, unrealised return "
+                f"{last_carry['Return'] * 100.0:.1f}%"
+            ),
         )
     logging.info(
         msg="=" * 80,

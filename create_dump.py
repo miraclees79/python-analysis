@@ -24,6 +24,7 @@ def load_config(
         print(f"BŁĄD: Błąd podczas parsowania pliku YAML: {exc}")
         exit(1)
 
+
 def create_repo_dump(
     config: dict[str, Any],
 ) -> None:
@@ -48,10 +49,7 @@ def create_repo_dump(
     ) as outfile:
         for root, dirs, files in os.walk(top=current_working_dir):
             # Modyfikujemy dirs w miejscu, aby os.walk ignorował foldery
-            dirs[:] = [
-                d for d in dirs
-                if d not in exclude_dirs
-            ]
+            dirs[:] = [d for d in dirs if d not in exclude_dirs]
 
             for filename in files:
                 if filename in exclude_files:
@@ -62,9 +60,9 @@ def create_repo_dump(
 
                     print(f"  -> Dodaję plik: {file_to_process_path.relative_to(current_working_dir)}")
 
-                    outfile.write(f"\n\n{'='*80}\n")
+                    outfile.write(f"\n\n{'=' * 80}\n")
                     outfile.write(f"--- PLIK: {file_to_process_path.relative_to(current_working_dir)} ---\n")
-                    outfile.write(f"{'='*80}\n\n")
+                    outfile.write(f"{'=' * 80}\n\n")
 
                     try:
                         file_content: str = file_to_process_path.read_text(
@@ -78,11 +76,12 @@ def create_repo_dump(
                         outfile.write(error_message)
                         print(f"  [!] {error_message.strip()}")
 
-    print("\n" + "="*30)
+    print("\n" + "=" * 30)
     print("ZAKOŃCZONO!")
     print(f"Przetworzono {file_count} plików.")
     print(f"Cały kod znajduje się w pliku: {output_file_name}")
-    print("="*30)
+    print("=" * 30)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(

@@ -1,12 +1,5 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Apr 16 22:35:24 2026
-
-@author: adamg
-"""
-
-# -*- coding: utf-8 -*-
-"""
 moj_system/core/robustness.py
 =============================
 Engine for Monte Carlo Parameter Perturbation and Block Bootstrap.
@@ -36,13 +29,12 @@ class RobustnessEngine:
 
     def run_mc_test(
         self,
-        wf_results:  pd.DataFrame,
-        df:          pd.DataFrame,
-        cash_df:     pd.DataFrame,
-        n_samples:   int   = 100,
+        wf_results: pd.DataFrame,
+        df: pd.DataFrame,
+        cash_df: pd.DataFrame,
+        n_samples: int = 100,
         perturb_pct: float = 0.20,
     ) -> pd.DataFrame:
-
         """Runs Monte Carlo parameter perturbation."""
         logging.info(f"Starting MC Perturbation Test (n={n_samples})...")
 
@@ -65,12 +57,11 @@ class RobustnessEngine:
 
     def run_bootstrap_test(
         self,
-        df:          pd.DataFrame,
-        cash_df:     pd.DataFrame,
-        n_samples:   int = 500,
+        df: pd.DataFrame,
+        cash_df: pd.DataFrame,
+        n_samples: int = 500,
         **wf_kwargs: object,
     ) -> pd.DataFrame:
-
         """Runs Block Bootstrap history reshuffling."""
         logging.info(f"Starting Block Bootstrap Test (n={n_samples})...")
 

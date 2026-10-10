@@ -1,16 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sun Apr 19 15:42:46 2026
-
-@author: adamg
-"""
-
-# -*- coding: utf-8 -*-
-"""
 moj_system/core/utils.py
 ========================
 Neutral module for shared functions to break circular imports.
 """
+
 import logging
 
 import pandas as pd
@@ -78,8 +72,8 @@ def signals_to_target_weights(
 def reallocation_gate(
     current_weights: dict,
     target_weights: dict,
-    last_change_date,
-    current_date,
+    last_change_date: pd.Timestamp | None,
+    current_date: pd.Timestamp,
     cooldown_days: int = 10,
     min_delta: float = 0.10,
     annual_cap: int = 12,
@@ -292,18 +286,6 @@ def build_mmf_extended(
     # total growth factor over the extension window.
     # To chain-link backwards: divide mmf_start price by the forward cumprod.
     anchor_price = mmf_close.iloc[0]  # price on mmf_start date
-
-    # daily_factors is indexed floor → (mmf_start - 1 bday)
-    # cumprod going forward: at day t, cumprod(t) = product of factors[floor..t]
-    forward_cumprod = daily_factors.cumprod()
-
-    # Scale so that cumprod(mmf_start - 1 bday) × next_factor = anchor_price
-    # i.e. synthetic[mmf_start] would equal anchor_price
-    # synthetic[t] = anchor_price / (total_forward_cumprod / forward_cumprod[t])
-    total_forward = forward_cumprod.iloc[-1] * daily_factors.iloc[-1]
-    # Actually simpler: work in returns space, then build price backwards
-    # Returns during extension: r_t = daily_factor_t - 1
-    ext_returns = daily_factors - 1.0
 
     # Build the synthetic price series backwards from the anchor:
     # price[mmf_start] = anchor_price (known)

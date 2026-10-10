@@ -77,7 +77,8 @@ def _feasible_weight_grid(step: float = 0.10) -> list:
     66 combinations for step=0.10.
     """
     combos = []
-    #  levels = [round(i * step, 10) for i in range(1, int(1 / step) + 1)] OLD version, more conservative, both assets get at least 10% when both signals are on
+    # Older version required both assets to receive at least 10% when both
+    # signals were on: levels started at one step instead of zero.
     levels = [round(i * step, 10) for i in range(0, int(1 / step) + 1)]
     for e in levels:
         for b in levels:
@@ -162,9 +163,7 @@ def optimise_both_on_weights(
         bd_only = (s_eq == 0) & (s_bd == 1)
         both_off = (s_eq == 0) & (s_bd == 0)
 
-        port_r[both_on] = (combo["equity"] * eq_r + combo["bond"] * bd_r + combo["mmf"] * mf_r)[
-            both_on
-        ]
+        port_r[both_on] = (combo["equity"] * eq_r + combo["bond"] * bd_r + combo["mmf"] * mf_r)[both_on]
         port_r[eq_only] = eq_r[eq_only]
         port_r[bd_only] = bd_r[bd_only]
         port_r[both_off] = mf_r[both_off]
@@ -198,8 +197,7 @@ def optimise_both_on_weights(
             best_combo = combo
 
     logging.info(
-        "Both-on weight optimisation: best equity=%.0f%% bond=%.0f%% mmf=%.0f%% "
-        "(objective=%s score=%.3f)",
+        "Both-on weight optimisation: best equity=%.0f%% bond=%.0f%% mmf=%.0f%% (objective=%s score=%.3f)",
         best_combo["equity"] * 100,
         best_combo["bond"] * 100,
         best_combo["mmf"] * 100,
@@ -252,7 +250,7 @@ def build_signal_series(wf_equity: pd.Series, wf_trades: pd.DataFrame) -> pd.Ser
         mask = signal.index >= entry
         signal.loc[mask] = 1
 
-    for _, row in closed_trades.iterrows():
+    for row in closed_trades.to_dict(orient="records"):
         entry = pd.Timestamp(row["EntryDate"])
         exit_ = pd.Timestamp(row["ExitDate"])
         mask = (signal.index >= entry) & (signal.index <= exit_)
@@ -310,7 +308,7 @@ def allocation_walk_forward(
     sig_bond_full: pd.Series,
     sig_equity_oos: pd.Series,
     sig_bond_oos: pd.Series,
-    wf_results_eq: pd.DataFrame,
+    wf_results_eq: pd.DataFrame,  # noqa: ARG001 - retained for compatibility with existing callers.
     wf_results_bd: pd.DataFrame,
     step: float = 0.10,
     objective: str = "calmar",
@@ -361,7 +359,7 @@ def allocation_walk_forward(
       alloc_results_df      : pd.DataFrame — per-window best weights
     """
 
-    def _slice(s, start, end):
+    def _slice(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> pd.Series:
         return s.loc[(s.index >= start) & (s.index < end)]
 
     oos_equity_slices = []
@@ -377,7 +375,7 @@ def allocation_walk_forward(
     # Use bond WF schedule — it starts later and defines the common OOS period
     windows = wf_results_bd[["TrainStart", "TrainEnd", "TestStart", "TestEnd"]].drop_duplicates()
     prev_best_combo = None  # tracks best_combo from previous window
-    for _, row in windows.iterrows():
+    for row in windows.to_dict(orient="records"):
         train_start = pd.Timestamp(row["TrainStart"])
         train_end = pd.Timestamp(row["TrainEnd"])
         test_start = pd.Timestamp(row["TestStart"])
@@ -390,22 +388,15 @@ def allocation_walk_forward(
         train_bd_r = _slice(bond_returns, train_start, train_end)
         train_mf_r = _slice(mmf_returns, train_start, train_end)
         train_s_eq = (
-            _slice(sig_equity_full, train_start, train_end)
-            .reindex(train_eq_r.index)
-            .fillna(0)
-            .astype(int)
+            _slice(sig_equity_full, train_start, train_end).reindex(train_eq_r.index).fillna(0).astype(int)
         )
         train_s_bd = (
-            _slice(sig_bond_full, train_start, train_end)
-            .reindex(train_bd_r.index)
-            .fillna(0)
-            .astype(int)
+            _slice(sig_bond_full, train_start, train_end).reindex(train_bd_r.index).fillna(0).astype(int)
         )
 
         if len(train_eq_r) < 30 or len(train_bd_r) < 30:
             logging.warning(
-                "Allocation WF: training window %s–%s too short "
-                "(eq=%d rows, bd=%d rows), skipping.",
+                "Allocation WF: training window %s–%s too short (eq=%d rows, bd=%d rows), skipping.",
                 train_start.date(),
                 train_end.date(),
                 len(train_eq_r),
@@ -476,9 +467,7 @@ def allocation_walk_forward(
 
             if reallocated:
                 param_updated = (
-                    date == common[0]
-                    and prev_best_combo is not None
-                    and prev_best_combo != best_combo
+                    date == common[0] and prev_best_combo is not None and prev_best_combo != best_combo
                 )
 
                 if param_updated:
@@ -517,7 +506,7 @@ def allocation_walk_forward(
         if not window_equity_vals:
             continue
 
-        dates, rets = zip(*window_equity_vals)
+        dates, rets = zip(*window_equity_vals, strict=True)
         window_port_r = pd.Series(list(rets), index=list(dates))
         window_equity = (1 + window_port_r).cumprod()
         window_equity = window_equity / window_equity.iloc[0]
@@ -551,12 +540,12 @@ def print_multiasset_report(
     reallocation_log: list,
     sig_equity: pd.Series,
     sig_bond: pd.Series,
-    oos_start,
-    oos_end,
-    sig_bond_raw=None,
-    spread_prefilter=None,
-    yield_prefilter=None,  # NEW
-    sig_bond_post_spread=None,  # NEW — intermediate state between filters
+    oos_start: pd.Timestamp,
+    oos_end: pd.Timestamp,
+    sig_bond_raw: pd.Series | None = None,
+    spread_prefilter: pd.Series | None = None,
+    yield_prefilter: pd.Series | None = None,
+    sig_bond_post_spread: pd.Series | None = None,
 ) -> None:
     """
     Log a structured multi-asset backtest report.
@@ -596,14 +585,14 @@ def print_multiasset_report(
         logging.info("PER-WINDOW ALLOCATION PARAMETERS (both-signals-on state):")
         logging.info(
             "\n%s",
-            alloc_results_df[
-                ["TrainStart", "TestStart", "TestEnd", "w_equity", "w_bond", "w_mmf"]
-            ].to_string(index=False),
+            alloc_results_df[["TrainStart", "TestStart", "TestEnd", "w_equity", "w_bond", "w_mmf"]].to_string(
+                index=False
+            ),
         )
     logging.info("-" * 80)
 
     # --- Performance comparison ---
-    def _fmt(m):
+    def _fmt(m: dict[str, float]) -> str:
         return (
             f"CAGR: {m['CAGR'] * 100:.2f}%  "
             f"Vol: {m['Vol'] * 100:.2f}%  "
@@ -654,15 +643,11 @@ def print_multiasset_report(
         logging.info(
             "  Yield pre-filter blocked  : %d days  (%.1f%% of post-spread bond-on days)",
             int(n_blocked_yield),
-            n_blocked_yield / sig_bond_post_spread.sum() * 100
-            if sig_bond_post_spread.sum() > 0
-            else 0,
+            n_blocked_yield / sig_bond_post_spread.sum() * 100 if sig_bond_post_spread.sum() > 0 else 0,
         )
 
     # Combined total blocked across both filters
-    n_blocked_total = (
-        (sig_bond_raw - sig_bond).clip(lower=0).reindex(sig_bond.index).fillna(0).sum()
-    )
+    n_blocked_total = (sig_bond_raw - sig_bond).clip(lower=0).reindex(sig_bond.index).fillna(0).sum()
     if sig_bond_post_spread is not None:
         logging.info(
             "  Both filters blocked      : %d days total  (%.1f%% of raw bond-on days)",
@@ -765,8 +750,8 @@ def allocation_weight_robustness(
     mmf_returns: pd.Series,
     sig_equity_oos: pd.Series,
     sig_bond_oos: pd.Series,
-    baseline_metrics: dict,
-    perturb_steps: list = [-0.2, -0.1, 0.0, 0.1, 0.2],
+    baseline_metrics: dict,  # noqa: ARG001
+    perturb_steps: list[float] | tuple[float, ...] = (-0.2, -0.1, 0.0, 0.1, 0.2),
     min_equity: float = 0.10,
     max_equity: float = 1.00,
     cooldown_days: int = 10,
@@ -839,7 +824,7 @@ def allocation_weight_robustness(
         CalMAR_vs_base  : CalMAR ratio vs baseline (perturbed / baseline)
     """
 
-    def _slice(s, start, end):
+    def _slice(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> pd.Series:
         return s.loc[(s.index >= start) & (s.index < end)]
 
     results = []
@@ -849,7 +834,7 @@ def allocation_weight_robustness(
         perturbed_windows = []
         n_floor_clamped = 0
         n_ceil_clamped = 0
-        for _, row in alloc_results_df.iterrows():
+        for row in alloc_results_df.to_dict(orient="records"):
             raw_eq = float(row["w_equity"]) + step
             w_eq = round(raw_eq, 10)
             clamped = ""
@@ -967,7 +952,7 @@ def allocation_weight_robustness(
             if not window_rets:
                 continue
 
-            dates, rets = zip(*window_rets)
+            dates, rets = zip(*window_rets, strict=True)
             port_r = pd.Series(list(rets), index=list(dates))
             eq_curve = (1 + port_r).cumprod()
             eq_curve = eq_curve / eq_curve.iloc[0]
@@ -1097,8 +1082,7 @@ def print_allocation_robustness_report(results_df: pd.DataFrame) -> None:
 
     if inner.empty:
         logging.info(
-            "Verdict: ±10pp steps not present in results — "
-            "add ±0.10 to perturb_steps for a verdict.",
+            "Verdict: ±10pp steps not present in results — add ±0.10 to perturb_steps for a verdict.",
         )
     else:
         min_ratio = inner["CalMAR_vs_base"].min()
@@ -1217,7 +1201,7 @@ def build_yield_price_proxy(
     """
     ytm_series = pl10y.iloc[:, 1].copy() / 100  # convert % to decimal
 
-    def _price(ytm):
+    def _price(ytm: float) -> float:
         if pd.isna(ytm) or ytm <= 0:
             return np.nan
         c = coupon / freq * 100
@@ -1284,9 +1268,7 @@ def build_yield_momentum_prefilter(
 
     pct_on = prefilter.mean() * 100
     logging.info(
-        "Yield momentum pre-filter: %.1f%% of days ON  |  "
-        "threshold=%.0fbp  window=%dd  "
-        "(series: %s to %s)",
+        "Yield momentum pre-filter: %.1f%% of days ON  |  threshold=%.0fbp  window=%dd  (series: %s to %s)",
         pct_on,
         rise_threshold_bp,
         lookback_days,

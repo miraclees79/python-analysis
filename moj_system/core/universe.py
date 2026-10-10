@@ -233,10 +233,14 @@ def convert_trade_prices_for_display(trades: pd.DataFrame, spec: AssetSpec) -> p
     ):
         dates = pd.DatetimeIndex(pd.to_datetime(converted[date_column]))
         pln_prices = display_prices[display_column].reindex(dates, method="ffill").to_numpy()
-        original_prices = display_prices["ZamkniecieOriginalCurrency"].reindex(
-            dates,
-            method="ffill",
-        ).to_numpy()
+        original_prices = (
+            display_prices["ZamkniecieOriginalCurrency"]
+            .reindex(
+                dates,
+                method="ffill",
+            )
+            .to_numpy()
+        )
         converted[memo_column] = original_prices
         converted[trade_column] = pln_prices
 
@@ -292,4 +296,3 @@ def wf_grid_kwargs(
         kwargs["sl_grid"] = grids["SL_GRID"]
         kwargs["mom_lookback_grid"] = grids["MOM_LB_GRID"]
     return kwargs
-    

@@ -85,7 +85,10 @@ class FundPerformanceEngine:
 
     @staticmethod
     def compute_rolling_ir(
-        fund_log_ret: pd.Series, benchmark_log_ret: pd.Series, window: int = 252, step: int = 63,
+        fund_log_ret: pd.Series,
+        benchmark_log_ret: pd.Series,
+        window: int = 252,
+        step: int = 63,
     ) -> dict:
         """Calculates rolling Information Ratio (IR)."""
         common = fund_log_ret.index.intersection(benchmark_log_ret.index)
@@ -123,7 +126,8 @@ class BenchmarkComparator:
 
     @staticmethod
     def get_distribution_stats(
-        returns_series: pd.Series, tail_limit: int = 66,
+        returns_series: pd.Series,
+        tail_limit: int = 66,
     ) -> Tuple[float, float, float]:
         if returns_series is None or returns_series.empty:
             return np.nan, np.nan, np.nan
@@ -134,7 +138,9 @@ class BenchmarkComparator:
 
     @classmethod
     def compare_fund_to_benchmark(
-        cls, fund_prices: pd.Series, benchmark_prices: pd.Series,
+        cls,
+        fund_prices: pd.Series,
+        benchmark_prices: pd.Series,
     ) -> Tuple[Dict[str, float], float, float]:
         if isinstance(fund_prices, pd.DataFrame):
             fund_prices = fund_prices.squeeze()

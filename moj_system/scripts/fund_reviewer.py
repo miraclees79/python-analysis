@@ -13,19 +13,20 @@ import sys
 import tempfile
 from collections import defaultdict
 from datetime import datetime as dt
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 # --- Path Setup ---
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
-sys.path.append(project_root)
+script_dir = Path(__file__).resolve().parent
+project_root = script_dir.parent.parent
+sys.path.append(str(project_root))
 
-from moj_system.core.fund_analytics import BenchmarkComparator, FundPerformanceEngine
-from moj_system.data.data_manager import load_local_csv
-from moj_system.data.gdrive import GDriveClient
-from moj_system.data.updater import DataUpdater
+from moj_system.core.fund_analytics import BenchmarkComparator, FundPerformanceEngine  # noqa: E402
+from moj_system.data.data_manager import load_local_csv  # noqa: E402
+from moj_system.data.gdrive import GDriveClient  # noqa: E402
+from moj_system.data.updater import DataUpdater  # noqa: E402
 
 # --- CONFIGURATION ---
 WINDOWS = {"1y": 252, "3y": 756, "5y": 1260, "all": None}
@@ -77,7 +78,7 @@ class FundReviewer:
         update_data: bool = True,
     ) -> None:
 
-        self.creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
+        self.creds_path = str(Path(tempfile.gettempdir()) / "credentials.json")
         self.gdrive = GDriveClient(credentials_path=self.creds_path)
         self.folder_id = os.environ.get("GDRIVE_FOLDER_ID")
 
@@ -94,7 +95,6 @@ class FundReviewer:
                 self.benchmarks[name] = df["Zamkniecie"].squeeze()
 
     def load_confirmed_funds(self) -> tuple[pd.DataFrame, dict[str, pd.Series]]:
-
         """Loads confirmed list and merges with ALL metadata from knf_summary.csv"""
         if not self.folder_id:
             sys.exit("GDRIVE_FOLDER_ID not set.")
@@ -125,7 +125,10 @@ class FundReviewer:
 
             # Merge while keeping confirmed names as primary
             df_funds = df_conf.merge(
-                df_sum[available_meta_cols], on="subfundId", how="left", suffixes=("", "_knf"),
+                df_sum[available_meta_cols],
+                on="subfundId",
+                how="left",
+                suffixes=("", "_knf"),
             )
             # ----------------------------------------------------------------
             logging.info("Metadata from knf_summary.csv merged successfully.")
@@ -164,10 +167,9 @@ class FundReviewer:
 
     def build_category_benchmarks(
         self,
-        df_funds:    pd.DataFrame,
+        df_funds: pd.DataFrame,
         fund_prices: dict[str, pd.Series],
     ) -> dict[str, pd.Series]:
-
         """Builds synthetic benchmarks for each KNF category."""
         logging.info("Building synthetic category benchmarks...")
         category_rets = defaultdict(list)
@@ -200,11 +202,10 @@ class FundReviewer:
 
     def evaluate_fund(
         self,
-        fund_row:       pd.Series,
-        prices:         pd.Series,
+        fund_row: pd.Series,
+        prices: pd.Series,
         cat_benchmarks: dict[str, pd.Series],
     ) -> list[dict]:
-
         """Calculates performance and regression metrics including Hit Rates."""
         category = fund_row.get("category")
         cat_bench_ret = cat_benchmarks.get(category)
@@ -257,7 +258,8 @@ class FundReviewer:
                 for b_name, b_prices in self.benchmarks.items():
                     if b_prices is not None:
                         win_rates, _, _ = BenchmarkComparator.compare_fund_to_benchmark(
-                            prices, b_prices,
+                            prices,
+                            b_prices,
                         )
                         row_data[f"hit_{b_name}_22d"] = round(win_rates.get("22-day", np.nan), 1)
                         row_data[f"hit_{b_name}_66d"] = round(win_rates.get("66-day", np.nan), 1)
@@ -308,7 +310,8 @@ class FundReviewer:
             rank_col = f"rank_{metric}"
             if metric in rank_df.columns:
                 rank_df[rank_col] = rank_df.groupby(["category", "window"])[metric].rank(
-                    method="min", ascending=False,
+                    method="min",
+                    ascending=False,
                 )
             else:
                 rank_df[rank_col] = np.nan
@@ -323,7 +326,7 @@ class FundReviewer:
         rank_df = rank_df[FINAL_COLS + other_cols]
 
         today = dt.today().strftime("%Y%m%d")
-        os.makedirs("outputs", exist_ok=True)
+        Path("outputs").mkdir(parents=True, exist_ok=True)
         perf_path, rank_path = (
             f"outputs/fund_performance_{today}.csv",
             f"outputs/fund_ranking_{today}.csv",

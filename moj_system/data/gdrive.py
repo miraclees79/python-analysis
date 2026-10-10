@@ -16,17 +16,17 @@ from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 class GDriveClient:
     def __init__(
-        self, 
+        self,
         credentials_path: str | None = None,
     ) -> None:
 
         self.root_folder_id = os.environ.get("GDRIVE_FOLDER_ID")
 
-        if os.name == 'nt' and os.environ.get("GOOGLE_CREDENTIALS"):
+        if os.name == "nt" and os.environ.get("GOOGLE_CREDENTIALS"):
             self.credentials_data = os.environ.get("GOOGLE_CREDENTIALS")
             self.credentials_path = None
         else:
-            self.credentials_path = credentials_path or os.path.join(tempfile.gettempdir(), "credentials.json")
+            self.credentials_path = credentials_path or str(Path(tempfile.gettempdir()) / "credentials.json")
             self.credentials_data = None
 
         self.service = self._get_service()
@@ -35,8 +35,6 @@ class GDriveClient:
         import ast
         import json
         import socket
-        from google.oauth2 import service_account
-        from googleapiclient.discovery import build
 
         try:
             if self.credentials_data:
@@ -46,9 +44,7 @@ class GDriveClient:
                     try:
                         creds_info = ast.literal_eval(self.credentials_data)
                     except (SyntaxError, ValueError):
-                        logging.error(
-                            "GOOGLE_CREDENTIALS musi zawierac poprawny JSON lub slownik Pythona."
-                        )
+                        logging.error("GOOGLE_CREDENTIALS musi zawierac poprawny JSON lub slownik Pythona.")
                         return None
                     logging.warning(
                         "GOOGLE_CREDENTIALS ma format repr(dict); ustaw sekret jako poprawny JSON."
@@ -73,9 +69,9 @@ class GDriveClient:
             return None
 
     def find_file_id(
-        self, 
-        parent_id: str, 
-        filename:  str,
+        self,
+        parent_id: str,
+        filename: str,
     ) -> str | None:
 
         if not self.service:
@@ -85,9 +81,7 @@ class GDriveClient:
             query = f"name='{filename}' and {parent_query} and trashed=false"
 
             # DODAJ num_retries=5
-            results = (
-                self.service.files().list(q=query, fields="files(id,name)").execute(num_retries=5)
-            )
+            results = self.service.files().list(q=query, fields="files(id,name)").execute(num_retries=5)
             files = results.get("files", [])
             return files[0]["id"] if files else None
         except (ConnectionResetError, socket.timeout):
@@ -96,11 +90,11 @@ class GDriveClient:
             return self.find_file_id(parent_id, filename)  # Ponowna próba
 
     def download_csv(
-        self, 
-        folder_id: str, 
-        filename:  str, 
-        sep:       str = ",", 
-        encoding:  str = "utf-8",
+        self,
+        folder_id: str,
+        filename: str,
+        sep: str = ",",
+        encoding: str = "utf-8",
     ) -> pd.DataFrame | None:
 
         file_id = self.find_file_id(folder_id, filename)
@@ -122,18 +116,16 @@ class GDriveClient:
             return None
 
     def upload_file(
-        self, 
-        folder_id:  str, 
-        local_path: str, 
-        filename:   str | None = None,
+        self,
+        folder_id: str,
+        local_path: str,
+        filename: str | None = None,
     ) -> str | None:
-        from googleapiclient.http import MediaFileUpload
-        import time
 
         service: Any = self.service
         if not service:
             return None
-            
+
         if not filename:
             filename = Path(local_path).name
 
@@ -146,7 +138,7 @@ class GDriveClient:
             mimetype = "text/plain"
 
         existing_id = self.find_file_id(parent_id=folder_id, filename=filename)
-        
+
         # POPRAWKA: Pancerna pętla uploadu z mechanizmem Retry
         max_attempts = 3
         for attempt in range(max_attempts):
@@ -154,31 +146,30 @@ class GDriveClient:
                 # Wymuszamy nowe otwarcie pliku przy każdej próbie, bo MediaFileUpload
                 # podczas błędu może zostawić kursor na końcu pliku.
                 media = MediaFileUpload(filename=local_path, mimetype=mimetype, resumable=True)
-                
+
                 if existing_id:
-                    service.files().update(
-                        fileId=existing_id, 
-                        media_body=media
-                    ).execute(num_retries=5) # Wbudowany mechanizm ponawiania pakietów
-                    
+                    service.files().update(fileId=existing_id, media_body=media).execute(
+                        num_retries=5
+                    )  # Wbudowany mechanizm ponawiania pakietów
+
                     logging.info(msg=f"Zaktualizowano plik na Drive: {filename}")
                     return existing_id
                 else:
                     metadata = {"name": filename, "parents": [folder_id]}
-                    result = service.files().create(
-                        body=metadata, 
-                        media_body=media, 
-                        fields="id"
-                    ).execute(num_retries=5)
-                    
+                    result = (
+                        service.files()
+                        .create(body=metadata, media_body=media, fields="id")
+                        .execute(num_retries=5)
+                    )
+
                     logging.info(msg=f"Utworzono nowy plik na Drive: {filename}")
                     return result["id"]
-                    
+
             except Exception as e:
                 logging.warning(msg=f"Upload attempt {attempt + 1}/{max_attempts} failed for {filename}: {e}")
                 if attempt < max_attempts - 1:
                     time.sleep(5)  # Odczekanie przed ponowieniem
-                    
+
                     # Czasami błąd wynika z wygasłego tokenu lub zerwanego gniazda.
                     # Twardy reset połączenia z serwerami Google:
                     self.service = self._get_service()
@@ -186,15 +177,15 @@ class GDriveClient:
                 else:
                     logging.error(msg=f"All upload attempts failed for {filename}")
                     return None
-                    
+
         return None
 
     # Dla kompatybilności wstecznej z resztą skryptów (np. data_updater):
     def upload_csv(
-        self, 
-        folder_id:  str, 
-        local_path: str, 
-        filename:   str | None = None,
+        self,
+        folder_id: str,
+        local_path: str,
+        filename: str | None = None,
     ) -> str | None:
-    
+
         return self.upload_file(folder_id, local_path, filename)

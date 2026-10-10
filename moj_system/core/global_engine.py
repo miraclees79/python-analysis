@@ -563,9 +563,7 @@ def generate_weight_grid(
         [lvl for lvl in levels if lvl <= (1.0 if caps is None else caps[idx]) + 1e-9]
         for idx in range(n_assets)
     ]
-    combos = [
-        combo for combo in itertools.product(*per_asset_levels) if sum(combo) <= 1.0 + 1e-9
-    ]
+    combos = [combo for combo in itertools.product(*per_asset_levels) if sum(combo) <= 1.0 + 1e-9]
     logging.info(
         "Weight grid: %d assets at step=%.2f → %d combinations",
         n_assets,
@@ -641,13 +639,9 @@ def optimise_asset_weights(
     keys_with_signal = [
         k
         for k in asset_keys
-        if k not in opt_keys
-        and signals_dict.get(k) is not None
-        and len(signals_dict[k]) > 0
+        if k not in opt_keys and signals_dict.get(k) is not None and len(signals_dict[k]) > 0
     ]
-    intersect_keys = (
-        keys_with_signal if keys_with_signal else [k for k in asset_keys if k not in opt_keys]
-    )
+    intersect_keys = keys_with_signal if keys_with_signal else [k for k in asset_keys if k not in opt_keys]
     common_idx = mmf_returns.index
     for key in intersect_keys:
         common_idx = common_idx.intersection(returns_dict[key].index)
@@ -724,9 +718,7 @@ def optimise_asset_weights(
         # w[i] * (sig[i]*ret[i] + (1-sig[i])*mmf) + w_mmf * mmf
         multi_r = mmf_arr * w_mmf
         for i in range(n):
-            multi_r = multi_r + w[i] * (
-                sig_mat[:, i] * ret_mat[:, i] + (1.0 - sig_mat[:, i]) * mmf_arr
-            )
+            multi_r = multi_r + w[i] * (sig_mat[:, i] * ret_mat[:, i] + (1.0 - sig_mat[:, i]) * mmf_arr)
 
         port_r_arr = np.where(multi_on_mask, multi_r, fixed_r)
         port_r = pd.Series(port_r_arr, index=common_idx)
@@ -766,15 +758,15 @@ def optimise_asset_weights(
 
 
 def reallocation_gate_n(
-    current_weights:  dict,
-    target_weights:   dict,
+    current_weights: dict,
+    target_weights: dict,
     last_change_date: pd.Timestamp | None,
-    current_date:     pd.Timestamp,
-    cooldown_days:    int   = 10,
-    min_delta:        float = 0.10,
-    annual_cap:       int   = 999,
-    annual_counter:   dict | None = None,
-    delta_tol:        float = 0.0,
+    current_date: pd.Timestamp,
+    cooldown_days: int = 10,
+    min_delta: float = 0.10,
+    annual_cap: int = 999,
+    annual_counter: dict | None = None,
+    delta_tol: float = 0.0,
 ) -> tuple[dict, bool]:
     """
     Decide whether to apply a target N-asset reallocation or hold.
@@ -912,7 +904,7 @@ def allocation_walk_forward_n(
     objective: str = "calmar",
     cooldown_days: int = 10,
     annual_cap: int = 999,
-    train_years: int = 9,
+    train_years: int = 9,  # noqa: ARG001 - retained for API compatibility; windows come from wf_results_ref.
     asset_caps: dict[str, float] | None = None,
     optional_keys: Collection[str] | None = None,
     min_delta: float = 0.10,
@@ -975,13 +967,13 @@ def allocation_walk_forward_n(
     prev_best_weights = {k: 0.0 for k in asset_keys}  # all-zero = no carry-forward
     opt_keys = frozenset(optional_keys or ())
 
-    for row_index, row in wf_results_ref.iterrows():
+    for row in wf_results_ref.to_dict(orient="records"):
         train_end = pd.Timestamp(row["TestStart"])
         test_start = pd.Timestamp(row["TestStart"])
         test_end = pd.Timestamp(row["TestEnd"])
 
         # ── In-sample slices ──────────────────────────────────────────────
-        def _is(series, end):
+        def _is(series: pd.Series, end: pd.Timestamp) -> pd.Series:
             return series.loc[series.index < end]
 
         is_returns = {k: _is(returns_dict[k], train_end) for k in asset_keys}
@@ -1024,8 +1016,7 @@ def allocation_walk_forward_n(
         total_risky = sum(best_weights.values())
         if total_risky < step - 1e-9 and sum(prev_best_weights.values()) >= step - 1e-9:
             logging.info(
-                "Window %s: IS optimisation indiscriminate (all-zero) — "
-                "carrying forward previous weights %s",
+                "Window %s: IS optimisation indiscriminate (all-zero) — carrying forward previous weights %s",
                 test_start.date(),
                 {k: f"{v:.0%}" for k, v in prev_best_weights.items()},
             )
@@ -1047,7 +1038,11 @@ def allocation_walk_forward_n(
         # ── OOS simulation ────────────────────────────────────────────────
         # OOS signals trimmed to this window's test period.
         # Use explicit lambda parameters to avoid loop-variable closure issues.
-        def _oos(series, ts=test_start, te=test_end):
+        def _oos(
+            series: pd.Series,
+            ts: pd.Timestamp = test_start,
+            te: pd.Timestamp = test_end,
+        ) -> pd.Series:
             return series.loc[(series.index >= ts) & (series.index <= te)]
 
         oos_sigs = {k: _oos(signals_oos_dict[k]) for k in asset_keys}
@@ -1133,7 +1128,7 @@ def allocation_walk_forward_n(
         if not window_equity_vals:
             continue
 
-        dates, rets = zip(*window_equity_vals)
+        dates, rets = zip(*window_equity_vals, strict=True)
         window_port_r = pd.Series(list(rets), index=list(dates))
         window_equity = (1 + window_port_r).cumprod()
         window_equity = window_equity / window_equity.iloc[0]
@@ -1172,8 +1167,8 @@ def print_global_equity_report(
     alloc_results_df: pd.DataFrame,
     reallocation_log: list,
     signals_oos_dict: dict,
-    oos_start,
-    oos_end,
+    oos_start: pd.Timestamp,
+    oos_end: pd.Timestamp,
     portfolio_mode: str,
     fx_hedged: bool,
 ) -> None:
@@ -1214,7 +1209,7 @@ def print_global_equity_report(
     logging.info("-" * 80)
 
     # Portfolio performance
-    def _fmt(m):
+    def _fmt(m: dict[str, float]) -> str:
         if not m:
             return "N/A"
         return (
@@ -1261,8 +1256,8 @@ def allocation_weight_robustness_n(
     mmf_returns: pd.Series,
     signals_oos_dict: dict,
     asset_keys: list,
-    baseline_metrics: dict,
-    perturb_steps: list = [-0.2, -0.1, 0.0, 0.1, 0.2],
+    baseline_metrics: dict,  # noqa: ARG001
+    perturb_steps: list[float] | tuple[float, ...] = (-0.2, -0.1, 0.0, 0.1, 0.2),
     focus_asset: str = None,
     min_weight: float = 0.0,
     max_weight: float = 1.0,
@@ -1344,22 +1339,17 @@ def allocation_weight_robustness_n(
     for k in asset_keys:
         sig = signals_oos_dict.get(k)
         if sig is not None and not sig.empty:
-            all_signal_idx = (
-                sig.index if all_signal_idx is None else all_signal_idx.union(sig.index)
-            )
+            all_signal_idx = sig.index if all_signal_idx is None else all_signal_idx.union(sig.index)
 
     if all_signal_idx is None:
         logging.error("allocation_weight_robustness_n: no OOS signal data found.")
         return pd.DataFrame()
 
     # Reindex all returns and signals to the common OOS index
-    ret_aligned = {
-        k: returns_dict[k].reindex(all_signal_idx, method="ffill").fillna(0.0) for k in asset_keys
-    }
+    ret_aligned = {k: returns_dict[k].reindex(all_signal_idx, method="ffill").fillna(0.0) for k in asset_keys}
     mmf_aligned = mmf_returns.reindex(all_signal_idx, method="ffill").fillna(0.0)
     sig_aligned = {
-        k: signals_oos_dict[k].reindex(all_signal_idx, method="ffill").fillna(0.0)
-        for k in asset_keys
+        k: signals_oos_dict[k].reindex(all_signal_idx, method="ffill").fillna(0.0) for k in asset_keys
     }
 
     results = []
@@ -1370,23 +1360,18 @@ def allocation_weight_robustness_n(
         n_floor_clamped = 0
         n_ceil_clamped = 0
 
-        for _, row in alloc_results_df.iterrows():
+        for row in alloc_results_df.to_dict(orient="records"):
             # Current optimised weights
             w = {k: float(row.get(f"w_{k}", 0.0)) for k in asset_keys}
-            w_mmf_orig = float(row.get("w_mmf", 0.0))
-
             # Shift focus asset
             raw_focus = w[focus_asset] + step
-            clamped = False
 
             if raw_focus < min_weight:
                 raw_focus = min_weight
                 n_floor_clamped += 1
-                clamped = True
             elif raw_focus > focus_ceiling:
                 raw_focus = focus_ceiling
                 n_ceil_clamped += 1
-                clamped = True
 
             w_focus_new = round(raw_focus, 10)
 
@@ -1415,8 +1400,7 @@ def allocation_weight_robustness_n(
 
         if n_floor_clamped or n_ceil_clamped:
             logging.info(
-                "step=%+.2f: %d windows clamped at floor (min=%.2f), "
-                "%d clamped at ceiling (max=%.2f).",
+                "step=%+.2f: %d windows clamped at floor (min=%.2f), %d clamped at ceiling (max=%.2f).",
                 step,
                 n_floor_clamped,
                 min_weight,
@@ -1441,9 +1425,7 @@ def allocation_weight_robustness_n(
             target["mmf"] = pw["w_mmf"]
 
             # Slice the OOS index to this window
-            window_idx = all_signal_idx[
-                (all_signal_idx >= window_start) & (all_signal_idx <= window_end)
-            ]
+            window_idx = all_signal_idx[(all_signal_idx >= window_start) & (all_signal_idx <= window_end)]
             if window_idx.empty:
                 continue
 
@@ -1493,16 +1475,14 @@ def allocation_weight_robustness_n(
                     n_reallocations += 1
 
                 # Daily portfolio return
-                r = sum(
-                    current_weights[k] * float(ret_aligned[k].get(date, 0.0)) for k in asset_keys
-                )
+                r = sum(current_weights[k] * float(ret_aligned[k].get(date, 0.0)) for k in asset_keys)
                 r += current_weights["mmf"] * float(mmf_aligned.get(date, 0.0))
                 window_ret_vals.append((date, r))
 
             if not window_ret_vals:
                 continue
 
-            dates, rets = zip(*window_ret_vals)
+            dates, rets = zip(*window_ret_vals, strict=True)
             port_r = pd.Series(list(rets), index=list(dates))
             eq = (1 + port_r).cumprod()
             eq = eq / eq.iloc[0]

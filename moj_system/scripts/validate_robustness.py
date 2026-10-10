@@ -15,6 +15,7 @@ import logging
 import os
 import sys
 import tempfile
+from pathlib import Path
 
 import matplotlib
 import matplotlib.gridspec as gridspec
@@ -58,7 +59,6 @@ from moj_system.core.strategy_engine import (
     get_n_jobs,
     walk_forward,
 )
-from moj_system.core.utils import build_mmf_extended
 from moj_system.core.universe import (
     build_global_assets,
     get_allocation_settings,
@@ -67,6 +67,7 @@ from moj_system.core.universe import (
     resolve_train_years,
     wf_grid_kwargs,
 )
+from moj_system.core.utils import build_mmf_extended
 from moj_system.data.builder import build_and_upload
 from moj_system.data.data_manager import load_local_csv
 from moj_system.data.updater import DataUpdater
@@ -75,8 +76,8 @@ from moj_system.data.updater import DataUpdater
 class ValidationManager:
     def __init__(
         self,
-        n_mc:                int,
-        n_boot:              int,
+        n_mc: int,
+        n_boot: int,
         run_weights_perturb: bool,
     ) -> None:
 
@@ -84,17 +85,16 @@ class ValidationManager:
         self.n_boot = n_boot
         self.run_weights_perturb = run_weights_perturb
         self.rob_engine = RobustnessEngine(n_jobs=get_n_jobs())
-        self.creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
+        self.creds_path = str(Path(tempfile.gettempdir()) / "credentials.json")
         self.folder_id = os.environ.get("GDRIVE_FOLDER_ID")
 
     def _save_validation_chart(
         self,
         strategy_equity: pd.Series,
-        bh_equity:       pd.Series | None,
-        title:           str,
-        filename:        str,
+        bh_equity: pd.Series | None,
+        title: str,
+        filename: str,
     ) -> None:
-
         """Generates a 2-panel OOS validation chart (Equity + Drawdown)."""
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         chart_path = OUTPUT_DIR / filename
@@ -133,7 +133,12 @@ class ValidationManager:
         # Panel 2: Drawdown
         dd_strat = strategy_equity / strategy_equity.cummax() - 1
         ax2.fill_between(
-            dd_strat.index, dd_strat.values, 0, color="steelblue", alpha=0.3, label="Strategy DD",
+            dd_strat.index,
+            dd_strat.values,
+            0,
+            color="steelblue",
+            alpha=0.3,
+            label="Strategy DD",
         )
 
         if bh_equity is not None:
@@ -151,11 +156,11 @@ class ValidationManager:
     def validate_single(
         self,
         asset_name: str,
-        train_y:    int,
-        test_y:     int,
-        stop_type:  str,
-        df:         pd.DataFrame,
-        cash_df:    pd.DataFrame,
+        train_y: int,
+        test_y: int,
+        stop_type: str,
+        df: pd.DataFrame,
+        cash_df: pd.DataFrame,
     ) -> None:
 
         logging.info(f"VALIDATING SINGLE ASSET: {asset_name} | {train_y}+{test_y} | {stop_type}")
@@ -173,11 +178,13 @@ class ValidationManager:
             use_atr_stop=use_atr,
             N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
             n_jobs=get_n_jobs(),
-
         )
 
         bh_eq, bh_m = compute_buy_and_hold(
-            df=df, price_col="Zamkniecie", start=wf_eq.index.min(), end=wf_eq.index.max(),
+            df=df,
+            price_col="Zamkniecie",
+            start=wf_eq.index.min(),
+            end=wf_eq.index.max(),
         )
         self._save_validation_chart(
             strategy_equity=wf_eq,
@@ -188,7 +195,10 @@ class ValidationManager:
 
         if self.n_mc > 0:
             mc_results = self.rob_engine.run_mc_test(
-                wf_results=wf_res, df=df, cash_df=cash_df, n_samples=self.n_mc,
+                wf_results=wf_res,
+                df=df,
+                cash_df=cash_df,
+                n_samples=self.n_mc,
             )
             analyze_robustness(
                 results_df=mc_results,
@@ -209,7 +219,6 @@ class ValidationManager:
                 slow_grid=BASE_GRIDS["SLOW_GRID"],
                 use_atr_stop=use_atr,
                 N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
-
             )
             analyze_bootstrap(
                 results_df=bb_results,
@@ -219,8 +228,8 @@ class ValidationManager:
 
     def validate_pension(
         self,
-        train_y:      int,
-        test_y:       int,
+        train_y: int,
+        test_y: int,
         stop_type_eq: str,
     ) -> None:
 
@@ -228,9 +237,7 @@ class ValidationManager:
             f"VALIDATING PENSION PORTFOLIO | Train: {train_y} | Test: {test_y} | EQ Stop: {stop_type_eq}",
         )
 
-        WIG = load_local_csv(ticker="wig", label="WIG").loc[
-            lambda x: x.index >= pd.Timestamp("1995-01-02")
-        ]
+        WIG = load_local_csv(ticker="wig", label="WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
         MMF = load_local_csv(ticker="fund_2720", label="MMF")
         TBSP = build_and_upload(
             folder_id=self.folder_id,
@@ -279,11 +286,13 @@ class ValidationManager:
             slow_grid=BOND_GRIDS["SLOW_GRID"],
             n_jobs=get_n_jobs(),
             entry_gate_series=derived["bond_gate"],
-
         )
         if self.n_mc > 0:
             mc_bd = self.rob_engine.run_mc_test(
-                wf_results=wf_bd_res, df=TBSP, cash_df=derived["mmf_ext"], n_samples=self.n_mc,
+                wf_results=wf_bd_res,
+                df=TBSP,
+                cash_df=derived["mmf_ext"],
+                n_samples=self.n_mc,
             )
             analyze_robustness(
                 results_df=mc_bd,
@@ -304,7 +313,6 @@ class ValidationManager:
                 fast_grid=BOND_GRIDS["FAST_GRID"],
                 slow_grid=BOND_GRIDS["SLOW_GRID"],
                 use_atr_stop=False,
-
             )
             analyze_bootstrap(
                 results_df=bb_bd,
@@ -325,7 +333,6 @@ class ValidationManager:
             use_atr_stop=use_atr_eq,
             N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr_eq else None,
             n_jobs=get_n_jobs(),
-
         )
         sig_eq = build_signal_series(wf_equity=wf_eq, wf_trades=wf_tr_eq)
         sig_bd = build_signal_series(wf_equity=wf_bd_eq, wf_trades=wf_bd_tr)
@@ -343,7 +350,10 @@ class ValidationManager:
         )
 
         bh_wig, _ = compute_buy_and_hold(
-            df=WIG, price_col="Zamkniecie", start=port_eq.index.min(), end=port_eq.index.max(),
+            df=WIG,
+            price_col="Zamkniecie",
+            start=port_eq.index.min(),
+            end=port_eq.index.max(),
         )
         self._save_validation_chart(
             strategy_equity=port_eq,
@@ -372,9 +382,9 @@ class ValidationManager:
 
     def validate_global(
         self,
-        variant:      str,
-        train_y:      int,
-        test_y:       int,
+        variant: str,
+        train_y: int,
+        test_y: int,
         stop_type_eq: str,
     ) -> None:
 
@@ -386,9 +396,7 @@ class ValidationManager:
         fx_hedged = cfg.get("fx_hedged", True)
         use_atr = stop_type_eq == "atr"
 
-        WIG = load_local_csv(ticker="wig", label="WIG").loc[
-            lambda x: x.index >= pd.Timestamp("1995-01-02")
-        ]
+        WIG = load_local_csv(ticker="wig", label="WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
         MMF = load_local_csv(ticker="fund_2720", label="MMF")
         WIBOR1M = load_local_csv(ticker="wibor1m", label="WIBOR1M", mandatory=False)
         mmf_ext = build_mmf_extended(mmf_df=MMF, wibor1m_df=WIBOR1M, floor_date="1995-01-02")
@@ -449,7 +457,10 @@ class ValidationManager:
 
             if self.n_mc > 0:
                 mc_res = self.rob_engine.run_mc_test(
-                    wf_results=wf_r, df=proc_px, cash_df=mmf_ext, n_samples=self.n_mc,
+                    wf_results=wf_r,
+                    df=proc_px,
+                    cash_df=mmf_ext,
+                    n_samples=self.n_mc,
                 )
                 analyze_robustness(
                     results_df=mc_res,
@@ -487,14 +498,16 @@ class ValidationManager:
             slow_grid=BOND_GRIDS["SLOW_GRID"],
             n_jobs=get_n_jobs(),
             entry_gate_series=derived["bond_gate"],
-
         )
         rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
         sigs_full["TBSP"] = build_signal_series(wf_equity=wf_bd, wf_trades=wf_tr_bd)
 
         if self.n_mc > 0:
             mc_bd = self.rob_engine.run_mc_test(
-                wf_results=wf_res_bd, df=TBSP, cash_df=mmf_ext, n_samples=self.n_mc,
+                wf_results=wf_res_bd,
+                df=TBSP,
+                cash_df=mmf_ext,
+                n_samples=self.n_mc,
             )
             analyze_robustness(
                 results_df=mc_bd,
@@ -539,7 +552,10 @@ class ValidationManager:
         )
 
         bh_wig, _ = compute_buy_and_hold(
-            df=WIG, price_col="Zamkniecie", start=port_eq.index.min(), end=port_eq.index.max(),
+            df=WIG,
+            price_col="Zamkniecie",
+            start=port_eq.index.min(),
+            end=port_eq.index.max(),
         )
         self._save_validation_chart(
             strategy_equity=port_eq,
@@ -602,7 +618,9 @@ def main() -> None:
 
     DataUpdater().run_full_update(get_funds=False)
     validator = ValidationManager(
-        n_mc=args.n_mc, n_boot=args.n_boot, run_weights_perturb=args.weights_perturb,
+        n_mc=args.n_mc,
+        n_boot=args.n_boot,
+        run_weights_perturb=args.weights_perturb,
     )
 
     if args.mode == "SINGLE":
@@ -620,7 +638,10 @@ def main() -> None:
         validator.validate_pension(train_y=args.train, test_y=args.test, stop_type_eq=args.stop)
     elif args.mode == "GLOBAL":
         validator.validate_global(
-            variant=args.asset, train_y=args.train, test_y=args.test, stop_type_eq=args.stop,
+            variant=args.asset,
+            train_y=args.train,
+            test_y=args.test,
+            stop_type_eq=args.stop,
         )
 
 

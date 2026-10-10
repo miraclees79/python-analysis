@@ -37,6 +37,7 @@ from moj_system.data.updater import DataUpdater
 # Definicja testowanych funkcji celu
 OBJECTIVES = ["calmar", "sharpe", "sortino", "calmar_sharpe", "calmar_sortino"]
 
+
 def run_benchmark() -> None:
     # 1. Setup i logowanie
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -46,7 +47,7 @@ def run_benchmark() -> None:
         level=logging.INFO,
         format="%(asctime)s - %(message)s",
         handlers=[
-            logging.FileHandler(filename=log_file_path, mode="w", encoding='utf-8'),
+            logging.FileHandler(filename=log_file_path, mode="w", encoding="utf-8"),
             logging.StreamHandler(stream=sys.stdout),
         ],
     )
@@ -75,8 +76,13 @@ def run_benchmark() -> None:
     DE10Y = load_local_csv(ticker="de10y", label="DE10Y")
 
     derived = build_standard_two_asset_data(
-        wig=WIG, tbsp=TBSP, mmf=MMF, wibor1m=WIBOR,
-        pl10y=PL10Y, de10y=DE10Y, mmf_floor="1995-01-02",
+        wig=WIG,
+        tbsp=TBSP,
+        mmf=MMF,
+        wibor1m=WIBOR,
+        pl10y=PL10Y,
+        de10y=DE10Y,
+        mmf_floor="1995-01-02",
     )
 
     # Obliczamy Common Start (2013), aby porównanie było rzetelne
@@ -135,27 +141,30 @@ def run_benchmark() -> None:
         trimmed_norm = trimmed / trimmed.iloc[0]
         m = compute_metrics(equity=trimmed_norm)
 
-        results.append({
-            "Objective": obj,
-            "CAGR": m["CAGR"],
-            "CalMAR": m["CalMAR"],
-            "Sharpe": m["Sharpe"],
-            "MaxDD": m["MaxDD"],
-            "Reallocs": len(reallocation_log),
-        })
+        results.append(
+            {
+                "Objective": obj,
+                "CAGR": m["CAGR"],
+                "CalMAR": m["CalMAR"],
+                "Sharpe": m["Sharpe"],
+                "MaxDD": m["MaxDD"],
+                "Reallocs": len(reallocation_log),
+            }
+        )
 
     # 4. Tabela Decyzyjna
     bench_df = pd.DataFrame(data=results).sort_values(by="CalMAR", ascending=False)
 
-    logging.info(msg="\n" + "="*50)
+    logging.info(msg="\n" + "=" * 50)
     logging.info(msg="FINAL OBJECTIVE COMPARISON TABLE")
-    logging.info(msg="="*50)
+    logging.info(msg="=" * 50)
     logging.info(msg="\n" + bench_df.to_string(index=False))
 
     # Zapis wyniku
     output_path = OUTPUT_DIR / "objective_benchmark_results.csv"
     bench_df.to_csv(path_or_buf=output_path, index=False, sep=";")
     logging.info(msg=f"\nBenchmark results saved to {output_path}")
+
 
 if __name__ == "__main__":
     run_benchmark()

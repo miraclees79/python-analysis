@@ -1,10 +1,3 @@
-# -*- coding: utf-8 -*- 
-"""
-Created on Thu Apr 16 22:28:04 2026
-
-@author: adamg
-"""
-
 # -*- coding: utf-8 -*-
 """
 moj_system/config.py
@@ -233,25 +226,17 @@ ASSET_REGISTRY = {
         "test": 2,
         "default_stop": "fixed",
     },
-
     # Portfolio Templates
-    "PENSION": {"type": "portfolio_pension",
-                "train": 7,
-                "test": 1,
-                "default_stop_eq": "atr"},
-
-
-
+    "PENSION": {"type": "portfolio_pension", "train": 7, "test": 1, "default_stop_eq": "atr"},
     # Keep the established variant keys; `assets` now determines composition.
-    "GLOBAL_A": {"type": "portfolio_global",
-                 "mode": "global_equity",
-                 "assets": ["WIG", "SP500", "STOXX600", "Nikkei225"],
-                 "train": 7,
-                 "test": 2,
-                 "fx_hedged": True,
-                 },
-
-
+    "GLOBAL_A": {
+        "type": "portfolio_global",
+        "mode": "global_equity",
+        "assets": ["WIG", "SP500", "STOXX600", "Nikkei225"],
+        "train": 7,
+        "test": 2,
+        "fx_hedged": True,
+    },
     "GLOBAL_B": {
         "type": "portfolio_global",
         "mode": "msci_world",
@@ -322,28 +307,28 @@ FUND_CODES = {
     "3306": "Velo_AkcjiPL",
     "3441": "Quercus_Agr",
     "1043": "Alior_Akcji",
-    }
+}
 
 FUND_PARAMS_GRID = [
-            {
-            "lookback_days":      30,   # medium asymmetric
-            "entry_roll_thresh":  0.05,
-            "entry_since_thresh": 0.08,
-            "exit_roll_thresh":  -0.06,
-            "exit_since_thresh": -0.10,
-            },
-            {
-            "lookback_days":      30, #strong asymmetric tight entry loose exit
-            "entry_roll_thresh":  0.03,
-            "entry_since_thresh": 0.05,
-            "exit_roll_thresh":  -0.10,
-            "exit_since_thresh": -0.15,
-            },
-            {
-            "lookback_days":      30, #original idea
-            "entry_roll_thresh":  0.10,
-            "entry_since_thresh": 0.15,
-            "exit_roll_thresh":  -0.10,
-            "exit_since_thresh": -0.15,
-            },
+    {
+        "lookback_days": 30,  # medium asymmetric
+        "entry_roll_thresh": 0.05,
+        "entry_since_thresh": 0.08,
+        "exit_roll_thresh": -0.06,
+        "exit_since_thresh": -0.10,
+    },
+    {
+        "lookback_days": 30,  # strong asymmetric tight entry loose exit
+        "entry_roll_thresh": 0.03,
+        "entry_since_thresh": 0.05,
+        "exit_roll_thresh": -0.10,
+        "exit_since_thresh": -0.15,
+    },
+    {
+        "lookback_days": 30,  # original idea
+        "entry_roll_thresh": 0.10,
+        "entry_since_thresh": 0.15,
+        "exit_roll_thresh": -0.10,
+        "exit_since_thresh": -0.15,
+    },
 ]

@@ -53,7 +53,6 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
-import os
 import tempfile
 from pathlib import Path
 
@@ -91,7 +90,7 @@ def _get_active_window_params(wf_results: pd.DataFrame) -> dict:
         return {}
     last = wf_results.iloc[-1]
 
-    def _safe_float(key, default=None):
+    def _safe_float(key: str, default: float | None = None) -> float | None:
         val = last.get(key)
         if val is None or (isinstance(val, float) and np.isnan(val)):
             return default
@@ -125,6 +124,7 @@ def _get_active_window_params(wf_results: pd.DataFrame) -> dict:
         params["mom_lookback"] = 252
     return params
 
+
 def _compute_atr_val(df: pd.DataFrame, atr_window: int) -> float:
     """Calculates the current ATR volatility percentage (shifted by 1 for next day logic)."""
     if len(df) < atr_window + 1:
@@ -138,10 +138,13 @@ def _compute_atr_val(df: pd.DataFrame, atr_window: int) -> float:
         tr = np.maximum(df_copy["Najwyzszy"], prev_close) - np.minimum(df_copy["Najnizszy"], prev_close)
         atr_s = (tr / prev_close).rolling(window=atr_window).mean().shift(periods=1) * 100.0
     else:
-        atr_s = (df_copy["Zamkniecie"].diff().abs() / df_copy["Zamkniecie"].shift(periods=1)).rolling(window=atr_window).mean().shift(periods=1) * 100.0
+        atr_s = (df_copy["Zamkniecie"].diff().abs() / df_copy["Zamkniecie"].shift(periods=1)).rolling(
+            window=atr_window
+        ).mean().shift(periods=1) * 100.0
 
     val = float(atr_s.iloc[-1])
     return val if np.isfinite(val) else 0.0
+
 
 def _extract_open_position(wf_trades: pd.DataFrame) -> dict | None:
     """Return the most recent CARRY record as a dict, or None if flat."""
@@ -218,14 +221,14 @@ def _determine_action(
 
 
 def _build_snapshot(
-    wf_equity:  pd.Series,
-    wf_trades:  pd.DataFrame,
+    wf_equity: pd.Series,
+    wf_trades: pd.DataFrame,
     wf_metrics: dict,
     wf_results: pd.DataFrame,
     bh_metrics: dict,
-    df:         pd.DataFrame,
-    price_col:  str,
-    run_date:   dt.date,
+    df: pd.DataFrame,
+    price_col: str,
+    run_date: dt.date,
     asset_name: str,
 ) -> dict:
     """Assemble the full snapshot dict from walk-forward outputs."""
@@ -344,8 +347,8 @@ def _build_snapshot(
 
 
 def _build_status_text(
-    snap:       dict,
-    action:     str,
+    snap: dict,
+    action: str,
     asset_name: str,
 ) -> str:
     """Render the human-readable status block from a snapshot dict."""
@@ -376,9 +379,16 @@ def _build_status_text(
     if snap["signal"] == "IN":
         # Bezpieczne pobranie parametrów bez '?' dla formatowań liczbowych
         if snap["params"].get("use_atr_stop"):
-            trail_str = f"  Trail stop:    {snap['trail_stop']}  (peak {snap['peak_price']} × (1 - {snap['params'].get('stop_param', 0):.2f}[N_atr] × {snap.get('atr_val_equity', 0.0):.2f}%[ATR]))"
+            trail_str = (
+                f"  Trail stop:    {snap['trail_stop']}  (peak {snap['peak_price']} × "
+                f"(1 - {snap['params'].get('stop_param', 0):.2f}[N_atr] × "
+                f"{snap.get('atr_val_equity', 0.0):.2f}%[ATR]))"
+            )
         else:
-            trail_str = f"  Trail stop:    {snap['trail_stop']}  (peak {snap['peak_price']} × (1 - {snap['params'].get('stop_param', 0):.0%}))"
+            trail_str = (
+                f"  Trail stop:    {snap['trail_stop']}  (peak {snap['peak_price']} × "
+                f"(1 - {snap['params'].get('stop_param', 0):.0%}))"
+            )
 
         lines += [
             f"  Entry date:    {snap['entry_date']}",
@@ -388,8 +398,14 @@ def _build_status_text(
             sep2,
             "  STOP LEVELS",
             trail_str,
-            f"  Abs stop:      {snap['abs_stop']}  (entry × (1 - {snap['params'].get('stop_loss', 0):.0%}))",
-            f"  Binding stop:  {snap['binding_stop']}  (gap from today: {snap.get('stop_gap_pct', 0.0):+.1f}%)",
+            (
+                f"  Abs stop:      {snap['abs_stop']}  "
+                f"(entry × (1 - {snap['params'].get('stop_loss', 0):.0%}))"
+            ),
+            (
+                f"  Binding stop:  {snap['binding_stop']}  "
+                f"(gap from today: {snap.get('stop_gap_pct', 0.0):+.1f}%)"
+            ),
             sep2,
             f"  FILTERS  [active filter: {fmode.upper()}]  {act_icon}",
             f"  MA  cross {active_lbl}  fast({snap['params'].get('fast', 'N/A')})={ma.get('fast_ma')}  "
@@ -509,10 +525,9 @@ def _append_log_row_dedup(log_path: Path, row: dict) -> None:
     combined.to_csv(tmp, index=False)
 
     # PANCERNE NADPISYWANIE:
-    # 1. replace() to wyższa warstwa, os.replace jest najbardziej atomowe
-    # 2. Jeżeli plik path istnieje, os.replace go nadpisze bez błędu.
-    if os.path.exists(log_path):
-        os.replace(tmp, log_path)
+    # Path.replace delegates to the same atomic replacement operation.
+    if log_path.exists():
+        tmp.replace(log_path)
     else:
         tmp.rename(log_path)
 
@@ -547,7 +562,11 @@ def _build_chart(
 
     # Panel 1: equity curves
     ax1.plot(
-        wf_equity.index, wf_equity.values, label="Strategy (OOS)", color="steelblue", linewidth=2,
+        wf_equity.index,
+        wf_equity.values,
+        label="Strategy (OOS)",
+        color="steelblue",
+        linewidth=2,
     )
 
     if bh_equity is not None and not bh_equity.empty:
@@ -566,13 +585,13 @@ def _build_chart(
         )
 
     if wf_results is not None and not wf_results.empty:
-        for _, row in wf_results.iterrows():
+        for row in wf_results.to_dict(orient="records"):
             ax1.axvspan(row["TestStart"], row["TestEnd"], color="grey", alpha=0.05)
 
-    BOUNDARY = {"CARRY", "SAMPLE_END"}
+    boundary_exits = {"CARRY", "SAMPLE_END"}
     if wf_trades is not None and not wf_trades.empty:
-        closed = wf_trades[~wf_trades["Exit Reason"].isin(BOUNDARY)].copy()
-        for _, trade in closed.iterrows():
+        closed = wf_trades[~wf_trades["Exit Reason"].isin(boundary_exits)].copy()
+        for trade in closed.to_dict(orient="records"):
             color = "green" if trade["Return"] > 0 else "red"
             ax1.axvspan(
                 pd.Timestamp(trade["EntryDate"]),
@@ -614,8 +633,7 @@ def _build_chart(
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.85),
     )
     ax1.set_title(
-        f"Strategy v0.2 — Signal: {snap['signal']} | "
-        f"Action: {snap.get('action', '')} | {snap['run_date']}",
+        f"Strategy v0.2 — Signal: {snap['signal']} | Action: {snap.get('action', '')} | {snap['run_date']}",
         fontsize=12,
         fontweight="bold",
     )
@@ -626,7 +644,12 @@ def _build_chart(
     # Panel 2: drawdown
     dd_strat = wf_equity / wf_equity.cummax() - 1
     ax2.fill_between(
-        dd_strat.index, dd_strat.values, 0, color="steelblue", alpha=0.4, label="Strategy DD",
+        dd_strat.index,
+        dd_strat.values,
+        0,
+        color="steelblue",
+        alpha=0.4,
+        label="Strategy DD",
     )
     if bh_equity is not None and not bh_equity.empty:
         bh_dd = bh_aligned / bh_aligned.cummax() - 1
@@ -694,8 +717,9 @@ def _build_chart(
     plt.savefig(buf.name, dpi=70, bbox_inches="tight")
     plt.close(fig)
     buf.close()
-    atomic_write_bytes(chart_path, open(buf.name, "rb").read())
-    os.unlink(buf.name)
+    temp_path = Path(buf.name)
+    atomic_write_bytes(chart_path, temp_path.read_bytes())
+    temp_path.unlink()
     logging.info("daily_output: chart saved to %s", chart_path)
 
 
@@ -838,13 +862,14 @@ def build_daily_outputs(
             client = GDriveClient(credentials_path=gdrive_credentials)
 
             if client.service:
-                # Wysyłamy wszystkie 4 wygenerowane pliki
+                # Wysyłamy wszystkie 4 wygenerowane pliki.
                 files_to_upload = [log_path, status_path, chart_path, snapshot_path]
                 for file_path in files_to_upload:
                     if file_path.exists():
                         client.upload_csv(gdrive_folder_id, str(file_path), file_path.name)
                         # Uwaga: metoda nazywa się 'upload_csv', ale w kodzie GDriveClient używa
-                        # ogólnego mimetypu 'text/csv' lub go ignoruje, więc prześle poprawnie też .txt i .png.
+                        # ogólnego mimetypu 'text/csv' lub go ignoruje, więc prześle
+                        # poprawnie również .txt i .png.
                         # Dla pewności, można w przyszłości zaktualizować metodę w GDriveClient.
                 logging.info("Successfully uploaded all daily artefacts to Google Drive.")
             else:

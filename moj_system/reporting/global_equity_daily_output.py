@@ -14,7 +14,6 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
-import os
 import tempfile
 from pathlib import Path
 
@@ -38,6 +37,7 @@ from moj_system.reporting.output_base import (
 # Signal & State extraction helpers (Ported from Multiasset)
 # ---------------------------------------------------------------------------
 
+
 def _get_signal_from_series(sig_oos: pd.Series | None) -> str:
     if sig_oos is None or sig_oos.empty:
         return "OUT"
@@ -58,7 +58,7 @@ def _get_active_window_params(wf_results: pd.DataFrame | None) -> dict:
         return {}
     last = wf_results.iloc[-1]
 
-    def _safe_float(key, default=None):
+    def _safe_float(key: str, default: float | None = None) -> float | None:
         val = last.get(key)
         if val is None or (isinstance(val, float) and np.isnan(val)):
             return default
@@ -81,6 +81,7 @@ def _get_active_window_params(wf_results: pd.DataFrame | None) -> dict:
         "atr_window": int(_safe_float("atr_window", 20)),
     }
 
+
 def _compute_atr_val(df: pd.DataFrame, atr_window: int) -> float:
     """Calculates the current ATR volatility percentage (shifted by 1 for next day logic)."""
     if len(df) < atr_window + 1:
@@ -94,10 +95,13 @@ def _compute_atr_val(df: pd.DataFrame, atr_window: int) -> float:
         tr = np.maximum(df_copy["Najwyzszy"], prev_close) - np.minimum(df_copy["Najnizszy"], prev_close)
         atr_s = (tr / prev_close).rolling(window=atr_window).mean().shift(periods=1) * 100.0
     else:
-        atr_s = (df_copy["Zamkniecie"].diff().abs() / df_copy["Zamkniecie"].shift(periods=1)).rolling(window=atr_window).mean().shift(periods=1) * 100.0
+        atr_s = (df_copy["Zamkniecie"].diff().abs() / df_copy["Zamkniecie"].shift(periods=1)).rolling(
+            window=atr_window
+        ).mean().shift(periods=1) * 100.0
 
     val = float(atr_s.iloc[-1])
     return val if np.isfinite(val) else 0.0
+
 
 def _compute_ma_filter_state(df: pd.DataFrame, fast: int, slow: int) -> dict:
     prices = df["Zamkniecie"].dropna()
@@ -161,6 +165,7 @@ def _log_allocation_changes(weights_series: pd.Series | None, asset_keys: list) 
 # Action determination
 # ---------------------------------------------------------------------------
 
+
 def _determine_action(
     prev_log: pd.DataFrame | None,
     signals_today: dict,
@@ -170,7 +175,7 @@ def _determine_action(
     if prev_log is None or prev_log.empty:
         return "HOLD"
 
-    actions =[]
+    actions = []
     for key in asset_keys:
         col = f"signal_{key}"
         if col not in prev_log.columns:
@@ -197,6 +202,7 @@ def _value_at_date(series: pd.Series, date: object) -> float:
 # ---------------------------------------------------------------------------
 # Snapshot builder
 # ---------------------------------------------------------------------------
+
 
 def _build_snapshot(
     wf_results_dict: dict,
@@ -231,7 +237,9 @@ def _build_snapshot(
 
     snap["signals"] = {k: _get_signal_from_series(sig_oos=signals_oos_dict.get(k)) for k in asset_keys}
     snap["weights"] = _get_current_weights(weights_series=weights_series)
-    snap["realloc_today"] = any(pd.Timestamp(r["Date"]).date() == run_date for r in reallocation_log if "Date" in r)
+    snap["realloc_today"] = any(
+        pd.Timestamp(r["Date"]).date() == run_date for r in reallocation_log if "Date" in r
+    )
 
     # Detailed states per asset (mirrors WIG/TBSP from multiasset)
     asset_states = {}
@@ -259,9 +267,7 @@ def _build_snapshot(
                 prices = price_df["Zamkniecie"].dropna()
                 entry_date = pd.Timestamp(pos["EntryDate"])
                 entry_px = (
-                    _value_at_date(prices, entry_date)
-                    if display_df is not None
-                    else float(pos["EntryPrice"])
+                    _value_at_date(prices, entry_date) if display_df is not None else float(pos["EntryPrice"])
                 )
                 today_px = float(prices.iloc[-1])
                 in_trade = prices.loc[prices.index >= pd.Timestamp(pos["EntryDate"])]
@@ -269,7 +275,9 @@ def _build_snapshot(
 
                 if par.get("use_atr_stop"):
                     atr_val = _compute_atr_val(df=price_df, atr_window=par.get("atr_window", 20))
-                    trail_stop = round(number=peak_px * (1.0 - par.get("stop_param", 0.10) * atr_val), ndigits=2)
+                    trail_stop = round(
+                        number=peak_px * (1.0 - par.get("stop_param", 0.10) * atr_val), ndigits=2
+                    )
                     state["atr_val"] = round(number=atr_val, ndigits=3)
                 else:
                     trail_stop = round(number=peak_px * (1.0 - par.get("stop_param", 0.10)), ndigits=2)
@@ -317,8 +325,13 @@ def _build_snapshot(
     snap["asset_states"] = asset_states
 
     # Metrics
-    snap["portfolio_metrics"] = {k: round(number=float(v), ndigits=4) for k, v in (portfolio_metrics or {}).items()}
-    snap["bh_metrics"] = {k: {mk: round(number=float(mv), ndigits=4) for mk, mv in mdict.items()} for k, mdict in bh_metrics_dict.items()}
+    snap["portfolio_metrics"] = {
+        k: round(number=float(v), ndigits=4) for k, v in (portfolio_metrics or {}).items()
+    }
+    snap["bh_metrics"] = {
+        k: {mk: round(number=float(mv), ndigits=4) for mk, mv in mdict.items()}
+        for k, mdict in bh_metrics_dict.items()
+    }
 
     # Reallocation log
     if reallocation_log:
@@ -345,13 +358,14 @@ def _build_snapshot(
 # Status text
 # ---------------------------------------------------------------------------
 
+
 def _build_status_text(snap: dict, action: str, asset_keys: list) -> str:
     sep = "=" * 65
     sep2 = "-" * 65
     w = snap.get("weights", {})
     pm = snap.get("portfolio_metrics", {})
 
-    lines =[
+    lines = [
         sep,
         f"  GLOBAL EQUITY STRATEGY SIGNAL — {snap['run_date']}",
         sep,
@@ -389,9 +403,16 @@ def _build_status_text(snap: dict, action: str, asset_keys: list) -> str:
                 else str(pos["today_price"])
             )
             if par.get("use_atr_stop"):
-                trail_str = f"  Trail stop:     {pos['trail_stop']}  (peak {pos['peak_price']} × (1 - {par.get('stop_param', 0):.2f}[N_atr] × {state.get('atr_val', 0.0):.2f}%[ATR]))"
+                trail_str = (
+                    f"  Trail stop:     {pos['trail_stop']}  (peak {pos['peak_price']} × "
+                    f"(1 - {par.get('stop_param', 0):.2f}[N_atr] × "
+                    f"{state.get('atr_val', 0.0):.2f}%[ATR]))"
+                )
             else:
-                trail_str = f"  Trail stop:     {pos['trail_stop']}  (peak {pos['peak_price']} × (1 - {par.get('stop_param', 0):.2f}[{par.get('stop_label', 'X')}]))"
+                trail_str = (
+                    f"  Trail stop:     {pos['trail_stop']}  (peak {pos['peak_price']} × "
+                    f"(1 - {par.get('stop_param', 0):.2f}[{par.get('stop_label', 'X')}]))"
+                )
 
             lines += [
                 f"  Entry date:     {pos['entry_date']}",
@@ -412,17 +433,22 @@ def _build_status_text(snap: dict, action: str, asset_keys: list) -> str:
 
         lines.append(f"  Filter (Active: {fmode}):")
         lines.append(
-            f"    MA:  {ma_state.get('fast_ma')} / {ma_state.get('slow_ma')} (gap {ma_state.get('gap_pct', 0.0):+.2f}%) -> {'ON' if ma_state.get('filter_on') else 'OFF'}",
+            f"    MA:  {ma_state.get('fast_ma')} / {ma_state.get('slow_ma')} "
+            f"(gap {ma_state.get('gap_pct', 0.0):+.2f}%) "
+            f"-> {'ON' if ma_state.get('filter_on') else 'OFF'}",
         )
         if mom_state.get("mom_value") is not None:
             lines.append(
-                f"    MOM: {mom_state.get('mom_value'):+.2f}% -> {'ON' if mom_state.get('filter_on') else 'OFF'}",
+                f"    MOM: {mom_state.get('mom_value'):+.2f}% "
+                f"-> {'ON' if mom_state.get('filter_on') else 'OFF'}",
             )
         lines.append(sep2)
 
-    lines +=[
+    lines += [
         "  PORTFOLIO OOS METRICS",
-        f"  CAGR: {pm.get('CAGR', 0.0) * 100.0:+.2f}% | Sharpe: {pm.get('Sharpe', 0.0):.2f} | MaxDD: {pm.get('MaxDD', 0.0) * 100.0:+.2f}%",
+        f"  CAGR: {pm.get('CAGR', 0.0) * 100.0:+.2f}% | "
+        f"Sharpe: {pm.get('Sharpe', 0.0):.2f} | "
+        f"MaxDD: {pm.get('MaxDD', 0.0) * 100.0:+.2f}%",
         sep,
     ]
     return "\n".join(lines)
@@ -432,11 +458,12 @@ def _build_status_text(snap: dict, action: str, asset_keys: list) -> str:
 # Log row
 # ---------------------------------------------------------------------------
 
+
 def _build_log_row(snap: dict, action: str, asset_keys: list) -> dict:
     row = {
-        "date": snap["run_date"],           # ZMIENIONE Z "Date" NA "date"
-        "action": action,                   # ZMIENIONE Z "Action" NA "action"
-        "mode": snap["portfolio_mode"],     # ZMIENIONE Z "Mode" NA "mode"
+        "date": snap["run_date"],  # ZMIENIONE Z "Date" NA "date"
+        "action": action,  # ZMIENIONE Z "Action" NA "action"
+        "mode": snap["portfolio_mode"],  # ZMIENIONE Z "Mode" NA "mode"
         "regime_adx": snap.get("current_regime_adx"),
         "realloc_today": snap.get("realloc_today", False),
     }
@@ -473,6 +500,7 @@ def _build_log_row(snap: dict, action: str, asset_keys: list) -> dict:
 # Chart
 # ---------------------------------------------------------------------------
 
+
 def _build_chart(
     portfolio_equity: pd.Series,
     signals_oos_dict: dict,
@@ -495,8 +523,8 @@ def _build_chart(
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(14, 9))
     fig.suptitle(
         t=f"Global Equity Portfolio[{portfolio_mode}]  "
-          f"{'Hedged' if fx_hedged else 'Unhedged'}  "
-          f"{oos_start.date()} → {oos_end.date()}  |  Action: {action}",
+        f"{'Hedged' if fx_hedged else 'Unhedged'}  "
+        f"{oos_start.date()} → {oos_end.date()}  |  Action: {action}",
         fontsize=11,
     )
 
@@ -514,14 +542,19 @@ def _build_chart(
         zorder=10,
     )
 
-    colors =["C0", "C1", "C2", "C3", "C4", "C5"]
+    colors = ["C0", "C1", "C2", "C3", "C4", "C5"]
     for i, (key, ret) in enumerate(returns_dict.items()):
         ret_oos = ret.loc[(ret.index >= oos_start) & (ret.index <= oos_end)]
         if ret_oos.empty:
             continue
         bh = (1.0 + ret_oos).cumprod() * 100.0
         ax1.plot(
-            bh.index, bh.values, color=colors[i % len(colors)], linewidth=0.9, alpha=0.65, label=key,
+            bh.index,
+            bh.values,
+            color=colors[i % len(colors)],
+            linewidth=0.9,
+            alpha=0.65,
+            label=key,
         )
 
     ax1.legend(fontsize=8, ncol=3, loc="upper left")
@@ -532,13 +565,18 @@ def _build_chart(
     ax2.set_title(label="Per-asset signal state (shaded = in position)")
 
     y_offset = 0.0
-    ytick_pos, ytick_labels = [],[]
+    ytick_pos, ytick_labels = [], []
     for key in asset_keys:
         sig = signals_oos_dict.get(key)
         if sig is None or sig.empty:
             continue
         ax2.fill_between(
-            sig.index, y_offset, y_offset + sig.values * 0.8, alpha=0.55, step="post", label=key,
+            sig.index,
+            y_offset,
+            y_offset + sig.values * 0.8,
+            alpha=0.55,
+            step="post",
+            label=key,
         )
         ytick_pos.append(y_offset + 0.4)
         ytick_labels.append(key)
@@ -561,14 +599,16 @@ def _build_chart(
     plt.savefig(fname=buf.name, dpi=72, bbox_inches="tight")
     plt.close(fig=fig)
     buf.close()
-    atomic_write_bytes(path=chart_path, data=open(buf.name, "rb").read())
-    os.unlink(path=buf.name)
+    temp_path = Path(buf.name)
+    atomic_write_bytes(path=chart_path, data=temp_path.read_bytes())
+    temp_path.unlink()
     logging.info(msg=f"_build_chart: saved to {chart_path}")
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def build_daily_outputs(
     wf_results_dict: dict,
@@ -684,7 +724,7 @@ def build_daily_outputs(
             client = GDriveClient(credentials_path=gdrive_credentials)
 
             if client.service:
-                files_to_upload =[log_path, status_path, chart_path, snapshot_path]
+                files_to_upload = [log_path, status_path, chart_path, snapshot_path]
                 for file_path in files_to_upload:
                     if file_path.exists():
                         client.upload_csv(

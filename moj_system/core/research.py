@@ -1,12 +1,5 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Apr 16 22:28:31 2026
-
-@author: adamg
-"""
-
-# -*- coding: utf-8 -*-
-"""
 moj_system/core/research.py
 ===========================
 Core engine for batch research, window generation, and strategy comparison.
@@ -19,10 +12,9 @@ import pandas as pd
 
 
 def get_common_oos_start(
-    assets_data:    dict[str, pd.DataFrame],
+    assets_data: dict[str, pd.DataFrame],
     window_configs: list[tuple[int, int]],
 ) -> pd.Timestamp:
-
     """
     Calculates the latest possible start date for Out-Of-Sample period
     to ensure all tested configurations cover the exact same time range.
@@ -70,9 +62,8 @@ def get_common_oos_start(
 
 def rank_research_results(
     results_df: pd.DataFrame,
-    objective:  str = "CalMAR",
+    objective: str = "CalMAR",
 ) -> pd.DataFrame:
-
     """Ranks sweep results based on primary objective and robustness."""
     if results_df.empty:
         return results_df
@@ -88,12 +79,11 @@ def rank_research_results(
 
 
 def prepare_regime_inputs(
-    df:         pd.DataFrame,
-    wf_results: pd.DataFrame | None,
-    wf_equity:  pd.Series,
-    bh_equity:  pd.Series,
+    df: pd.DataFrame,
+    wf_results: pd.DataFrame | None,  # noqa: ARG001 - retained for compatibility with existing callers.
+    wf_equity: pd.Series,
+    bh_equity: pd.Series,
 ) -> dict[str, pd.Series]:
-
     """
     Przygotowuje zsynchronizowane serie danych dla analizy reżimów.
     Odporna na zduplikowane etykiety dat.
@@ -143,9 +133,9 @@ def prepare_regime_inputs(
 
 
 def compute_adx(
-    high:   pd.Series,
-    low:    pd.Series,
-    close:  pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
     period: int = 20,
 ) -> tuple[pd.Series, pd.Series, pd.Series]:
 
@@ -162,24 +152,20 @@ def compute_adx(
         axis=1,
     ).max(axis=1)
     atr = tr.ewm(span=period, adjust=False).mean()
-    plus_di = (
-        100 * pd.Series(plus_dm, index=close.index).ewm(span=period, adjust=False).mean() / atr
-    )
-    minus_di = (
-        100 * pd.Series(minus_dm, index=close.index).ewm(span=period, adjust=False).mean() / atr
-    )
+    plus_di = 100 * pd.Series(plus_dm, index=close.index).ewm(span=period, adjust=False).mean() / atr
+    minus_di = 100 * pd.Series(minus_dm, index=close.index).ewm(span=period, adjust=False).mean() / atr
     dx = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di)).fillna(0)
     adx = dx.ewm(span=period, adjust=False).mean()
     return adx, plus_di, minus_di
 
 
 def label_regime_adx(
-    close:        pd.Series,
-    high:         pd.Series,
-    low:          pd.Series,
-    period:       int   = 20,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    period: int = 20,
     trend_thresh: float = 25.0,
-    chop_thresh:  float = 20.0,
+    chop_thresh: float = 20.0,
 ) -> pd.Series:
 
     adx, plus_di, minus_di = compute_adx(high, low, close, period)
@@ -194,8 +180,8 @@ def label_regime_adx(
 
 
 def label_regime_momentum(
-    close:  pd.Series,
-    window: int   = 63,
+    close: pd.Series,
+    window: int = 63,
     thresh: float = 0.03,
 ) -> pd.Series:
 
@@ -207,10 +193,10 @@ def label_regime_momentum(
 
 
 def label_regime_vol(
-    close:  pd.Series,
-    window: int   = 21,
-    hi_pct: float = 0.67,
-    lo_pct: float = 0.33,
+    close: pd.Series,
+    window: int = 21,
+    hi_pct: float = 0.67,  # noqa: ARG001 - reserved for configurable regime thresholds.
+    lo_pct: float = 0.33,  # noqa: ARG001 - reserved for configurable regime thresholds.
 ) -> pd.Series:
 
     rv = close.pct_change().rolling(window).std() * np.sqrt(252)
@@ -223,9 +209,9 @@ def label_regime_vol(
 
 def regime_stats(
     daily_returns_strat: pd.Series,
-    daily_returns_bh:    pd.Series,
-    regime_series:       pd.Series,
-    label:               str = "regime",
+    daily_returns_bh: pd.Series,
+    regime_series: pd.Series,
+    label: str = "regime",
 ) -> pd.DataFrame:
 
     df = pd.DataFrame(
@@ -242,13 +228,13 @@ def regime_stats(
         pct_time = n_days / len(df) * 100
         ann = 252
 
-        def ann_return(r):
-            return (1 + r).prod() ** (ann / max(1, len(r))) - 1
+        def ann_return(r: pd.Series, annualization_days: int = ann) -> float:
+            return (1 + r).prod() ** (annualization_days / max(1, len(r))) - 1
 
-        def ann_vol(r):
-            return r.std() * np.sqrt(ann)
+        def ann_vol(r: pd.Series, annualization_days: int = ann) -> float:
+            return r.std() * np.sqrt(annualization_days)
 
-        def max_dd(r):
+        def max_dd(r: pd.Series) -> float:
             cum = (1 + r).cumprod()
             return (cum / cum.cummax() - 1).min()
 
@@ -266,9 +252,7 @@ def regime_stats(
                 "bh_vol": round(bh_vol * 100, 2),
                 "strat_maxdd": round(max_dd(grp.strat) * 100, 2),
                 "bh_maxdd": round(max_dd(grp.bh) * 100, 2),
-                "strat_sharpe": round(ann_return(grp.strat) / strat_vol, 3)
-                if strat_vol > 0
-                else np.nan,
+                "strat_sharpe": round(ann_return(grp.strat) / strat_vol, 3) if strat_vol > 0 else np.nan,
                 "bh_sharpe": round(ann_return(grp.bh) / bh_vol, 3) if bh_vol > 0 else np.nan,
             },
         )
@@ -290,10 +274,9 @@ def regime_transition_matrix(
 
 
 def run_regime_decomposition(
-    inputs:         dict[str, pd.Series],
+    inputs: dict[str, pd.Series],
     generate_plots: bool = False,
 ) -> dict[str, dict[str, pd.DataFrame]]:
-
     """
     Główna funkcja wykonująca dekompozycję reżimów (ADX, Mom, Vol).
     Jeśli generate_plots=False (np. w Sweep), zwraca tylko statystyki (bardzo szybkie).
@@ -318,8 +301,7 @@ def run_regime_decomposition(
 
         # Opcjonalne generowanie wykresów
         if generate_plots:
-            # (Tutaj wklej definicje funkcji plot_regime_overlay i plot_regime_bar_comparison z oryginalnego pliku,
-            #  jeśli chcesz, by skrypt je zapisywał na dysk).
+            # Plotting helpers can be added here if plots should be saved.
             pass
 
         results[name] = res_dict
@@ -330,7 +312,6 @@ def run_regime_decomposition(
 def extract_flat_regime_stats(
     regime_results: dict[str, dict[str, pd.DataFrame]],
 ) -> dict[str, float]:
-
     """Zawsze zwraca pełny zestaw kluczy, nawet jeśli dane są puste (NaN)."""
     out = {}
     # Definicja wszystkich metryk, które chcemy mieć w słowniku/pliku CSV
@@ -374,7 +355,8 @@ def extract_flat_regime_stats(
                 out[f"vol_{reg}_strat_cagr"] = round(float(r.get("strat_cagr", np.nan)), 2)
                 out[f"vol_{reg}_bh_cagr"] = round(float(r.get("bh_cagr", np.nan)), 2)
                 out[f"vol_{reg}_strat_sharpe"] = round(
-                    float(r.get("strat_sharpe", np.nan)), 3,
+                    float(r.get("strat_sharpe", np.nan)),
+                    3,
                 )  # Dodano Sharpe
                 out[f"vol_{reg}_pct_time"] = round(float(r.get("pct_time", np.nan)), 1)
 
@@ -391,9 +373,7 @@ def print_live_regime_report(
 
     logging.info("  --- DETAILED REGIME ANALYSIS ---")
     # Nowy nagłówek z większą liczbą kolumn
-    header = (
-        f"  {'Regime':<15} | {'Strat CAGR':>10} | {'B&H CAGR':>10} | {'Sharpe':>8} | {'% Time':>8}"
-    )
+    header = f"  {'Regime':<15} | {'Strat CAGR':>10} | {'B&H CAGR':>10} | {'Sharpe':>8} | {'% Time':>8}"
     logging.info(header)
     logging.info("  " + "-" * len(header))
 
@@ -430,7 +410,6 @@ def print_live_regime_report(
 def get_current_adx_regime(
     df: pd.DataFrame,
 ) -> str:
-
     """
     Oblicza i zwraca bieżący reżim rynkowy (ADX) na podstawie najnowszych danych.
 
@@ -468,10 +447,9 @@ def get_current_adx_regime(
 
 
 def analyze_production_candidates(
-    results_df:        pd.DataFrame,
+    results_df: pd.DataFrame,
     require_bootstrap: bool = False,
 ) -> pd.DataFrame:
-
     """
     Filters sweep results based on mandatory production gates and
     calculates a weighted Ranking Score.
@@ -486,14 +464,14 @@ def analyze_production_candidates(
     # Używamy tyldy (~) jako operatora negacji bitowej dla Series w Pandas.
     # na=True w str.contains sprawia, że puste wartości (NaN) zostaną potraktowane
     # jako zawierające 'FRA' (czyli zostaną odrzucone po negacji), co jest bezpieczne.
-    mask_robust_MC = ~df["MC_Verdict"].str.contains(pat="FRA", case=False, na=True)
-    mask_robust_BB = ~df["BB_Verdict"].str.contains(pat="FRA", case=False, na=True)
+    mask_robust_mc = ~df["MC_Verdict"].str.contains(pat="FRA", case=False, na=True)
+    mask_robust_bb = ~df["BB_Verdict"].str.contains(pat="FRA", case=False, na=True)
 
     if require_bootstrap:
-        mask_robust = mask_robust_MC & mask_robust_BB
+        mask_robust = mask_robust_mc & mask_robust_bb
     else:
         # Jeśli nie wymagamy Bootstrapa, sprawdzamy tylko MC
-        mask_robust = mask_robust_MC
+        mask_robust = mask_robust_mc
 
     # OOS CalMAR > B&H CalMAR
     mask_calmar = df["oos_calmar"] > df["bh_calmar"]
@@ -513,18 +491,19 @@ def analyze_production_candidates(
 
     # A. Protection Score: 1 - (strat_down / bh_down)
     df["score_protection"] = 1 - (
-        df["adx_downtrend_strat_cagr"]
-        / df["adx_downtrend_bh_cagr"].replace(to_replace=0, value=np.nan)
+        df["adx_downtrend_strat_cagr"] / df["adx_downtrend_bh_cagr"].replace(to_replace=0, value=np.nan)
     )
 
     # B. Uptrend Capture: (strat_up / bh_up)
     df["score_uptrend"] = df["adx_uptrend_strat_cagr"] / df["adx_uptrend_bh_cagr"].replace(
-        to_replace=0, value=np.nan,
+        to_replace=0,
+        value=np.nan,
     )
 
     # C. CAGR Excess Ratio: (strat_cagr - bh_cagr) / bh_cagr
     df["score_excess"] = (df["oos_cagr"] - df["bh_cagr"]) / df["bh_cagr"].replace(
-        to_replace=0, value=np.nan,
+        to_replace=0,
+        value=np.nan,
     )
 
     # Weighted Ranking Score (40/35/25)

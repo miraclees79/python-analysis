@@ -23,7 +23,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install ruff mypy pandas-stubs types-requests
+          pip install ruff==0.15.12 mypy pandas-stubs types-requests
           pip install -r requirements.txt
 
       # 1. RUFF - błyskawiczny linter i formatter

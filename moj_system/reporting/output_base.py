@@ -7,7 +7,6 @@ Replaces legacy `current_development/daily_output_base.py`.
 """
 
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +45,11 @@ def load_existing_log(log_path: Path) -> pd.DataFrame | None:
     try:
         # Load with automatic delimiter detection and UTF-8-SIG for BOM support
         df = pd.read_csv(
-            log_path, sep=None, engine="python", encoding="utf-8-sig", skipinitialspace=True,
+            log_path,
+            sep=None,
+            engine="python",
+            encoding="utf-8-sig",
+            skipinitialspace=True,
         )
 
         if df.empty:
@@ -79,10 +82,9 @@ def append_log_row(log_path: Path, row: dict[str, Any]) -> None:
     combined.to_csv(tmp, index=False)
 
     # PANCERNE NADPISYWANIE:
-    # 1. replace() to wyższa warstwa, os.replace jest najbardziej atomowe
-    # 2. Jeżeli plik path istnieje, os.replace go nadpisze bez błędu.
-    if os.path.exists(log_path):
-        os.replace(tmp, log_path)
+    # Path.replace delegates to the same atomic replacement operation.
+    if log_path.exists():
+        tmp.replace(log_path)
     else:
         tmp.rename(log_path)
 

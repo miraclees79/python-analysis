@@ -19,7 +19,7 @@ from moj_system.data.updater import DataUpdater
 
 
 def prepare_fund_data(
-    fund_codes:       dict[str, str],
+    fund_codes: dict[str, str],
     credentials_path: str | None = None,
 ) -> None:
     """
@@ -47,8 +47,8 @@ def prepare_fund_data(
 
 
 def build_funds_df(
-    fund_codes:        dict[str, str],
-    price_col:         str = "Zamkniecie",
+    fund_codes: dict[str, str],
+    price_col: str = "Zamkniecie",
     min_history_years: int = 10,
 ) -> pd.DataFrame:
     """
@@ -56,7 +56,7 @@ def build_funds_df(
     i raportuje silnie skorelowane pary funduszy, aby uniknąć duplikacji sygnału.
     """
     series_list = []
-    excluded =[]
+    excluded = []
 
     for code, fund_name in fund_codes.items():
         label = f"fund_{code}"
@@ -88,11 +88,15 @@ def build_funds_df(
     if len(series_list) < 2:
         return pd.DataFrame()
 
-    funds_df = pd.concat(
-        objs=series_list,
-        axis=1,
-        join="outer",
-    ).sort_index().ffill()
+    funds_df = (
+        pd.concat(
+            objs=series_list,
+            axis=1,
+            join="outer",
+        )
+        .sort_index()
+        .ffill()
+    )
 
     min_funds_required = max(2, len(funds_df.columns) // 2)
     funds_df = funds_df.dropna(
@@ -107,18 +111,20 @@ def build_funds_df(
 
     # Analiza korelacji par funduszy
     corr_matrix = funds_df.corr()
-    high_corr_pairs =[]
+    high_corr_pairs = []
     matrix_cols = corr_matrix.columns
 
     for i in range(len(matrix_cols)):
         for j in range(i + 1, len(matrix_cols)):
             r_val = corr_matrix.iloc[i, j]
             if r_val > 0.98:
-                high_corr_pairs.append((
-                    matrix_cols[i],
-                    matrix_cols[j],
-                    round(number=r_val, ndigits=4),
-                ))
+                high_corr_pairs.append(
+                    (
+                        matrix_cols[i],
+                        matrix_cols[j],
+                        round(number=r_val, ndigits=4),
+                    )
+                )
 
     if high_corr_pairs:
         logging.info(
@@ -133,13 +139,13 @@ def build_funds_df(
 
 
 def compute_fund_breadth_signal(
-    funds_df:           pd.DataFrame,
-    lookback_days:      int   = 30,
-    n_top:              int   = 2,
-    entry_roll_thresh:  float = 0.03,
+    funds_df: pd.DataFrame,
+    lookback_days: int = 30,
+    n_top: int = 2,
+    entry_roll_thresh: float = 0.03,
     entry_since_thresh: float = 0.05,
-    exit_roll_thresh:   float = -0.03,
-    exit_since_thresh:  float = -0.05,
+    exit_roll_thresh: float = -0.03,
+    exit_since_thresh: float = -0.05,
 ) -> pd.Series:
     """
     Compute a binary IN/OUT signal from a panel of fund NAV series
@@ -212,8 +218,8 @@ def compute_fund_breadth_signal(
 
 
 def generate_fund_filter_signal(
-    fund_codes:       dict[str, str],
-    fund_params:      dict,
+    fund_codes: dict[str, str],
+    fund_params: dict,
     credentials_path: str | None = None,
 ) -> pd.Series | None:
     """
@@ -248,12 +254,12 @@ def generate_fund_filter_signal(
         return None
 
     # 3. Rozpakowanie parametrów z bezpiecznym fallbackiem na wartości domyślne
-    lookback_days      = int(fund_params.get("lookback_days", 30))
-    n_top              = int(fund_params.get("n_top", 2))
-    entry_roll_thresh  = float(fund_params.get("entry_roll_thresh", 0.03))
+    lookback_days = int(fund_params.get("lookback_days", 30))
+    n_top = int(fund_params.get("n_top", 2))
+    entry_roll_thresh = float(fund_params.get("entry_roll_thresh", 0.03))
     entry_since_thresh = float(fund_params.get("entry_since_thresh", 0.05))
-    exit_roll_thresh   = float(fund_params.get("exit_roll_thresh", -0.03))
-    exit_since_thresh  = float(fund_params.get("exit_since_thresh", -0.05))
+    exit_roll_thresh = float(fund_params.get("exit_roll_thresh", -0.03))
+    exit_since_thresh = float(fund_params.get("exit_since_thresh", -0.05))
 
     # 4. Wyliczenie docelowego sygnału
     signal_series = compute_fund_breadth_signal(
@@ -267,7 +273,10 @@ def generate_fund_filter_signal(
     )
 
     logging.info(
-        msg=f"Fund filter signal generated successfully. Signal 'ON' time: {(signal_series.mean() * 100.0):.1f}%",
+        msg=(
+            f"Fund filter signal generated successfully. "
+            f"Signal 'ON' time: {(signal_series.mean() * 100.0):.1f}%"
+        ),
     )
 
     return signal_series

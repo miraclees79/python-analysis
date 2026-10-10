@@ -9,6 +9,7 @@ import logging
 import os
 import sys
 import tempfile
+from pathlib import Path
 
 # --- Path Setup ---
 from moj_system.config import OUTPUT_DIR
@@ -35,7 +36,7 @@ def main() -> None:
         ],
     )
 
-    creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
+    creds_path = str(Path(tempfile.gettempdir()) / "credentials.json")
     folder_id = os.environ.get("GDRIVE_FOLDER_ID")
 
     logging.info(msg="Updating all KNF fund data (API + ZIP)...")

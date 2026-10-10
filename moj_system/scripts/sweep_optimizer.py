@@ -15,6 +15,7 @@ import os
 import sys
 import tempfile
 from collections import Counter
+from pathlib import Path
 from typing import Any
 
 import matplotlib
@@ -27,7 +28,6 @@ matplotlib.use("Agg")
 from moj_system.config import (
     ASSET_REGISTRY,
     BASE_GRIDS,
-    BOND_GRIDS,
     BOND_THRESHOLDS_BOOTSTRAP,
     BOND_THRESHOLDS_MC,
     EQUITY_THRESHOLDS_BOOTSTRAP,
@@ -64,13 +64,13 @@ from moj_system.core.strategy_engine import (
     get_n_jobs,
     walk_forward,
 )
-from moj_system.core.utils import build_mmf_extended
 from moj_system.core.universe import (
     build_global_assets,
     get_allocation_settings,
     prepare_asset_series,
     resolve_train_years,
 )
+from moj_system.core.utils import build_mmf_extended
 from moj_system.data.builder import build_and_upload
 from moj_system.data.data_manager import load_local_csv
 from moj_system.data.updater import DataUpdater
@@ -81,13 +81,13 @@ from moj_system.data.updater import DataUpdater
 
 
 def _extract_window_rows(
-    asset_name:     str,
-    train_years:    int,
-    test_years:     int,
-    wf_results:     pd.DataFrame,
-    stop_mode:      str,
-    alloc_df:       pd.DataFrame | None = None,
-    weights_series: pd.Series | None    = None,
+    asset_name: str,
+    train_years: int,
+    test_years: int,
+    wf_results: pd.DataFrame,
+    stop_mode: str,
+    alloc_df: pd.DataFrame | None = None,
+    weights_series: pd.Series | None = None,
 ) -> list[dict]:
 
     rows = []
@@ -178,17 +178,27 @@ def _compile_window_stats(
     summary = {}
     if window_rows:
         win_cagrs = [w["win_cagr"] for w in window_rows if pd.notna(obj=w["win_cagr"])]
-        summary["window_cagr_mean"] = round(number=float(np.mean(a=win_cagrs)), ndigits=2) if win_cagrs else pd.NA
-        summary["window_cagr_std"] = round(number=float(np.std(a=win_cagrs)), ndigits=2) if len(win_cagrs) > 1 else pd.NA
-        summary["window_cagr_min"] = round(number=float(np.min(a=win_cagrs)), ndigits=2) if win_cagrs else pd.NA
-        summary["window_cagr_max"] = round(number=float(np.max(a=win_cagrs)), ndigits=2) if win_cagrs else pd.NA
+        summary["window_cagr_mean"] = (
+            round(number=float(np.mean(a=win_cagrs)), ndigits=2) if win_cagrs else pd.NA
+        )
+        summary["window_cagr_std"] = (
+            round(number=float(np.std(a=win_cagrs)), ndigits=2) if len(win_cagrs) > 1 else pd.NA
+        )
+        summary["window_cagr_min"] = (
+            round(number=float(np.min(a=win_cagrs)), ndigits=2) if win_cagrs else pd.NA
+        )
+        summary["window_cagr_max"] = (
+            round(number=float(np.max(a=win_cagrs)), ndigits=2) if win_cagrs else pd.NA
+        )
         summary["param_change_count"] = sum(1 for w in window_rows if w["param_changed"])
 
         filter_modes = [w["filter_mode"] for w in window_rows if w["filter_mode"]]
         if filter_modes:
             dominant_mode, dominant_count = Counter(filter_modes).most_common(n=1)[0]
             summary["dominant_filter"] = dominant_mode
-            summary["filter_consistency"] = round(number=(dominant_count / len(filter_modes)) * 100.0, ndigits=1)
+            summary["filter_consistency"] = round(
+                number=(dominant_count / len(filter_modes)) * 100.0, ndigits=1
+            )
         else:
             summary["dominant_filter"] = "unknown"
             summary["filter_consistency"] = pd.NA
@@ -199,7 +209,7 @@ def _compile_window_stats(
             for key_name in w_row.keys():
                 if key_name.startswith("opt_w_") or key_name.startswith("actual_avg_w_"):
                     weight_keys.add(key_name)
-        
+
         for wk in sorted(list(weight_keys)):
             vals = [w_row[wk] for w_row in window_rows if wk in w_row and pd.notna(obj=w_row[wk])]
             if vals:
@@ -230,8 +240,8 @@ def _compile_window_stats(
 class SweepManager:
     def __init__(
         self,
-        n_mc:     int,
-        n_boot:   int,
+        n_mc: int,
+        n_boot: int,
         data_map: dict[str, pd.DataFrame],
     ) -> None:
 
@@ -239,42 +249,52 @@ class SweepManager:
         self.n_boot = n_boot
         self.data_map = data_map
         self.rob_engine = RobustnessEngine(n_jobs=get_n_jobs())
-        self.creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
+        self.creds_path = str(Path(tempfile.gettempdir()) / "credentials.json")
         self.folder_id = os.environ.get("GDRIVE_FOLDER_ID")
         self.all_windows = []
         self.wf_cache = {}
         self.mc_cache = {}
         self.boot_cache = {}
 
-
     def _create_portfolio_wf_results(
         self,
         wf_results_ref: pd.DataFrame,
-        port_eq:        pd.Series,
+        port_eq: pd.Series,
     ) -> pd.DataFrame:
-
         """Helper to compute aggregate portfolio metrics per window and apply the Stub Rule."""
         portfolio_wf_results = wf_results_ref.copy()
 
         for row_index, row in portfolio_wf_results.iterrows():
             w_start = row["TestStart"]
-            w_end   = row["TestEnd"]
+            w_end = row["TestEnd"]
 
             # Slice the portfolio equity curve for this specific window
             window_equity_slice = port_eq.loc[w_start:w_end]
 
             # STUB RULE: Mute stats if window is too short
             if len(window_equity_slice) < 60:
-                m_win = {"CAGR": np.nan, "Sharpe": np.nan, "MaxDD": np.nan, "CalMAR": np.nan, "Sortino": np.nan}
+                m_win = {
+                    "CAGR": np.nan,
+                    "Sharpe": np.nan,
+                    "MaxDD": np.nan,
+                    "CalMAR": np.nan,
+                    "Sortino": np.nan,
+                }
             elif not window_equity_slice.empty:
                 window_equity_norm = window_equity_slice / window_equity_slice.iloc[0]
                 m_win = compute_metrics(equity=window_equity_norm)
             else:
-                m_win = {"CAGR": np.nan, "Sharpe": np.nan, "MaxDD": np.nan, "CalMAR": np.nan, "Sortino": np.nan}
+                m_win = {
+                    "CAGR": np.nan,
+                    "Sharpe": np.nan,
+                    "MaxDD": np.nan,
+                    "CalMAR": np.nan,
+                    "Sortino": np.nan,
+                }
 
-            portfolio_wf_results.loc[row_index, "CAGR"]   = m_win.get("CAGR", np.nan)
+            portfolio_wf_results.loc[row_index, "CAGR"] = m_win.get("CAGR", np.nan)
             portfolio_wf_results.loc[row_index, "Sharpe"] = m_win.get("Sharpe", np.nan)
-            portfolio_wf_results.loc[row_index, "MaxDD"]  = m_win.get("MaxDD", np.nan)
+            portfolio_wf_results.loc[row_index, "MaxDD"] = m_win.get("MaxDD", np.nan)
             portfolio_wf_results.loc[row_index, "CalMAR"] = m_win.get("CalMAR", np.nan)
             portfolio_wf_results.loc[row_index, "Sortino"] = m_win.get("Sortino", np.nan)
             portfolio_wf_results.loc[row_index, "filter_mode"] = "PORTFOLIO"
@@ -284,11 +304,11 @@ class SweepManager:
     def get_cached_wf(
         self,
         asset_name: str,
-        df:         pd.DataFrame,
-        train_y:    int,
-        test_y:     int,
-        stop_type:  str,
-        grid_type:  str = "EQUITY",
+        df: pd.DataFrame,
+        train_y: int,
+        test_y: int,
+        stop_type: str,
+        grid_type: str = "EQUITY",
         entry_gate: pd.Series | None = None,
     ) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame]:
 
@@ -301,7 +321,8 @@ class SweepManager:
             return self.wf_cache[cache_key]
 
         logging.info(
-            f"  [WF CACHE MISS] Calculating WF: {asset_name} train: {train_y} test: {test_y}, stop type: {stop_type} ...",
+            f"  [WF CACHE MISS] Calculating WF: {asset_name} train: {train_y} "
+            f"test: {test_y}, stop type: {stop_type} ...",
         )
         cash_df = self.data_map.get("MMF_EXT")
         grids = GRID_SETS[grid_type]
@@ -336,16 +357,16 @@ class SweepManager:
 
     def get_cached_mc(
         self,
-        asset_name:  str,
-        wf_results:  pd.DataFrame,
-        df:          pd.DataFrame,
-        cash_df:     pd.DataFrame,
-        n_samples:   int,
-        thresholds:  dict,
-        train_y:     int,
-        test_y:      int,
-        stop_type:   str,
-        gate_id:     str,
+        asset_name: str,
+        wf_results: pd.DataFrame,
+        df: pd.DataFrame,
+        cash_df: pd.DataFrame,
+        n_samples: int,
+        thresholds: dict,
+        train_y: int,
+        test_y: int,
+        stop_type: str,
+        gate_id: str,
         base_equity: pd.Series,
     ) -> dict:
 
@@ -357,30 +378,36 @@ class SweepManager:
             return self.mc_cache[cache_key]
 
         logging.info(
-            f"  [MC CACHE MISS] Running MC: {asset_name} train: {train_y} test: {test_y}, stop type: {stop_type}",
+            f"  [MC CACHE MISS] Running MC: {asset_name} train: {train_y} "
+            f"test: {test_y}, stop type: {stop_type}",
         )
         mc_df = self.rob_engine.run_mc_test(
-            wf_results=wf_results, df=df, cash_df=cash_df, n_samples=n_samples,
+            wf_results=wf_results,
+            df=df,
+            cash_df=cash_df,
+            n_samples=n_samples,
         )
         # POPRAWKA: baseline_metrics liczone z krzywej kapitału, nie z wyników okienek
         result = analyze_robustness(
-            results_df=mc_df, baseline_metrics=compute_metrics(base_equity), thresholds=thresholds,
+            results_df=mc_df,
+            baseline_metrics=compute_metrics(base_equity),
+            thresholds=thresholds,
         )
         self.mc_cache[cache_key] = result
         return result
 
     def get_cached_boot(
         self,
-        asset_name:  str,
-        df:          pd.DataFrame,
-        cash_df:     pd.DataFrame,
-        n_samples:   int,
-        train_y:     int,
-        test_y:      int,
-        stop_type:   str,
-        grid_type:   str,
-        entry_gate:  pd.Series | None,
-        thresholds:  dict,
+        asset_name: str,
+        df: pd.DataFrame,
+        cash_df: pd.DataFrame,
+        n_samples: int,
+        train_y: int,
+        test_y: int,
+        stop_type: str,
+        grid_type: str,
+        entry_gate: pd.Series | None,
+        thresholds: dict,
         base_equity: pd.Series,
     ) -> dict:
 
@@ -393,7 +420,8 @@ class SweepManager:
             return self.boot_cache[cache_key]
 
         logging.info(
-            f"  [BOOT CACHE MISS] Running Boot: {asset_name} train: {train_y} test: {test_y}, stop type: {stop_type}",
+            f"  [BOOT CACHE MISS] Running Boot: {asset_name} train: {train_y} "
+            f"test: {test_y}, stop type: {stop_type}",
         )
         use_atr = stop_type == "atr"
         grids = GRID_SETS[grid_type]
@@ -422,7 +450,9 @@ class SweepManager:
             **crypto_extra,
         )
         result = analyze_bootstrap(
-            results_df=bb_df, baseline_metrics=compute_metrics(base_equity), thresholds=thresholds,
+            results_df=bb_df,
+            baseline_metrics=compute_metrics(base_equity),
+            thresholds=thresholds,
         )
         self.boot_cache[cache_key] = result
         return result
@@ -440,20 +470,18 @@ class SweepManager:
 
     def _compile_full_result(
         self,
-        strat_name:        str,
-        train_y:           int,
-        test_y:            int,
-        stop_type:         str,
-        common_start:      pd.Timestamp,
-        wf_results:        pd.DataFrame,
-        wf_equity_trimmed: pd.Series,
-        m_trimmed:         dict,
-        bh_metrics:        dict,
-        regime_metrics:    dict,
-        mc_verdicts_dict:  dict,
-        bb_verdicts_dict:  dict,
-        alloc_df:          pd.DataFrame | None = None,
-        weights_series:    pd.Series | None    = None,
+        strat_name: str,
+        train_y: int,
+        test_y: int,
+        stop_type: str,
+        wf_results: pd.DataFrame,
+        m_trimmed: dict,
+        bh_metrics: dict,
+        regime_metrics: dict,
+        mc_verdicts_dict: dict,
+        bb_verdicts_dict: dict,
+        alloc_df: pd.DataFrame | None = None,
+        weights_series: pd.Series | None = None,
     ) -> dict:
 
         # Przekazujemy wagi do ekstrakcji
@@ -517,10 +545,10 @@ class SweepManager:
 
     def run_single_asset_iteration(
         self,
-        asset_name:   str,
-        train_y:      int,
-        test_y:       int,
-        stop_type:    str,
+        asset_name: str,
+        train_y: int,
+        test_y: int,
+        stop_type: str,
         common_start: pd.Timestamp,
     ) -> dict | None:
 
@@ -550,10 +578,16 @@ class SweepManager:
         m = compute_metrics(trimmed)
 
         bh_equity, bh_metrics = compute_buy_and_hold(
-            df, "Zamkniecie", common_start, trimmed.index.max(),
+            df,
+            "Zamkniecie",
+            common_start,
+            trimmed.index.max(),
         )
         regime_inputs = prepare_regime_inputs(
-            df=df, wf_results=wf_results, wf_equity=trimmed, bh_equity=bh_equity,
+            df=df,
+            wf_results=wf_results,
+            wf_equity=trimmed,
+            bh_equity=bh_equity,
         )
 
         if regime_inputs:
@@ -567,7 +601,9 @@ class SweepManager:
         if self.n_mc > 0:
             mc_df = self.rob_engine.run_mc_test(wf_results, df, cash_df, n_samples=self.n_mc)
             mc_res[asset_name] = analyze_robustness(
-                mc_df, compute_metrics(wf_equity), thresholds=EQUITY_THRESHOLDS_MC,
+                mc_df,
+                compute_metrics(wf_equity),
+                thresholds=EQUITY_THRESHOLDS_MC,
             )
 
         if self.n_boot > 0:
@@ -585,7 +621,9 @@ class SweepManager:
                 slow_grid=BASE_GRIDS["SLOW_GRID"],
             )
             bb_res[asset_name] = analyze_bootstrap(
-                bb_df, compute_metrics(wf_equity), thresholds=EQUITY_THRESHOLDS_BOOTSTRAP,
+                bb_df,
+                compute_metrics(wf_equity),
+                thresholds=EQUITY_THRESHOLDS_BOOTSTRAP,
             )
 
         return self._compile_full_result(
@@ -593,9 +631,7 @@ class SweepManager:
             train_y,
             test_y,
             stop_type,
-            common_start,
             wf_results,
-            trimmed,
             m,
             bh_metrics,
             regime_metrics,
@@ -605,8 +641,8 @@ class SweepManager:
 
     def run_pension_iteration(
         self,
-        train_y:      int,
-        test_y:       int,
+        train_y: int,
+        test_y: int,
         stop_type_eq: str,
         common_start: pd.Timestamp,
     ) -> dict | None:
@@ -619,7 +655,11 @@ class SweepManager:
 
         # 1. WF (Signals)
         wf_eq, wf_res_eq, wf_tr_eq = self.get_cached_wf(
-            asset_name="WIG", df=WIG, train_y=train_y, test_y=test_y, stop_type=stop_type_eq,
+            asset_name="WIG",
+            df=WIG,
+            train_y=train_y,
+            test_y=test_y,
+            stop_type=stop_type_eq,
         )
         wf_bd, wf_res_bd, wf_tr_bd = self.get_cached_wf(
             asset_name="TBSP",
@@ -714,10 +754,16 @@ class SweepManager:
         m = compute_metrics(trimmed)
 
         bh_equity, bh_metrics = compute_buy_and_hold(
-            WIG, "Zamkniecie", common_start, trimmed.index.max(),
+            WIG,
+            "Zamkniecie",
+            common_start,
+            trimmed.index.max(),
         )
         regime_inputs = prepare_regime_inputs(
-            df=WIG, wf_results=wf_res_eq, wf_equity=trimmed, bh_equity=bh_equity,
+            df=WIG,
+            wf_results=wf_res_eq,
+            wf_equity=trimmed,
+            bh_equity=bh_equity,
         )
 
         if regime_inputs:
@@ -734,9 +780,7 @@ class SweepManager:
             train_y=train_y,
             test_y=test_y,
             stop_type=stop_type_eq,
-            common_start=common_start,
             wf_results=portfolio_wf_res,
-            wf_equity_trimmed=trimmed,
             m_trimmed=m,
             bh_metrics=bh_metrics,
             regime_metrics=regime_metrics,
@@ -748,9 +792,9 @@ class SweepManager:
 
     def run_global_iteration(
         self,
-        variant_key:  str,
-        train_y:      int,
-        test_y:       int,
+        variant_key: str,
+        train_y: int,
+        test_y: int,
         stop_type_eq: str,
         common_start: pd.Timestamp,
     ) -> dict | None:
@@ -884,10 +928,16 @@ class SweepManager:
         m = compute_metrics(trimmed)
 
         bh_equity, bh_metrics = compute_buy_and_hold(
-            WIG, "Zamkniecie", common_start, trimmed.index.max(),
+            WIG,
+            "Zamkniecie",
+            common_start,
+            trimmed.index.max(),
         )
         regime_inputs = prepare_regime_inputs(
-            df=WIG, wf_results=None, wf_equity=trimmed, bh_equity=bh_equity,
+            df=WIG,
+            wf_results=None,
+            wf_equity=trimmed,
+            bh_equity=bh_equity,
         )
 
         if regime_inputs:
@@ -924,16 +974,16 @@ class SweepManager:
                 # sensu w jednym polu, więc możemy je oznaczyć jako NaN lub 0
                 portfolio_wf_results.loc[row_index, "filter_mode"] = "PORTFOLIO"
 
-        portfolio_wf_res = self._create_portfolio_wf_results(wf_results_ref=portfolio_wf_results, port_eq=port_eq)
+        portfolio_wf_res = self._create_portfolio_wf_results(
+            wf_results_ref=portfolio_wf_results, port_eq=port_eq
+        )
 
         return self._compile_full_result(
             strat_name=variant_key,
             train_y=train_y,
             test_y=test_y,
             stop_type=stop_type_eq,
-            common_start=common_start,
             wf_results=portfolio_wf_res,
-            wf_equity_trimmed=trimmed,
             m_trimmed=m,
             bh_metrics=bh_metrics,
             regime_metrics=regime_metrics,
@@ -945,8 +995,8 @@ class SweepManager:
 
 
 def print_sweep_report(
-    results_df:    pd.DataFrame,
-    common_start:  dt.date,
+    results_df: pd.DataFrame,
+    common_start: dt.date,
     candidates_df: pd.DataFrame | None = None,
 ) -> None:
 
@@ -960,7 +1010,7 @@ def print_sweep_report(
         msg="\n--- 1. PERFORMANCE & ROBUSTNESS LEADERBOARD ---",
     )
 
-    display_cols =[
+    display_cols = [
         "Strategy",
         "train_years",
         "test_years",
@@ -974,10 +1024,10 @@ def print_sweep_report(
     if "MC_p05_CAGR" in results_df.columns:
         display_cols.append("MC_p05_CAGR")
 
-    existing_cols =[c for c in display_cols if c in results_df.columns]
+    existing_cols = [c for c in display_cols if c in results_df.columns]
     format_df = results_df[existing_cols].copy()
 
-    pct_cols =["oos_cagr", "oos_maxdd", "MC_p05_CAGR"]
+    pct_cols = ["oos_cagr", "oos_maxdd", "MC_p05_CAGR"]
 
     for col in pct_cols:
         if col in format_df.columns:
@@ -994,12 +1044,12 @@ def print_sweep_report(
         msg=f"\n{format_df.to_string(index=False)}",
     )
 
-    regime_cols =[c for c in results_df.columns if "adx_" in c or "vol_" in c]
+    regime_cols = [c for c in results_df.columns if "adx_" in c or "vol_" in c]
     if regime_cols:
         logging.info(
             msg=f"\n{sep}\n--- 2. REGIME DECOMPOSITION: CAGR in Specific Market Conditions ---",
         )
-        key_regime_cols =[
+        key_regime_cols = [
             "Strategy",
             "train_years",
             "test_years",
@@ -1011,7 +1061,7 @@ def print_sweep_report(
             "adx_sideways_strat_cagr",
             "adx_sideways_bh_cagr",
         ]
-        avail_regime_cols =[c for c in key_regime_cols if c in results_df.columns]
+        avail_regime_cols = [c for c in key_regime_cols if c in results_df.columns]
         regime_df = results_df[avail_regime_cols].copy()
         for col in avail_regime_cols:
             if "cagr" in col:
@@ -1023,7 +1073,9 @@ def print_sweep_report(
         )
 
     # --- NOWA SEKCJA: ASSET UTILIZATION (WAGI) ---
-    weight_cols = [c for c in results_df.columns if c.startswith("mean_opt_w_") or c.startswith("mean_actual_avg_w_")]
+    weight_cols = [
+        c for c in results_df.columns if c.startswith("mean_opt_w_") or c.startswith("mean_actual_avg_w_")
+    ]
     if weight_cols:
         logging.info(
             msg=f"\n{sep}\n--- 3. ASSET UTILIZATION (Mean Weights Across Windows) ---",
@@ -1033,9 +1085,7 @@ def print_sweep_report(
         util_df = results_df[avail_util_cols].copy()
         for c in weight_cols:
             if c in util_df.columns:
-                util_df[c] = util_df[c].apply(
-                    func=lambda x: f"{x * 100.0:.1f}%" if pd.notna(x) else "N/A"
-                )
+                util_df[c] = util_df[c].apply(func=lambda x: f"{x * 100.0:.1f}%" if pd.notna(x) else "N/A")
         logging.info(
             msg=f"\n{util_df.to_string(index=False)}",
         )
@@ -1045,7 +1095,7 @@ def print_sweep_report(
         logging.info(
             msg=f"\n{sep}\n--- 4. PRODUCTION CANDIDATES (Ranked by Weighted Score) ---",
         )
-        cand_cols =[
+        cand_cols = [
             "Strategy",
             "train_years",
             "test_years",
@@ -1055,10 +1105,10 @@ def print_sweep_report(
             "score_uptrend",
             "score_excess",
         ]
-        avail_cand_cols =[c for c in cand_cols if c in candidates_df.columns]
+        avail_cand_cols = [c for c in cand_cols if c in candidates_df.columns]
         cand_format_df = candidates_df[avail_cand_cols].copy()
 
-        for score_col in["ranking_score", "score_protection", "score_uptrend", "score_excess"]:
+        for score_col in ["ranking_score", "score_protection", "score_uptrend", "score_excess"]:
             if score_col in cand_format_df.columns:
                 cand_format_df[score_col] = cand_format_df[score_col].apply(
                     func=lambda x: round(number=x, ndigits=3) if pd.notna(x) else "N/A",
@@ -1076,6 +1126,7 @@ def print_sweep_report(
         )
 
     logging.info(msg=sep)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Professional Multi-Strategy Sweeper")
@@ -1102,7 +1153,7 @@ def main() -> None:
     DataUpdater().run_full_update(get_funds=False)
 
     logging.info("Preparing data map for all assets...")
-    creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
+    creds_path = str(Path(tempfile.gettempdir()) / "credentials.json")
     folder_id = os.environ.get("GDRIVE_FOLDER_ID")
 
     # Przechowujemy wszystkie dane w jednej mapie (UPPERCASE)
@@ -1133,7 +1184,12 @@ def main() -> None:
         is_msci_world=True,
     )
     data_map["STOXX600"] = build_and_upload(
-        folder_id, "stoxx600.csv", "stoxx600_combined.csv", "^STOXX", "yfinance", creds_path,
+        folder_id,
+        "stoxx600.csv",
+        "stoxx600_combined.csv",
+        "^STOXX",
+        "yfinance",
+        creds_path,
     )
 
     # Ładowanie reszty
@@ -1148,9 +1204,7 @@ def main() -> None:
         if df is not None:
             data_map[asset_key] = df
 
-    data_map["WIG"] = load_local_csv("wig", "WIG").loc[
-        lambda x: x.index >= pd.Timestamp("1995-01-02")
-    ]
+    data_map["WIG"] = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
     # Przygotowanie przedłużonego MMF (raz dla wszystkich)
     mmf_raw = load_local_csv("fund_2720", "MMF")
     wibor = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)

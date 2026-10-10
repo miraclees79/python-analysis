@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 import io
 import logging
-from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
 
 from moj_system.config import DATA_DIR
-from moj_system.data.gdrive import GDriveClient
 from moj_system.data.data_manager import load_local_csv
+from moj_system.data.gdrive import GDriveClient
 
 RAW_DIR = DATA_DIR
 DATA_START = "1990-01-01"
@@ -18,16 +17,15 @@ CLOSE_COL = "Zamkniecie"
 def _parse_wsj_csv(
     raw_bytes: bytes,
 ) -> pd.DataFrame | None:
-
     """Parses WSJ export format using multiple encoding attempts."""
     raw = None
     encodings_to_try = ("utf-8-sig", "utf-8", "latin-1")
-    
+
     for current_enc in encodings_to_try:
         try:
             # Tworzymy bufor bajtów
             initial_data = io.BytesIO(initial_bytes=raw_bytes)
-            
+
             # Próba odczytu z jawnymi argumentami
             raw = pd.read_csv(
                 filepath_or_buffer=initial_data,
@@ -37,18 +35,14 @@ def _parse_wsj_csv(
             )
             # Jeśli się udało, wychodzimy z pętli
             break
-            
+
         except Exception as exc:
             # Naprawa Bandit B112: Logujemy błąd zamiast cichego 'continue'
-            logging.debug(
-                msg=f"Attempt with encoding {current_enc} failed: {exc}"
-            )
+            logging.debug(msg=f"Attempt with encoding {current_enc} failed: {exc}")
             continue
-            
+
     if raw is None:
-        logging.error(
-            msg="Failed to parse WSJ CSV: None of the attempted encodings worked."
-        )
+        logging.error(msg="Failed to parse WSJ CSV: None of the attempted encodings worked.")
         return None
 
     # Normalizacja nazw kolumn
@@ -59,42 +53,28 @@ def _parse_wsj_csv(
             col_map[col_raw_name] = "Close"
         elif low_name in ("date", "data"):
             col_map[col_raw_name] = "Date"
-            
+
     raw = raw.rename(columns=col_map)
-    
+
     # Konwersja daty
-    raw["Date"] = pd.to_datetime(
-        arg=raw["Date"], 
-        format="mixed", 
-        errors="coerce"
-    )
+    raw["Date"] = pd.to_datetime(arg=raw["Date"], format="mixed", errors="coerce")
     raw = raw.dropna(subset=["Date"])
 
     # Budowa wynikowego DataFrame
     out = pd.DataFrame(index=raw["Date"].dt.tz_localize(tz=None))
     out.index.name = "Data"
-    
-    out[CLOSE_COL] = pd.to_numeric(
-        arg=raw["Close"], 
-        errors="coerce"
-    )
-    out["Najwyzszy"] = pd.to_numeric(
-        arg=raw.get("High", raw["Close"]), 
-        errors="coerce"
-    )
-    out["Najnizszy"] = pd.to_numeric(
-        arg=raw.get("Low", raw["Close"]), 
-        errors="coerce"
-    )
-    
+
+    out[CLOSE_COL] = pd.to_numeric(arg=raw["Close"], errors="coerce")
+    out["Najwyzszy"] = pd.to_numeric(arg=raw.get("High", raw["Close"]), errors="coerce")
+    out["Najnizszy"] = pd.to_numeric(arg=raw.get("Low", raw["Close"]), errors="coerce")
+
     return out.sort_index().dropna()
 
 
 def _extend_series(
-    base_df: pd.DataFrame | None, 
-    ext_df:  pd.DataFrame | None,
+    base_df: pd.DataFrame | None,
+    ext_df: pd.DataFrame | None,
 ) -> pd.DataFrame:
-
     """Extends base_df with new returns from ext_df (Chain-linking)."""
     if base_df is None or base_df.empty:
         return ext_df
@@ -170,11 +150,10 @@ def _normalise_downloaded_base(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _build_full_msci_world(
-    client:          GDriveClient, 
-    folder_id:       str, 
+    client: GDriveClient,
+    folder_id: str,
     wsj_combined_df: pd.DataFrame,
 ) -> pd.DataFrame:
-
     """Łączy syntetyczną bazę MSCI (1990-2010) z serią rzeczywistą."""
     if wsj_combined_df is not None and not wsj_combined_df.empty:
         if wsj_combined_df.index.min() <= pd.Timestamp("1990-01-05"):
@@ -194,15 +173,14 @@ def _build_full_msci_world(
 
 
 def build_and_upload(
-    folder_id:        str,
-    raw_filename:     str,
-    combined_filename:str,
+    folder_id: str,
+    raw_filename: str,
+    combined_filename: str,
     extension_ticker: str,
-    extension_source: str  = "yfinance",
+    extension_source: str = "yfinance",
     credentials_path: str | None = None,
-    is_msci_world:    bool = False,
+    is_msci_world: bool = False,
 ) -> pd.DataFrame | None:
-
     """Main builder: fetches from Drive, extends from local/YF, and uploads back."""
     client = GDriveClient(credentials_path=credentials_path)
     base_df = None
@@ -225,13 +203,16 @@ def build_and_upload(
             if not ext_data.empty:
                 if isinstance(ext_data.columns, pd.MultiIndex):
                     ext_data = ext_data.droplevel(level=1, axis=1)
-                ext_df = ext_data.rename(columns={"Close": CLOSE_COL, "High": "Najwyzszy", "Low": "Najnizszy"})
+                ext_df = ext_data.rename(
+                    columns={"Close": CLOSE_COL, "High": "Najwyzszy", "Low": "Najnizszy"}
+                )
                 # POPRAWKA: Usunięto .dt
                 ext_df.index = pd.to_datetime(arg=ext_df.index).tz_localize(tz=None).normalize()
         except Exception as e:
             logging.warning(msg=f"yFinance Error for {extension_ticker}: {e}")
     elif extension_source == "stooq":
-        # UWAGA: Tutaj usuwamy daszek TYLKO po to, by wczytać plik 'tbsp.csv' (stworzony przez label w updaterze).
+        # Usuwamy daszek tylko do wczytania pliku 'tbsp.csv',
+        # którego nazwa pochodzi z label w updaterze.
         # Oryginalny ticker (np. ^tbsp) w ZIP pozostaje nienaruszony w procesie updatu.
         file_name_to_load = extension_ticker.replace("^", "").lower()
         ext_df = load_local_csv(ticker=file_name_to_load, label=extension_ticker, mandatory=False)
@@ -249,9 +230,14 @@ def build_and_upload(
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     out_path = RAW_DIR / combined_filename
     combined.to_csv(path_or_buf=out_path)
-    
+
     if base_df is None or combined.index.max() > base_df.index.max():
-        logging.info(msg=f"Uploading updated {combined_filename} to Drive (New end date: {combined.index.max().date()})")
+        logging.info(
+            msg=(
+                f"Uploading updated {combined_filename} to Drive "
+                f"(New end date: {combined.index.max().date()})"
+            ),
+        )
         client.upload_file(folder_id=folder_id, local_path=str(out_path), filename=combined_filename)
     else:
         logging.info(msg=f"No new data to upload for {combined_filename}.")

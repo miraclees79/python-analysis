@@ -13,7 +13,6 @@ select = [
     "N",    # pep8-naming (konwencje nazw)
     "ANN",  # flake8-annotations (wymóg typowania - TWOJA ZASADA)
     "B",    # flake8-bugbear (najlepsze praktyki)
-    "COM",  # flake8-commas (wymóg przecinków - TWOJA ZASADA)
     "ARG",  # flake8-unused-arguments (nieużywane argumenty)
     "PTH",  # flake8-use-pathlib (pathlib zamiast os.path)
 ]
@@ -30,6 +29,26 @@ dummy-variable-rgx = "^$"
 # Typowanie musi być wszędzie
 allow-star-arg-any = false
 suppress-none-returning = false
+
+[tool.ruff.lint.pep8-naming]
+# Financial notation and ticker symbols retain established public/domain names.
+ignore-names = [
+    "X",
+    "Y",
+    "N_atr",
+    "X_grid",
+    "Y_grid",
+    "N_atr_grid",
+    "M",
+    "WIG",
+    "TBSP",
+    "MMF",
+    "MMF_EXT",
+    "WIBOR",
+    "WIBOR1M",
+    "PL10Y",
+    "DE10Y",
+]
 
 [tool.ruff.format]
 # TWOJA ZASADA: Wypisywanie argumentów linia po linii

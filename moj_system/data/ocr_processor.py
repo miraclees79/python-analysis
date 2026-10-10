@@ -133,8 +133,8 @@ def sanitize_date_sequence(
                 if 0 < diff_candidate_to_anchor <= 20:
                     logging.info(
                         msg=f"KOREKTA ŁAŃCUCHA OCR (wiersz {i}): "
-                            f"{curr_date.strftime('%d.%m.%Y')} -> {candidate_date.strftime('%d.%m.%Y')} "
-                            f"(Kotwica: {anchor_date.strftime('%d.%m.%Y')})"
+                        f"{curr_date.strftime('%d.%m.%Y')} -> {candidate_date.strftime('%d.%m.%Y')} "
+                        f"(Kotwica: {anchor_date.strftime('%d.%m.%Y')})"
                     )
                     # Aplikujemy poprawkę
                     df.loc[i, "Date_dt"] = candidate_date
@@ -164,12 +164,12 @@ def run_ocr_pipeline() -> None:
     """Główna funkcja uruchamiająca cały proces OCR, z obsługą ZIP lub bezpośredniego PDF."""
     setup_logging()
     logging.info(msg=f"Odczytana ścieżka POPPLER_PATH: {os.getenv('POPPLER_PATH')}")
-    
+
     # 1. Wczytanie zmiennych środowiskowych
     zip_url = os.getenv("ZIP_URL")
     zip_password = os.getenv("ZIP_PASSWORD")
     pdf_target_name = os.getenv("INT_FILE_NAME")  # Nazwa pliku PDF wewnątrz ZIP-a
-    gdrive_folder_id = os.getenv("GDRIVE_FOLDER_ID") # UŻYWAMY BEZPOŚREDNIO ID GŁÓWNEGO FOLDERU
+    gdrive_folder_id = os.getenv("GDRIVE_FOLDER_ID")  # UŻYWAMY BEZPOŚREDNIO ID GŁÓWNEGO FOLDERU
 
     # --- AUTO-DETEKCJA POPPLERA ---
     poppler_path = None
@@ -180,7 +180,7 @@ def run_ocr_pipeline() -> None:
         else:
             logging.info(msg=f"Używam ścieżki Popplera: {poppler_path}")
         tesseract_exe = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-        if os.path.exists(tesseract_exe):
+        if Path(tesseract_exe).exists():
             pytesseract.pytesseract.tesseract_cmd = tesseract_exe
             logging.info(msg="Tesseract skonfigurowany poprawnie.")
         else:
@@ -220,7 +220,10 @@ def run_ocr_pipeline() -> None:
                 is_zip = True
             except (pyzipper.zipfile.BadZipFile, RuntimeError):
                 logging.info(
-                    msg="Plik nie jest poprawnym archiwum ZIP lub hasło jest błędne. Próbuję jako bezpośredni PDF..."
+                    msg=(
+                        "Plik nie jest poprawnym archiwum ZIP lub hasło jest błędne. "
+                        "Próbuję jako bezpośredni PDF..."
+                    ),
                 )
                 is_zip = False
 
@@ -229,14 +232,10 @@ def run_ocr_pipeline() -> None:
                 logging.info(msg=f"Zapisano pobrany plik bezpośrednio jako {pdf_path}.")
 
         except Exception as e:
-            raise RuntimeError(f"Błąd podczas pobierania lub przygotowywania pliku PDF: {e}")
+            raise RuntimeError(f"Błąd podczas pobierania lub przygotowywania pliku PDF: {e}") from e
 
         try:
-            info = pdfinfo_from_path(
-                pdf_path=str(pdf_path), 
-                userpw=zip_password, 
-                poppler_path=poppler_path
-            )
+            info = pdfinfo_from_path(pdf_path=str(pdf_path), userpw=zip_password, poppler_path=poppler_path)
             total_pages = info["Pages"]
             logging.info(msg=f"Przetwarzanie {total_pages} stron...")
 
@@ -256,17 +255,11 @@ def run_ocr_pipeline() -> None:
                 img = np.array(object=images[0])
                 gray = cv2.cvtColor(src=img, code=cv2.COLOR_RGB2GRAY)
                 _, binary = cv2.threshold(
-                    src=gray, 
-                    thresh=0, 
-                    maxval=255, 
-                    type=cv2.THRESH_BINARY + cv2.THRESH_OTSU
+                    src=gray, thresh=0, maxval=255, type=cv2.THRESH_BINARY + cv2.THRESH_OTSU
                 )
 
                 custom_config = r"--oem 3 --psm 6 -l pol+eng"
-                text = pytesseract.image_to_string(
-                    image=binary, 
-                    config=custom_config
-                )
+                text = pytesseract.image_to_string(image=binary, config=custom_config)
 
                 page_count = 0
                 for line in text.split("\n"):
@@ -281,14 +274,11 @@ def run_ocr_pipeline() -> None:
                 gc.collect()
 
         except Exception as e:
-            raise RuntimeError(f"Błąd podczas przetwarzania OCR: {e}")
+            raise RuntimeError(f"Błąd podczas przetwarzania OCR: {e}") from e
 
         # --- LOGIKA UPLOADU BEZPOŚREDNIO DO GDRIVE_FOLDER_ID ---
 
-        df = pd.DataFrame(
-            data=all_rows, 
-            columns=["Date", "Col2", "Col3", "Col4", "Col5", "Col6"]
-        )
+        df = pd.DataFrame(data=all_rows, columns=["Date", "Col2", "Col3", "Col4", "Col5", "Col6"])
         df = sanitize_date_sequence(df=df)
 
         correction_count = 0
@@ -296,12 +286,15 @@ def run_ocr_pipeline() -> None:
             processed = df[col].apply(func=fix_ocr_number)
             df[col] = [x[0] for x in processed]
             correction_count += sum(x[1] for x in processed)
-            
+
         logging.info(msg=f"Łączna liczba zastosowanych korekt: {correction_count}")
 
         if not _GDRIVE_AVAILABLE or not gdrive_folder_id:
             logging.warning(
-                msg=f"Brak klienta GDrive ({_GDRIVE_AVAILABLE}) lub GDRIVE_FOLDER_ID ({gdrive_folder_id}). Pomijam upload.",
+                msg=(
+                    f"Brak klienta GDrive ({_GDRIVE_AVAILABLE}) lub "
+                    f"GDRIVE_FOLDER_ID ({gdrive_folder_id}). Pomijam upload."
+                ),
             )
         else:
             try:
@@ -313,21 +306,16 @@ def run_ocr_pipeline() -> None:
 
                 file_name = "filtered_table.csv"
                 temp_path = work_dir_path / "upload_temp.csv"
-                df.to_csv(
-                    path_or_buf=temp_path, 
-                    index=False, 
-                    header=False, 
-                    sep=";", 
-                    encoding="utf-8"
+                df.to_csv(path_or_buf=temp_path, index=False, header=False, sep=";", encoding="utf-8")
+
+                logging.info(
+                    msg=(
+                        f"Wysyłam plik {file_name} bezpośrednio do folderu "
+                        f"docelowego o ID: {gdrive_folder_id} ..."
+                    ),
                 )
 
-                logging.info(msg=f"Wysyłam plik {file_name} bezpośrednio do folderu docelowego o ID: {gdrive_folder_id} ...")
-                
-                client.upload_csv(
-                    folder_id=gdrive_folder_id, 
-                    local_path=str(temp_path), 
-                    filename=file_name
-                )
+                client.upload_csv(folder_id=gdrive_folder_id, local_path=str(temp_path), filename=file_name)
 
                 logging.info(msg="Plik pomyślnie wysłany na Google Drive.")
 
@@ -339,13 +327,9 @@ def run_ocr_pipeline() -> None:
         df = pd.DataFrame(columns=["Date", "Col2", "Col3", "Col4", "Col5", "Col6"])
     else:
         # --- NOWA LOGIKA: Wyszukanie najnowszej daty ---
-        latest_date_series = pd.to_datetime(
-            arg=df["Date"], 
-            format="%d.%m.%Y", 
-            errors="coerce"
-        )
+        latest_date_series = pd.to_datetime(arg=df["Date"], format="%d.%m.%Y", errors="coerce")
         latest_date = latest_date_series.max()
-        
+
         if pd.notna(obj=latest_date):
             logging.info(
                 msg=f"Najnowsza data wyodrębniona z dokumentu: {latest_date.strftime(format='%Y-%m-%d')}"

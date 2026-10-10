@@ -12,13 +12,14 @@ import logging
 import os
 import sys
 import tempfile
+from pathlib import Path
 
 # Set project root
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
-sys.path.append(project_root)
+script_dir = Path(__file__).resolve().parent
+project_root = script_dir.parent.parent
+sys.path.append(str(project_root))
 
-from moj_system.data.knf_tools import KNFTools
+from moj_system.data.knf_tools import KNFTools  # noqa: E402
 
 
 def main() -> None:
@@ -38,7 +39,7 @@ def main() -> None:
     os.chdir(project_root)
 
     log_file = "outputs/refresh_knf.log"
-    os.makedirs("outputs", exist_ok=True)
+    Path("outputs").mkdir(parents=True, exist_ok=True)
     for h in logging.root.handlers[:]:
         logging.root.removeHandler(h)
     logging.basicConfig(
@@ -50,7 +51,7 @@ def main() -> None:
         ],
     )
 
-    creds_path = os.path.join(tempfile.gettempdir(), "credentials.json")
+    creds_path = str(Path(tempfile.gettempdir()) / "credentials.json")
     tools = KNFTools(credentials_path=creds_path)
 
     if args.verify_only:
