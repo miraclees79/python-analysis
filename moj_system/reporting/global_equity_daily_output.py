@@ -47,10 +47,10 @@ def _get_signal_from_series(sig_oos: pd.Series | None) -> str:
 def _get_open_position(wf_trades: pd.DataFrame | None) -> dict | None:
     if wf_trades is None or wf_trades.empty:
         return None
-    carry = wf_trades[wf_trades["Exit Reason"] == "CARRY"]
-    if carry.empty:
+    last_trade = wf_trades.iloc[-1]
+    if last_trade["Exit Reason"] != "CARRY":
         return None
-    return carry.iloc[-1].to_dict()
+    return last_trade.to_dict()
 
 
 def _get_active_window_params(wf_results: pd.DataFrame | None) -> dict:
