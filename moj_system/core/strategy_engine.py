@@ -1892,6 +1892,7 @@ def print_backtest_report(
     wf_results: pd.DataFrame | None = None,
     position_mode: str | None = None,
     filter_modes_override: list[str] | None = None,
+    display_trades: pd.DataFrame | None = None,
 ) -> None:
 
     logging.info(
@@ -1976,8 +1977,9 @@ def print_backtest_report(
             msg="-" * 80,
         )
 
-    if not trades.empty and "Exit Reason" in trades.columns:
-        carry_trades = trades[trades["Exit Reason"] == "CARRY"]
+    trade_log = display_trades if display_trades is not None else trades
+    if not trade_log.empty and "Exit Reason" in trade_log.columns:
+        carry_trades = trade_log[trade_log["Exit Reason"] == "CARRY"]
 
         n_carry = len(carry_trades)
         if n_carry > 0:
@@ -1985,10 +1987,13 @@ def print_backtest_report(
                 msg=f"Note: trade log includes {n_carry} CARRY boundary records excluded from statistics above.",
             )
 
-        trades_fmt = trades.copy()
+        trades_fmt = trade_log.copy()
         trades_fmt["Return"] = (trades_fmt["Return"] * 100.0).round(decimals=2).astype(str) + "%"
         trades_fmt["EntryPrice"] = trades_fmt["EntryPrice"].round(decimals=2)
         trades_fmt["ExitPrice"] = trades_fmt["ExitPrice"].round(decimals=2)
+        for column in ("Memo EntryPriceOriginalCurrency", "Memo ExitPriceOriginalCurrency"):
+            if column in trades_fmt.columns:
+                trades_fmt[column] = trades_fmt[column].round(decimals=2)
         logging.info(
             msg="TRADE LOG:",
         )
@@ -1996,8 +2001,8 @@ def print_backtest_report(
             msg=f"\n{trades_fmt.to_string(index=False)}",
         )
 
-    if not trades.empty and trades.iloc[-1]["Exit Reason"] == "CARRY":
-        last_carry = trades.iloc[-1]
+    if not trade_log.empty and trade_log.iloc[-1]["Exit Reason"] == "CARRY":
+        last_carry = trade_log.iloc[-1]
         logging.info(
             msg=f"Open position at report date: entry {last_carry['EntryDate']} at {last_carry['EntryPrice']:.2f}, current value {last_carry['ExitPrice']:.2f}, unrealised return {last_carry['Return'] * 100.0:.1f}%",
         )

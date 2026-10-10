@@ -46,7 +46,9 @@ from moj_system.core.strategy_engine import (
 )
 from moj_system.core.utils import build_mmf_extended
 from moj_system.core.universe import (
+    build_display_price_df,
     build_global_assets,
+    convert_trade_prices_for_display,
     get_allocation_settings,
     load_fx_map,
     prepare_asset_series,
@@ -405,6 +407,7 @@ def run_global_portfolio(
     wf_results_dict = {}
     wf_trades_dict = {}
     price_df_dict = {}
+    display_price_df_dict = {}
 
     n_jobs = get_n_jobs()
 
@@ -444,6 +447,7 @@ def run_global_portfolio(
             wf_results=wf_r,
             position_mode="full",
             filter_modes_override=None,
+            display_trades=convert_trade_prices_for_display(trades=wf_t, spec=spec),
         )
 
         sigs_full[lbl] = build_signal_series(
@@ -455,6 +459,9 @@ def run_global_portfolio(
         wf_results_dict[lbl] = wf_r
         wf_trades_dict[lbl] = wf_t
         price_df_dict[lbl] = proc_px
+        display_prices = build_display_price_df(spec=spec)
+        if display_prices is not None:
+            display_price_df_dict[lbl] = display_prices
 
         if lbl == "WIG":
             wig_wf_res = wf_r
@@ -552,6 +559,7 @@ def run_global_portfolio(
         asset_keys=list(rets_dict.keys()),
         portfolio_mode=mode,
         fx_hedged=fx_h,
+        display_price_df_dict=display_price_df_dict,
         output_dir=str(OUTPUT_DIR / asset_key.lower()),
         asset_name=asset_key,
         run_date=None,

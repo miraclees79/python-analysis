@@ -188,6 +188,12 @@ def _determine_action(
     return "+".join(actions) if actions else "HOLD"
 
 
+def _value_at_date(series: pd.Series, date: object) -> float:
+    timestamp = pd.Timestamp(date)
+    value = series.reindex(pd.DatetimeIndex([timestamp]), method="ffill").iloc[0]
+    return float(value)
+
+
 # ---------------------------------------------------------------------------
 # Snapshot builder
 # ---------------------------------------------------------------------------
@@ -206,6 +212,7 @@ def _build_snapshot(
     portfolio_mode: str,
     fx_hedged: bool,
     run_date: dt.date,
+    display_price_df_dict: dict | None = None,
 ) -> dict:
 
     snap = {
@@ -247,14 +254,21 @@ def _build_snapshot(
 
             pos = _get_open_position(wf_trades=wf_trades_dict.get(k))
             if pos:
-                prices = df["Zamkniecie"].dropna()
-                entry_px = float(pos["EntryPrice"])
+                display_df = (display_price_df_dict or {}).get(k)
+                price_df = display_df if display_df is not None else df
+                prices = price_df["Zamkniecie"].dropna()
+                entry_date = pd.Timestamp(pos["EntryDate"])
+                entry_px = (
+                    _value_at_date(prices, entry_date)
+                    if display_df is not None
+                    else float(pos["EntryPrice"])
+                )
                 today_px = float(prices.iloc[-1])
                 in_trade = prices.loc[prices.index >= pd.Timestamp(pos["EntryDate"])]
                 peak_px = float(in_trade.max())
 
                 if par.get("use_atr_stop"):
-                    atr_val = _compute_atr_val(df=df, atr_window=par.get("atr_window", 20))
+                    atr_val = _compute_atr_val(df=price_df, atr_window=par.get("atr_window", 20))
                     trail_stop = round(number=peak_px * (1.0 - par.get("stop_param", 0.10) * atr_val), ndigits=2)
                     state["atr_val"] = round(number=atr_val, ndigits=3)
                 else:
@@ -265,7 +279,7 @@ def _build_snapshot(
                 binding = max(trail_stop, abs_stop)
 
                 state["position"] = {
-                    "entry_date": pd.Timestamp(pos["EntryDate"]).date().isoformat(),
+                    "entry_date": entry_date.date().isoformat(),
                     "entry_price": round(number=entry_px, ndigits=2),
                     "today_price": round(number=today_px, ndigits=2),
                     "days_in_trade": int(pos.get("Days", 0)),
@@ -276,6 +290,21 @@ def _build_snapshot(
                     "binding_stop": binding,
                     "stop_gap_pct": round(number=(binding - today_px) / today_px * 100.0, ndigits=2),
                 }
+                if display_df is not None:
+                    original_prices = display_df["ZamkniecieOriginalCurrency"].dropna()
+                    state["position"].update(
+                        {
+                            "currency": display_df.attrs.get("currency"),
+                            "entry_price_original_currency": round(
+                                number=_value_at_date(original_prices, entry_date),
+                                ndigits=2,
+                            ),
+                            "today_price_original_currency": round(
+                                number=float(original_prices.iloc[-1]),
+                                ndigits=2,
+                            ),
+                        },
+                    )
             else:
                 state["position"] = None
         else:
@@ -349,6 +378,16 @@ def _build_status_text(snap: dict, action: str, asset_keys: list) -> str:
         par = state.get("params", {})
 
         if pos:
+            entry_price_text = (
+                f"{pos['entry_price']} PLN ({pos['entry_price_original_currency']} {pos['currency']})"
+                if pos.get("currency")
+                else str(pos["entry_price"])
+            )
+            today_price_text = (
+                f"{pos['today_price']} PLN ({pos['today_price_original_currency']} {pos['currency']})"
+                if pos.get("currency")
+                else str(pos["today_price"])
+            )
             if par.get("use_atr_stop"):
                 trail_str = f"  Trail stop:     {pos['trail_stop']}  (peak {pos['peak_price']} × (1 - {par.get('stop_param', 0):.2f}[N_atr] × {state.get('atr_val', 0.0):.2f}%[ATR]))"
             else:
@@ -356,8 +395,8 @@ def _build_status_text(snap: dict, action: str, asset_keys: list) -> str:
 
             lines += [
                 f"  Entry date:     {pos['entry_date']}",
-                f"  Entry price:    {pos['entry_price']}",
-                f"  Today price:    {pos['today_price']}",
+                f"  Entry price:    {entry_price_text}",
+                f"  Today price:    {today_price_text}",
                 f"  Days in trade:  {pos['days_in_trade']}",
                 f"  Unrealised:     {pos['unrealised_pct']:+.2f}%",
                 trail_str,
@@ -409,6 +448,12 @@ def _build_log_row(snap: dict, action: str, asset_keys: list) -> dict:
         if pos:
             row[f"{k}_entry_date"] = pos["entry_date"]
             row[f"{k}_unrealised_pct"] = pos["unrealised_pct"]
+            if pos.get("currency"):
+                row[f"{k}_entry_price_pln"] = pos["entry_price"]
+                row[f"{k}_today_price_pln"] = pos["today_price"]
+                row[f"{k}_entry_price_original_currency"] = pos["entry_price_original_currency"]
+                row[f"{k}_today_price_original_currency"] = pos["today_price_original_currency"]
+                row[f"{k}_currency"] = pos["currency"]
         else:
             row[f"{k}_entry_date"] = None
             row[f"{k}_unrealised_pct"] = None
@@ -544,6 +589,7 @@ def build_daily_outputs(
     run_date: dt.date | None = None,
     gdrive_folder_id: str | None = None,
     gdrive_credentials: str | None = None,
+    display_price_df_dict: dict | None = None,
 ) -> dict:
 
     if run_date is None:
@@ -583,6 +629,7 @@ def build_daily_outputs(
         portfolio_mode=portfolio_mode,
         fx_hedged=fx_hedged,
         run_date=run_date,
+        display_price_df_dict=display_price_df_dict,
     )
 
     prev_log = load_existing_log(log_path=log_path)

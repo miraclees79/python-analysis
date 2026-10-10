@@ -33,6 +33,8 @@ class AssetSpec:
     fx_series: pd.Series | None
     hedged: bool
     is_crypto: bool = False
+    currency: str | None = None
+    unhedged: bool = False
 
     @property
     def asset_class(self) -> str:
@@ -189,9 +191,56 @@ def build_global_assets(
             fx_series=fx_series,
             hedged=hedged,
             is_crypto=spec.get("is_crypto", False),
+            currency=fx_currency,
+            unhedged=spec["hedge"] == "never",
         )
 
     return assets
+
+
+def build_display_price_df(spec: AssetSpec) -> pd.DataFrame | None:
+    """Return source prices in PLN plus original-currency closes for reporting."""
+    if not spec.unhedged or spec.fx_series is None or spec.currency is None:
+        return None
+
+    source = spec.price_df.sort_index()
+    fx = spec.fx_series.sort_index().reindex(source.index, method="ffill")
+    display = pd.DataFrame(index=source.index)
+
+    for column in (CLOSE_COL, "Najwyzszy", "Najnizszy"):
+        if column not in source:
+            continue
+        original_column = f"{column}OriginalCurrency"
+        pln_column = f"{column}PLN"
+        display[original_column] = source[column]
+        display[pln_column] = source[column] * fx
+        display[column] = display[pln_column]
+
+    display.attrs["currency"] = spec.currency
+    return display
+
+
+def convert_trade_prices_for_display(trades: pd.DataFrame, spec: AssetSpec) -> pd.DataFrame:
+    """Copy trades and express unhedged entry/exit prices in PLN for display."""
+    display_prices = build_display_price_df(spec=spec)
+    if trades.empty or display_prices is None:
+        return trades.copy()
+
+    converted = trades.copy()
+    for trade_column, date_column, display_column, memo_column in (
+        ("EntryPrice", "EntryDate", "ZamknieciePLN", "Memo EntryPriceOriginalCurrency"),
+        ("ExitPrice", "ExitDate", "ZamknieciePLN", "Memo ExitPriceOriginalCurrency"),
+    ):
+        dates = pd.DatetimeIndex(pd.to_datetime(converted[date_column]))
+        pln_prices = display_prices[display_column].reindex(dates, method="ffill").to_numpy()
+        original_prices = display_prices["ZamkniecieOriginalCurrency"].reindex(
+            dates,
+            method="ffill",
+        ).to_numpy()
+        converted[memo_column] = original_prices
+        converted[trade_column] = pln_prices
+
+    return converted
 
 
 def prepare_asset_series(
