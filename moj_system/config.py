@@ -270,7 +270,7 @@ ASSET_REGISTRY = {
         "crypto_data_start": "2013-01-01",
         "fx_hedged": True,
         "default_stop_eq": "atr",
-        "asset_caps": {"WIG": 1.0, "MSCI_World": 1.0, "TBSP": 1.0, "BTC": 0.20},
+        "asset_caps": {"WIG": 1.0, "MSCI_World": 1.0, "TBSP": 1.0, "BTC": 1.00},
         "min_delta": 0.05,
         "delta_tol": 1e-9,
     },
