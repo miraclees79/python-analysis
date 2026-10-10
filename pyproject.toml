@@ -1,6 +1,6 @@
 [tool.ruff]
-# Celujemy w Pythona 3.11
-target-version = "py311"
+# Celujemy w Pythona 3.13
+target-version = "py313"
 line-length = 110
 
 [tool.ruff.lint]

@@ -1,9 +1,9 @@
 # --- CORE DATA & ANALYSIS ---
 pandas==2.2.3
-numpy<2.0.0
+numpy>=1.26.4,<2.5
 joblib>=1.3.0
 rapidfuzz>=3.0.0
-numba>=0.59.0 
+numba>=0.65.1,<0.66
 
 # --- DATA ACQUISITION & EXTERNAL APIS ---
 requests>=2.31.0
