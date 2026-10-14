@@ -312,8 +312,8 @@ def run_portfolio_block_bootstrap(
         delayed(_run_bootstrap_sample)(
             sample=sample_offset + sample,
             seed=seed + sample_offset + sample,
-            frames={name: frame.loc[common_index] for name, frame in frames.items()},
-            cash_df=cash_df.loc[common_index],
+            frames={name: frame.reindex(common_index) for name, frame in frames.items()},
+            cash_df=cash_df.reindex(common_index),
             block_size=block_size,
             runner=runner,
         )
@@ -339,6 +339,7 @@ def analyze_portfolio_robustness(
         "metrics": {},
     }
     failures: list[str] = []
+    criteria: list[tuple[bool, str]] = []
     metric_summary = summary["metrics"]
     if not isinstance(metric_summary, dict):
         raise TypeError("Internal portfolio summary has an invalid metrics container.")
@@ -348,6 +349,7 @@ def analyze_portfolio_robustness(
             continue
         if metric not in results_df.columns:
             failures.append(f"Missing portfolio metric: {metric}")
+            criteria.append((False, f"Missing portfolio metric: {metric}"))
             continue
         values = results_df[metric]
         metric_summary[metric] = {
@@ -358,15 +360,42 @@ def analyze_portfolio_robustness(
             "p95": float(values.quantile(0.95)),
         }
         p05_min = config.get("p05_min")
-        if p05_min is not None and float(values.quantile(0.05)) < p05_min:
-            failures.append(f"{metric} p05 below {p05_min}")
+        if p05_min is not None:
+            p05 = float(values.quantile(0.05))
+            passed = p05 >= p05_min
+            criterion = str(config.get("label", f"{metric} p05 >= {p05_min}"))
+            value_text = f"{p05:.2%}" if metric in {"CAGR", "MaxDD"} else f"{p05:.3f}"
+            threshold_text = (
+                f"{p05_min:.2%}"
+                if metric in {"CAGR", "MaxDD"}
+                else f"{p05_min:.3f}"
+            )
+            criteria.append(
+                (passed, f"{criterion} (p05={value_text}; threshold={threshold_text})")
+            )
+            if not passed:
+                failures.append(f"{metric} p05 below {p05_min}")
 
-    if "p_loss" in thresholds and "CAGR" in results_df.columns:
-        p_loss = float((results_df["CAGR"] < 0.0).mean())
-        metric_summary["p_loss"] = p_loss
-        p_loss_max = thresholds["p_loss"].get("max")
-        if p_loss_max is not None and p_loss > p_loss_max:
-            failures.append(f"p_loss above {p_loss_max}")
+    if "p_loss" in thresholds:
+        p_loss_config = thresholds["p_loss"]
+        criterion = str(p_loss_config.get("label", "P(CAGR < 0)"))
+        p_loss_max = p_loss_config.get("max")
+        if "CAGR" not in results_df.columns:
+            failures.append("Missing portfolio metric: CAGR (required for p_loss)")
+            criteria.append((False, f"{criterion} (cannot calculate: missing CAGR)"))
+        else:
+            p_loss = float((results_df["CAGR"] < 0.0).mean())
+            metric_summary["p_loss"] = p_loss
+            if p_loss_max is not None:
+                passed = p_loss <= p_loss_max
+                criteria.append(
+                    (
+                        passed,
+                        f"{criterion} (value={p_loss:.2%}; threshold={p_loss_max:.2%})",
+                    )
+                )
+                if not passed:
+                    failures.append(f"p_loss above {p_loss_max}")
 
     summary["failures"] = failures
     summary["verdict"] = "FRAGILE" if failures else "ROBUST"
@@ -376,6 +405,13 @@ def analyze_portfolio_robustness(
         summary["verdict"],
         len(results_df),
     )
+    for passed, criterion in criteria:
+        logging.info(
+            "%s portfolio criterion: %s %s",
+            label,
+            "PASS" if passed else "FAIL",
+            criterion,
+        )
     for failure in failures:
         logging.info("%s portfolio failure: %s", label, failure)
     return summary

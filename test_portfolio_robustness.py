@@ -5,11 +5,14 @@ import unittest
 import numpy as np
 import pandas as pd
 
+from moj_system.config import PORTFOLIO_THRESHOLDS_MC
 from moj_system.core.portfolio_robustness import (
     PortfolioLeg,
+    analyze_portfolio_robustness,
     add_ohlc_columns_for_context,
     bootstrap_joint_ohlc_panel,
     build_portfolio_parameter_grids,
+    run_portfolio_block_bootstrap,
     run_portfolio_monte_carlo,
     sample_portfolio_parameter_universe,
 )
@@ -104,6 +107,56 @@ class PortfolioRobustnessTests(unittest.TestCase):
         self.assertIn("Najwyzszy", synthetic["PL10Y"].columns)
         self.assertIn("Najnizszy", synthetic["PL10Y"].columns)
         self.assert_index_equal(synthetic["PL10Y"].index, index)
+
+    def test_portfolio_bootstrap_handles_different_source_calendars(self) -> None:
+        dates = pd.date_range("2020-01-06", periods=7, freq="B")
+        frames = {
+            "A": _ohlc_frame(dates[:6], 0.0),
+            "B": _ohlc_frame(dates[1:], 50.0),
+        }
+        cash = _ohlc_frame(dates[::2], 100.0)
+
+        def runner(
+            sampled_frames: dict[str, pd.DataFrame],
+            sampled_cash: pd.DataFrame,
+        ) -> pd.Series:
+            index = sampled_frames["A"].index
+            return pd.Series(np.linspace(1.0, 1.05, len(index)), index=index)
+
+        results = run_portfolio_block_bootstrap(
+            frames=frames,
+            cash_df=cash,
+            runner=runner,
+            n_samples=1,
+            block_size=2,
+            n_jobs=1,
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertIn("MaxDD", results.columns)
+
+    def test_portfolio_robustness_logs_every_configured_criterion(self) -> None:
+        results = pd.DataFrame(
+            {
+                "CAGR": [0.01, 0.02, 0.03],
+                "Sharpe": [0.1, 0.2, 0.3],
+                "MaxDD": [-0.30, -0.25, -0.22],
+            },
+        )
+
+        with self.assertLogs(level="INFO") as captured:
+            summary = analyze_portfolio_robustness(
+                results_df=results,
+                baseline_metrics={},
+                thresholds=PORTFOLIO_THRESHOLDS_MC,
+                label="TEST PORTFOLIO MC",
+            )
+
+        report = "\n".join(captured.output)
+        self.assertEqual(summary["verdict"], "FRAGILE")
+        self.assertIn("PASS portfolio p05 CAGR > 0%", report)
+        self.assertIn("PASS portfolio p05 Sharpe > 0", report)
+        self.assertIn("FAIL portfolio p05 MaxDD > -20%", report)
 
     def test_monte_carlo_runs_end_to_end_callback(self) -> None:
         index = pd.date_range("2020-01-01", periods=10, freq="B")
