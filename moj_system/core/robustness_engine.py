@@ -240,8 +240,7 @@ def run_universe(
             fund_signal=fund_signal,
             entry_gate=(
                 entry_gate_series.loc[
-                    (entry_gate_series.index >= warmup_start)
-                    & (entry_gate_series.index < test_end)
+                    (entry_gate_series.index >= warmup_start) & (entry_gate_series.index < test_end)
                 ]
                 if entry_gate_series is not None
                 else None

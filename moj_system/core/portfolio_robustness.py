@@ -70,8 +70,7 @@ def sample_portfolio_parameter_universe(
     universe: ParameterUniverses = {}
     for leg_name, window_grids in grids.items():
         universe[leg_name] = {
-            window_id: dict(rng.choice(list(variants)))
-            for window_id, variants in window_grids.items()
+            window_id: dict(rng.choice(list(variants))) for window_id, variants in window_grids.items()
         }
     return universe
 
@@ -231,10 +230,7 @@ def bootstrap_joint_ohlc_panel(
     intraday geometry while keeping prices continuous at block boundaries.
     """
     common_index = _validate_bootstrap_frames(frames, cash_df, price_col)
-    aligned_frames = {
-        name: frame.reindex(common_index).ffill()
-        for name, frame in frames.items()
-    }
+    aligned_frames = {name: frame.reindex(common_index).ffill() for name, frame in frames.items()}
     aligned_cash = cash_df.reindex(common_index).ffill()
     valid_mask = pd.Series(True, index=common_index)
     for frame in [*aligned_frames.values(), aligned_cash]:

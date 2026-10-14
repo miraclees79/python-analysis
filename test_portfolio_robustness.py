@@ -58,12 +58,12 @@ class PortfolioRobustnessTests(unittest.TestCase):
         pd.testing.assert_frame_equal(first[0]["B"], second[0]["B"])
         pd.testing.assert_frame_equal(first[1], second[1])
         self.assert_index_equal(first[0]["A"].index, index)
-        a_range_ratio = (
-            first[0]["A"]["Najwyzszy"] - first[0]["A"]["Najnizszy"]
-        ) / first[0]["A"]["Zamkniecie"]
-        b_range_ratio = (
-            first[0]["B"]["Najwyzszy"] - first[0]["B"]["Najnizszy"]
-        ) / first[0]["B"]["Zamkniecie"]
+        a_range_ratio = (first[0]["A"]["Najwyzszy"] - first[0]["A"]["Najnizszy"]) / first[0]["A"][
+            "Zamkniecie"
+        ]
+        b_range_ratio = (first[0]["B"]["Najwyzszy"] - first[0]["B"]["Najnizszy"]) / first[0]["B"][
+            "Zamkniecie"
+        ]
         pd.testing.assert_series_equal(a_range_ratio, b_range_ratio)
 
     def test_parameter_universe_contains_all_legs(self) -> None:
