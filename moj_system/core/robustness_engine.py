@@ -181,6 +181,7 @@ def run_universe(
     selected_mode: str,
     funds_df: pd.DataFrame | None = None,
     price_col: str = "Zamkniecie",
+    entry_gate_series: pd.Series | None = None,
 ) -> tuple[pd.Series | None, list[dict]]:
     """
     Stitch the full OOS equity curve using perturbed params — no retraining.
@@ -237,6 +238,14 @@ def run_universe(
             initial_state=carry_state,
             warmup_df=warmup_slice if len(warmup_slice) > 0 else None,
             fund_signal=fund_signal,
+            entry_gate=(
+                entry_gate_series.loc[
+                    (entry_gate_series.index >= warmup_start)
+                    & (entry_gate_series.index < test_end)
+                ]
+                if entry_gate_series is not None
+                else None
+            ),
             price_col=price_col,
             # ATR stop parameters — forwarded from the perturbed param dict
             use_atr_stop=params.get("use_atr_stop", False),

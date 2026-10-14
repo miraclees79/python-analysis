@@ -117,6 +117,19 @@ CRYPTO_THRESHOLDS_BOOTSTRAP = {
     "p_loss": {"max": 0.20, "label": "P(CAGR < 0) < 20%"},
 }
 
+PORTFOLIO_THRESHOLDS_MC = {
+    "CAGR": {"p05_min": 0.00, "label": "portfolio p05 CAGR > 0%"},
+    "Sharpe": {"p05_min": 0.00, "label": "portfolio p05 Sharpe > 0"},
+    "MaxDD": {"p05_min": -0.20, "label": "portfolio p05 MaxDD > -20%"},
+}
+
+PORTFOLIO_THRESHOLDS_BOOTSTRAP = {
+    "CAGR": {"p05_min": -0.01, "label": "portfolio p05 CAGR > -1%"},
+    "Sharpe": {"p05_min": -0.10, "label": "portfolio p05 Sharpe > -0.10"},
+    "MaxDD": {"p05_min": -0.25, "label": "portfolio p05 MaxDD > -25%"},
+    "p_loss": {"max": 0.20, "label": "portfolio P(CAGR < 0) < 20%"},
+}
+
 THRESHOLDS_MC: dict[str, dict[str, Any]] = {
     "EQUITY": EQUITY_THRESHOLDS_MC,
     "BOND": BOND_THRESHOLDS_MC,

@@ -2,6 +2,7 @@
 .spyproject/
 .ipynb_checkpoints/
 .continue/
+.vscode/
 
 # Python / Runtime
 __pycache__/

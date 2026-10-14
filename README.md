@@ -59,6 +59,28 @@ The following consolidation work was completed. All changes preserve backward-co
 
 Walk-forward OOS → Monte Carlo parameter perturbation → block bootstrap → assessment of investment results → deployment. Each gate must be passed sequentially.
 
+Portfolio-level robustness is available as a separate diagnostic path through
+`RobustnessEngine.run_portfolio_mc_test()` and
+`RobustnessEngine.run_portfolio_bootstrap_test()`. The existing component-level
+path is unchanged. Portfolio MC samples a complete parameter universe across
+all legs and delegates the end-to-end simulation to the existing allocation
+engine. Portfolio bootstrap samples common full-OHLC blocks for all legs and
+cash, preserving cross-asset timing and supporting ATR calculations. Both
+methods accept `sample_offset`, so GitHub Actions shards can run disjoint
+sample ranges and merge their CSV outputs without changing the random
+sequence.
+
+The sharded validation runner writes portfolio samples separately as
+`shard_*_portfolio_mc_*.csv` and `shard_*_portfolio_bootstrap_*.csv`. Merge
+evaluates these files independently of the existing component-level shard
+files and emits a final portfolio verdict only after both portfolio paths
+have been combined.
+
+For the PENSION portfolio bootstrap, `PL10Y`, `DE10Y`, and optional `WIBOR1M`
+are included in the same joint time-block resampling panel. The bond spread
+and yield-momentum gates are rebuilt from those synthetic series for every
+sample.
+
 ---
 
 

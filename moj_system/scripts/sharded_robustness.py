@@ -37,6 +37,8 @@ from moj_system.config import (
     EQUITY_THRESHOLDS_MC,
     GRID_SETS,
     OUTPUT_DIR,
+    PORTFOLIO_THRESHOLDS_BOOTSTRAP,
+    PORTFOLIO_THRESHOLDS_MC,
     THRESHOLDS_BOOTSTRAP,
     THRESHOLDS_MC,
 )
@@ -51,6 +53,10 @@ from moj_system.core.pension_engine import (
     build_signal_series,
     build_standard_two_asset_data,
     print_allocation_robustness_report,
+)
+from moj_system.core.portfolio_robustness import (
+    analyze_portfolio_robustness,
+    combine_portfolio_verdicts,
 )
 from moj_system.core.robustness_engine import (
     analyze_bootstrap,
@@ -78,6 +84,7 @@ from moj_system.core.utils import build_mmf_extended
 from moj_system.data.builder import build_and_upload
 from moj_system.data.data_manager import load_local_csv
 from moj_system.data.updater import DataUpdater
+from moj_system.scripts.validate_robustness import ValidationManager
 
 # =========================================================================
 # CUSTOM SHARDED BOOTSTRAP LOGIC
@@ -618,6 +625,64 @@ class ShardedValidationManager:
             wf_results_bd=wf_bd_res,
         )
 
+        portfolio_manager = ValidationManager(
+            n_mc=self.n_mc if self.run_mode == "worker" else 0,
+            n_boot=self.n_boot if self.run_mode == "worker" else 0,
+            run_weights_perturb=False,
+        )
+        portfolio_results = portfolio_manager._run_pension_portfolio_robustness(
+            wig=wig_df,
+            tbsp=tbsp_df,
+            cash=derived["mmf_ext"],
+            bond_gate=derived["bond_gate"],
+            wf_eq=wf_eq,
+            wf_res_eq=wf_res_eq,
+            wf_res_bd=wf_bd_res,
+            ret_eq=derived["ret_eq"],
+            ret_bd=derived["ret_bd"],
+            ret_mmf=derived["ret_mmf"],
+            baseline_portfolio=port_eq,
+            train_y=train_y,
+            test_y=test_y,
+            use_atr_eq=use_atr_eq,
+            pl10y=pl10y_df,
+            de10y=de10y_df,
+            wibor1m=wibor1m_df,
+            sample_offset=self.shard_id * 10000,
+        )
+
+        if self.run_mode == "worker":
+            for kind, result in portfolio_results.items():
+                result.to_csv(
+                    path_or_buf=OUTPUT_DIR / f"shard_{self.shard_id}_portfolio_{kind}_PENSION.csv",
+                    index=False,
+                )
+            return
+
+        portfolio_summaries = []
+        for kind, thresholds in (
+            ("mc", PORTFOLIO_THRESHOLDS_MC),
+            ("bootstrap", PORTFOLIO_THRESHOLDS_BOOTSTRAP),
+        ):
+            files = list(OUTPUT_DIR.glob(pattern=f"shard_*_portfolio_{kind}_PENSION.csv"))
+            if files:
+                merged = pd.concat(
+                    objs=[pd.read_csv(filepath_or_buffer=file) for file in files],
+                    ignore_index=True,
+                )
+                summary = analyze_portfolio_robustness(
+                    results_df=merged,
+                    baseline_metrics=compute_metrics(equity=port_eq),
+                    thresholds=thresholds,
+                    label=f"PENSION PORTFOLIO {kind.upper()}",
+                )
+                portfolio_summaries.append(summary)
+        if portfolio_summaries:
+            logging.info(
+                "PENSION PORTFOLIO FINAL VERDICT: %s",
+                combine_portfolio_verdicts(portfolio_summaries),
+            )
+
         bh_wig, _ = compute_buy_and_hold(
             df=wig_df,
             price_col="Zamkniecie",
@@ -697,11 +762,15 @@ class ShardedValidationManager:
 
         rets_dict = {}
         sigs_full = {}
+        frames_dict = {}
+        wf_results_dict = {}
+        wf_configs = {}
 
         # 1. Equity Components
         for lbl, spec in assets.items():
             ret_s, proc_px = prepare_asset_series(label=lbl, spec=spec)
             rets_dict[lbl] = ret_s
+            frames_dict[lbl] = proc_px
             leg_train = resolve_train_years(cfg=cfg, spec=spec, default_train=train_y)
             leg_kwargs = wf_grid_kwargs(spec=spec, use_atr=use_atr)
 
@@ -716,6 +785,12 @@ class ShardedValidationManager:
                 **leg_kwargs,
             )
             sigs_full[lbl] = build_signal_series(wf_equity=wf_e, wf_trades=wf_t)
+            wf_results_dict[lbl] = wf_r
+            wf_configs[lbl] = {
+                **leg_kwargs,
+                "train_years": leg_train,
+                "use_atr_stop": use_atr,
+            }
 
             self.handle_mc(
                 asset_name=lbl,
@@ -767,6 +842,18 @@ class ShardedValidationManager:
         )
         rets_dict["TBSP"] = tbsp_df["Zamkniecie"].pct_change().dropna()
         sigs_full["TBSP"] = build_signal_series(wf_equity=wf_bd, wf_trades=wf_tr_bd)
+        frames_dict["TBSP"] = tbsp_df
+        wf_results_dict["TBSP"] = wf_res_bd
+        wf_configs["TBSP"] = {
+            "filter_modes_override": ["ma"],
+            "X_grid": BOND_GRIDS["X_GRID"],
+            "Y_grid": BOND_GRIDS["Y_GRID"],
+            "fast_grid": BOND_GRIDS["FAST_GRID"],
+            "slow_grid": BOND_GRIDS["SLOW_GRID"],
+            "use_atr_stop": False,
+            "entry_gate_series": derived["bond_gate"],
+            "train_years": train_y,
+        }
 
         self.handle_mc(
             asset_name="TBSP",
@@ -790,9 +877,6 @@ class ShardedValidationManager:
             entry_gate=derived["bond_gate"],
         )
 
-        if self.run_mode == "worker":
-            return
-
         # 3. Portfolio Allocation & Chart
         logging.info(
             msg="\n" + "-" * 60 + "\nRunning N-Asset allocation walk-forward...\n" + "-" * 60,
@@ -810,6 +894,59 @@ class ShardedValidationManager:
             min_delta=settings.min_delta,
             delta_tol=settings.delta_tol,
         )
+
+        portfolio_manager = ValidationManager(
+            n_mc=self.n_mc if self.run_mode == "worker" else 0,
+            n_boot=self.n_boot if self.run_mode == "worker" else 0,
+            run_weights_perturb=False,
+        )
+        portfolio_results = portfolio_manager._run_global_portfolio_robustness(
+            frames=frames_dict,
+            cash=mmf_ext,
+            wf_results=wf_results_dict,
+            wf_configs=wf_configs,
+            returns=rets_dict,
+            bond_gate=derived["bond_gate"],
+            asset_keys=list(rets_dict.keys()),
+            settings=settings,
+            train_y=train_y,
+            test_y=test_y,
+            baseline_portfolio=port_eq,
+            sample_offset=self.shard_id * 10000,
+        )
+
+        if self.run_mode == "worker":
+            for kind, result in portfolio_results.items():
+                result.to_csv(
+                    path_or_buf=OUTPUT_DIR / f"shard_{self.shard_id}_portfolio_{kind}_{variant}.csv",
+                    index=False,
+                )
+            return
+
+        portfolio_summaries = []
+        for kind, thresholds in (
+            ("mc", PORTFOLIO_THRESHOLDS_MC),
+            ("bootstrap", PORTFOLIO_THRESHOLDS_BOOTSTRAP),
+        ):
+            files = list(OUTPUT_DIR.glob(pattern=f"shard_*_portfolio_{kind}_{variant}.csv"))
+            if files:
+                merged = pd.concat(
+                    objs=[pd.read_csv(filepath_or_buffer=file) for file in files],
+                    ignore_index=True,
+                )
+                summary = analyze_portfolio_robustness(
+                    results_df=merged,
+                    baseline_metrics=compute_metrics(equity=port_eq),
+                    thresholds=thresholds,
+                    label=f"GLOBAL {variant} PORTFOLIO {kind.upper()}",
+                )
+                portfolio_summaries.append(summary)
+        if portfolio_summaries:
+            logging.info(
+                "GLOBAL %s PORTFOLIO FINAL VERDICT: %s",
+                variant,
+                combine_portfolio_verdicts(portfolio_summaries),
+            )
 
         bh_wig, _ = compute_buy_and_hold(
             df=wig_df,

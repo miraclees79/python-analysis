@@ -34,6 +34,8 @@ from moj_system.config import (
     EQUITY_THRESHOLDS_BOOTSTRAP,
     EQUITY_THRESHOLDS_MC,
     OUTPUT_DIR,
+    PORTFOLIO_THRESHOLDS_BOOTSTRAP,
+    PORTFOLIO_THRESHOLDS_MC,
     THRESHOLDS_BOOTSTRAP,
     THRESHOLDS_MC,
 )
@@ -49,8 +51,19 @@ from moj_system.core.pension_engine import (
     build_standard_two_asset_data,
     print_allocation_robustness_report,
 )
+from moj_system.core.portfolio_robustness import (
+    PortfolioLeg,
+    add_ohlc_columns_for_context,
+    analyze_portfolio_robustness,
+    combine_portfolio_verdicts,
+    run_parameterized_signals,
+)
 from moj_system.core.robustness import RobustnessEngine
-from moj_system.core.robustness_engine import analyze_bootstrap, analyze_robustness
+from moj_system.core.robustness_engine import (
+    analyze_bootstrap,
+    analyze_robustness,
+    extract_best_params_from_wf_results,
+)
 
 # --- CORE ENGINE IMPORTS ---
 from moj_system.core.strategy_engine import (
@@ -87,6 +100,293 @@ class ValidationManager:
         self.rob_engine = RobustnessEngine(n_jobs=get_n_jobs())
         self.creds_path = str(Path(tempfile.gettempdir()) / "credentials.json")
         self.folder_id = os.environ.get("GDRIVE_FOLDER_ID")
+
+    def _run_pension_portfolio_robustness(
+        self,
+        wig: pd.DataFrame,
+        tbsp: pd.DataFrame,
+        cash: pd.DataFrame,
+        bond_gate: pd.Series,
+        wf_eq: pd.Series,
+        wf_res_eq: pd.DataFrame,
+        wf_res_bd: pd.DataFrame,
+        ret_eq: pd.Series,
+        ret_bd: pd.Series,
+        ret_mmf: pd.Series,
+        baseline_portfolio: pd.Series,
+        train_y: int,
+        test_y: int,
+        use_atr_eq: bool,
+        pl10y: pd.DataFrame,
+        de10y: pd.DataFrame,
+        wibor1m: pd.DataFrame | None,
+        sample_offset: int = 0,
+    ) -> dict[str, pd.DataFrame]:
+        legs = [
+            PortfolioLeg(
+                name="WIG",
+                best_params=extract_best_params_from_wf_results(wf_res_eq),
+                frame=wig,
+            ),
+            PortfolioLeg(
+                name="TBSP",
+                best_params=extract_best_params_from_wf_results(wf_res_bd),
+                frame=tbsp,
+            ),
+        ]
+        wf_results = {"WIG": wf_res_eq, "TBSP": wf_res_bd}
+        entry_gates = {"TBSP": bond_gate}
+        results: dict[str, pd.DataFrame] = {}
+        summaries: list[dict[str, object]] = []
+
+        def allocate(signals: dict[str, pd.Series]) -> pd.Series:
+            equity, _, _, _ = allocation_walk_forward(
+                equity_returns=ret_eq,
+                bond_returns=ret_bd,
+                mmf_returns=ret_mmf,
+                sig_equity_full=signals["WIG"],
+                sig_bond_full=signals["TBSP"],
+                sig_equity_oos=signals["WIG"].loc[wf_eq.index.min() :],
+                sig_bond_oos=signals["TBSP"].loc[wf_eq.index.min() :],
+                wf_results_eq=wf_res_eq,
+                wf_results_bd=wf_res_bd,
+            )
+            return equity
+
+        def mc_runner(universe: dict[str, dict[int, dict]]) -> pd.Series:
+            signals = run_parameterized_signals(
+                universe=universe,
+                legs=legs,
+                wf_results=wf_results,
+                cash_df=cash,
+                entry_gates=entry_gates,
+            )
+            return allocate(signals)
+
+        if self.n_mc > 0:
+            mc_results = self.rob_engine.run_portfolio_mc_test(
+                legs=legs,
+                runner=mc_runner,
+                n_samples=self.n_mc,
+                sample_offset=sample_offset,
+            )
+            results["mc"] = mc_results
+            mc_summary = analyze_portfolio_robustness(
+                results_df=mc_results,
+                baseline_metrics=compute_metrics(equity=baseline_portfolio),
+                thresholds=PORTFOLIO_THRESHOLDS_MC,
+                label="PENSION PORTFOLIO MC",
+            )
+            summaries.append(mc_summary)
+
+        def bootstrap_runner(
+            frames: dict[str, pd.DataFrame],
+            synthetic_cash: pd.DataFrame,
+        ) -> pd.Series:
+            synthetic_derived = build_standard_two_asset_data(
+                wig=frames["WIG"],
+                tbsp=frames["TBSP"],
+                mmf=synthetic_cash,
+                wibor1m=frames["WIBOR1M"],
+                pl10y=frames["PL10Y"],
+                de10y=frames["DE10Y"],
+                mmf_floor=str(frames["WIG"].index.min().date()),
+            )
+            wf_eq_s, wf_res_eq_s, trades_eq_s = walk_forward(
+                df=frames["WIG"],
+                cash_df=synthetic_derived["mmf_ext"],
+                train_years=train_y,
+                test_years=test_y,
+                X_grid=BASE_GRIDS["X_GRID"],
+                Y_grid=BASE_GRIDS["Y_GRID"],
+                fast_grid=BASE_GRIDS["FAST_GRID"],
+                slow_grid=BASE_GRIDS["SLOW_GRID"],
+                use_atr_stop=use_atr_eq,
+                N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr_eq else None,
+                n_jobs=1,
+            )
+            wf_bd_s, wf_res_bd_s, trades_bd_s = walk_forward(
+                df=frames["TBSP"],
+                cash_df=synthetic_derived["mmf_ext"],
+                train_years=train_y,
+                test_years=test_y,
+                filter_modes_override=["ma"],
+                X_grid=BOND_GRIDS["X_GRID"],
+                Y_grid=BOND_GRIDS["Y_GRID"],
+                fast_grid=BOND_GRIDS["FAST_GRID"],
+                slow_grid=BOND_GRIDS["SLOW_GRID"],
+                n_jobs=1,
+                entry_gate_series=synthetic_derived["bond_gate"],
+            )
+            signals = {
+                "WIG": build_signal_series(wf_eq_s, trades_eq_s),
+                "TBSP": build_signal_series(wf_bd_s, trades_bd_s),
+            }
+            return allocation_walk_forward(
+                equity_returns=frames["WIG"]["Zamkniecie"].pct_change().dropna(),
+                bond_returns=frames["TBSP"]["Zamkniecie"].pct_change().dropna(),
+                mmf_returns=synthetic_derived["ret_mmf"],
+                sig_equity_full=signals["WIG"],
+                sig_bond_full=signals["TBSP"],
+                sig_equity_oos=signals["WIG"].loc[wf_eq_s.index.min() :],
+                sig_bond_oos=signals["TBSP"].loc[wf_eq_s.index.min() :],
+                wf_results_eq=wf_res_eq_s,
+                wf_results_bd=wf_res_bd_s,
+            )[0]
+
+        if self.n_boot > 0:
+            context_frames = {
+                "PL10Y": add_ohlc_columns_for_context(pl10y),
+                "DE10Y": add_ohlc_columns_for_context(de10y),
+            }
+            if wibor1m is not None:
+                context_frames["WIBOR1M"] = add_ohlc_columns_for_context(wibor1m)
+            bootstrap_results = self.rob_engine.run_portfolio_bootstrap_test(
+                frames={"WIG": wig, "TBSP": tbsp, **context_frames},
+                cash_df=cash,
+                runner=bootstrap_runner,
+                n_samples=self.n_boot,
+                sample_offset=sample_offset,
+            )
+            results["bootstrap"] = bootstrap_results
+            bootstrap_summary = analyze_portfolio_robustness(
+                results_df=bootstrap_results,
+                baseline_metrics=compute_metrics(equity=baseline_portfolio),
+                thresholds=PORTFOLIO_THRESHOLDS_BOOTSTRAP,
+                label="PENSION PORTFOLIO BOOTSTRAP",
+            )
+            summaries.append(bootstrap_summary)
+        if summaries:
+            logging.info("PENSION PORTFOLIO FINAL VERDICT: %s", combine_portfolio_verdicts(summaries))
+        return results
+
+    def _run_global_portfolio_robustness(
+        self,
+        frames: dict[str, pd.DataFrame],
+        cash: pd.DataFrame,
+        wf_results: dict[str, pd.DataFrame],
+        wf_configs: dict[str, dict[str, object]],
+        returns: dict[str, pd.Series],
+        bond_gate: pd.Series,
+        asset_keys: list[str],
+        settings: object,
+        train_y: int,
+        test_y: int,
+        baseline_portfolio: pd.Series,
+        sample_offset: int = 0,
+    ) -> dict[str, pd.DataFrame]:
+        legs = [
+            PortfolioLeg(
+                name=name,
+                best_params=extract_best_params_from_wf_results(wf_results[name]),
+                frame=frames[name],
+            )
+            for name in asset_keys
+        ]
+        entry_gates = {"TBSP": bond_gate}
+        results: dict[str, pd.DataFrame] = {}
+        summaries: list[dict[str, object]] = []
+
+        def allocate(
+            signal_map: dict[str, pd.Series],
+            return_map: dict[str, pd.Series],
+            cash_returns: pd.Series,
+            schedule: pd.DataFrame,
+        ) -> pd.Series:
+            equity, _, _, _ = allocation_walk_forward_n(
+                returns_dict=return_map,
+                signals_full_dict=signal_map,
+                signals_oos_dict=signal_map,
+                mmf_returns=cash_returns,
+                wf_results_ref=schedule,
+                asset_keys=asset_keys,
+                train_years=train_y,
+                asset_caps=settings.asset_caps,
+                optional_keys=settings.optional_keys,
+                min_delta=settings.min_delta,
+                delta_tol=settings.delta_tol,
+            )
+            return equity
+
+        def mc_runner(universe: dict[str, dict[int, dict]]) -> pd.Series:
+            parameterized = run_parameterized_signals(
+                universe=universe,
+                legs=legs,
+                wf_results=wf_results,
+                cash_df=cash,
+                entry_gates=entry_gates,
+            )
+            return allocate(
+                signal_map=parameterized,
+                return_map=returns,
+                cash_returns=cash["Zamkniecie"].pct_change().dropna(),
+                schedule=wf_results["TBSP"],
+            )
+
+        if self.n_mc > 0:
+            mc_results = self.rob_engine.run_portfolio_mc_test(
+                legs=legs,
+                runner=mc_runner,
+                n_samples=self.n_mc,
+                sample_offset=sample_offset,
+            )
+            results["mc"] = mc_results
+            mc_summary = analyze_portfolio_robustness(
+                results_df=mc_results,
+                baseline_metrics=compute_metrics(equity=baseline_portfolio),
+                thresholds=PORTFOLIO_THRESHOLDS_MC,
+                label="GLOBAL PORTFOLIO MC",
+            )
+            summaries.append(mc_summary)
+
+        def bootstrap_runner(
+            synthetic_frames: dict[str, pd.DataFrame],
+            synthetic_cash: pd.DataFrame,
+        ) -> pd.Series:
+            synthetic_returns: dict[str, pd.Series] = {}
+            synthetic_signals: dict[str, pd.Series] = {}
+            synthetic_schedule = pd.DataFrame()
+            for name in asset_keys:
+                config = dict(wf_configs[name])
+                leg_train = int(config.pop("train_years", train_y))
+                wf_equity, wf_result, wf_trades = walk_forward(
+                    df=synthetic_frames[name],
+                    cash_df=synthetic_cash,
+                    train_years=leg_train,
+                    test_years=test_y,
+                    n_jobs=1,
+                    **config,
+                )
+                if name == "TBSP":
+                    synthetic_schedule = wf_result
+                synthetic_signals[name] = build_signal_series(wf_equity, wf_trades)
+                synthetic_returns[name] = synthetic_frames[name]["Zamkniecie"].pct_change().dropna()
+            return allocate(
+                signal_map=synthetic_signals,
+                return_map=synthetic_returns,
+                cash_returns=synthetic_cash["Zamkniecie"].pct_change().dropna(),
+                schedule=synthetic_schedule,
+            )
+
+        if self.n_boot > 0:
+            bootstrap_results = self.rob_engine.run_portfolio_bootstrap_test(
+                frames=frames,
+                cash_df=cash,
+                runner=bootstrap_runner,
+                n_samples=self.n_boot,
+                sample_offset=sample_offset,
+            )
+            results["bootstrap"] = bootstrap_results
+            bootstrap_summary = analyze_portfolio_robustness(
+                results_df=bootstrap_results,
+                baseline_metrics=compute_metrics(equity=baseline_portfolio),
+                thresholds=PORTFOLIO_THRESHOLDS_BOOTSTRAP,
+                label="GLOBAL PORTFOLIO BOOTSTRAP",
+            )
+            summaries.append(bootstrap_summary)
+        if summaries:
+            logging.info("GLOBAL PORTFOLIO FINAL VERDICT: %s", combine_portfolio_verdicts(summaries))
+        return results
 
     def _save_validation_chart(
         self,
@@ -349,6 +649,26 @@ class ValidationManager:
             wf_results_bd=wf_bd_res,
         )
 
+        self._run_pension_portfolio_robustness(
+            wig=WIG,
+            tbsp=TBSP,
+            cash=derived["mmf_ext"],
+            bond_gate=derived["bond_gate"],
+            wf_eq=wf_eq,
+            wf_res_eq=wf_res_eq,
+            wf_res_bd=wf_bd_res,
+            ret_eq=derived["ret_eq"],
+            ret_bd=derived["ret_bd"],
+            ret_mmf=derived["ret_mmf"],
+            baseline_portfolio=port_eq,
+            train_y=train_y,
+            test_y=test_y,
+            use_atr_eq=use_atr_eq,
+            pl10y=PL10Y,
+            de10y=DE10Y,
+            wibor1m=WIBOR1M,
+        )
+
         bh_wig, _ = compute_buy_and_hold(
             df=WIG,
             price_col="Zamkniecie",
@@ -433,6 +753,9 @@ class ValidationManager:
         settings = get_allocation_settings(cfg=cfg, assets=assets)
 
         rets_dict, sigs_full = {}, {}
+        frames_dict: dict[str, pd.DataFrame] = {}
+        wf_results_dict: dict[str, pd.DataFrame] = {}
+        wf_configs: dict[str, dict[str, object]] = {}
 
         # 1. Equity Components Robustness (MC + Bootstrap)
         for lbl, spec in assets.items():
@@ -440,6 +763,7 @@ class ValidationManager:
 
             ret_s, proc_px = prepare_asset_series(label=lbl, spec=spec)
             rets_dict[lbl] = ret_s
+            frames_dict[lbl] = proc_px
             leg_train = resolve_train_years(cfg=cfg, spec=spec, default_train=train_y)
             leg_kwargs = wf_grid_kwargs(spec=spec, use_atr=use_atr)
 
@@ -454,6 +778,12 @@ class ValidationManager:
                 **leg_kwargs,
             )
             sigs_full[lbl] = build_signal_series(wf_equity=wf_e, wf_trades=wf_t)
+            wf_results_dict[lbl] = wf_r
+            wf_configs[lbl] = {
+                **leg_kwargs,
+                "train_years": leg_train,
+                "use_atr_stop": use_atr,
+            }
 
             if self.n_mc > 0:
                 mc_res = self.rob_engine.run_mc_test(
@@ -501,6 +831,18 @@ class ValidationManager:
         )
         rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
         sigs_full["TBSP"] = build_signal_series(wf_equity=wf_bd, wf_trades=wf_tr_bd)
+        frames_dict["TBSP"] = TBSP
+        wf_results_dict["TBSP"] = wf_res_bd
+        wf_configs["TBSP"] = {
+            "filter_modes_override": ["ma"],
+            "X_grid": BOND_GRIDS["X_GRID"],
+            "Y_grid": BOND_GRIDS["Y_GRID"],
+            "fast_grid": BOND_GRIDS["FAST_GRID"],
+            "slow_grid": BOND_GRIDS["SLOW_GRID"],
+            "use_atr_stop": False,
+            "entry_gate_series": derived["bond_gate"],
+            "train_years": train_y,
+        }
 
         if self.n_mc > 0:
             mc_bd = self.rob_engine.run_mc_test(
@@ -549,6 +891,20 @@ class ValidationManager:
             optional_keys=settings.optional_keys,
             min_delta=settings.min_delta,
             delta_tol=settings.delta_tol,
+        )
+
+        self._run_global_portfolio_robustness(
+            frames=frames_dict,
+            cash=mmf_ext,
+            wf_results=wf_results_dict,
+            wf_configs=wf_configs,
+            returns=rets_dict,
+            bond_gate=derived["bond_gate"],
+            asset_keys=list(rets_dict.keys()),
+            settings=settings,
+            train_y=train_y,
+            test_y=test_y,
+            baseline_portfolio=port_eq,
         )
 
         bh_wig, _ = compute_buy_and_hold(
