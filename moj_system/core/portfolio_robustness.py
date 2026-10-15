@@ -338,11 +338,32 @@ def analyze_portfolio_robustness(
         "n_valid": int(len(results_df)),
         "metrics": {},
     }
+    is_bootstrap = "p_loss" in thresholds
+    metrics_to_show = ("CAGR", "Vol", "Sharpe", "MaxDD", "CalMAR", "Sortino")
     failures: list[str] = []
     criteria: list[tuple[bool, str]] = []
     metric_summary = summary["metrics"]
     if not isinstance(metric_summary, dict):
         raise TypeError("Internal portfolio summary has an invalid metrics container.")
+
+    logging.info("=" * 96)
+    logging.info("%s ROBUSTNESS REPORT (n=%d samples)", label, len(results_df))
+    if is_bootstrap:
+        logging.info(
+            "Note: block reshuffling suppresses multi-year trends; interpret bootstrap percentiles accordingly.",
+        )
+    logging.info("=" * 96)
+    header = f"{'Metric':<10} {'Baseline':>10} {'Mean':>10} {'p05':>10} "
+    header += f"{'p25':>10} {'Median':>10} {'p75':>10} {'p95':>10} "
+    header += f"{'P(CAGR<0)' if is_bootstrap else 'P(worse)':>10}"
+    logging.info(header)
+    logging.info("-" * 96)
+
+    p_loss = (
+        float((results_df["CAGR"] < 0.0).mean())
+        if "p_loss" in thresholds and "CAGR" in results_df.columns
+        else float("nan")
+    )
 
     for metric, config in thresholds.items():
         if metric == "p_loss":
@@ -356,9 +377,31 @@ def analyze_portfolio_robustness(
             "baseline": float(baseline_metrics.get(metric, np.nan)),
             "mean": float(values.mean()),
             "p05": float(values.quantile(0.05)),
+            "p25": float(values.quantile(0.25)),
             "median": float(values.median()),
+            "p75": float(values.quantile(0.75)),
             "p95": float(values.quantile(0.95)),
         }
+        baseline = float(baseline_metrics.get(metric, np.nan))
+        p_worse = float((values < baseline).mean())
+        metric_summary[metric]["p_worse_than_baseline"] = p_worse
+        if metric in metrics_to_show:
+            def format_metric(value: float, metric_name: str = metric) -> str:
+                if metric_name in {"CAGR", "Vol", "MaxDD"}:
+                    return f"{value:.1%}"
+                return f"{value:.2f}"
+
+            comparison_value = f"{p_loss:.1%}" if is_bootstrap and metric == "CAGR" else (
+                f"{p_worse:.1%}" if not is_bootstrap else ""
+            )
+            logging.info(
+                f"{metric:<10} {format_metric(baseline):>10} {format_metric(float(values.mean())):>10} "
+                f"{format_metric(float(values.quantile(0.05))):>10} "
+                f"{format_metric(float(values.quantile(0.25))):>10} "
+                f"{format_metric(float(values.median())):>10} "
+                f"{format_metric(float(values.quantile(0.75))):>10} "
+                f"{format_metric(float(values.quantile(0.95))):>10} {comparison_value:>10}"
+            )
         p05_min = config.get("p05_min")
         if p05_min is not None:
             p05 = float(values.quantile(0.05))
@@ -384,7 +427,6 @@ def analyze_portfolio_robustness(
             failures.append("Missing portfolio metric: CAGR (required for p_loss)")
             criteria.append((False, f"{criterion} (cannot calculate: missing CAGR)"))
         else:
-            p_loss = float((results_df["CAGR"] < 0.0).mean())
             metric_summary["p_loss"] = p_loss
             if p_loss_max is not None:
                 passed = p_loss <= p_loss_max
@@ -396,6 +438,8 @@ def analyze_portfolio_robustness(
                 )
                 if not passed:
                     failures.append(f"p_loss above {p_loss_max}")
+
+    logging.info("-" * 96)
 
     summary["failures"] = failures
     summary["verdict"] = "FRAGILE" if failures else "ROBUST"
