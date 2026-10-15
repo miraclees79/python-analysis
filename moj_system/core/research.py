@@ -449,6 +449,8 @@ def get_current_adx_regime(
 def analyze_production_candidates(
     results_df: pd.DataFrame,
     require_bootstrap: bool = False,
+    require_portfolio_mc: bool = False,
+    require_portfolio_bootstrap: bool = False,
 ) -> pd.DataFrame:
     """
     Filters sweep results based on mandatory production gates and
@@ -472,6 +474,21 @@ def analyze_production_candidates(
     else:
         # Jeśli nie wymagamy Bootstrapa, sprawdzamy tylko MC
         mask_robust = mask_robust_mc
+
+    for required, column in (
+        (require_portfolio_mc, "Portfolio_MC_Verdict"),
+        (require_portfolio_bootstrap, "Portfolio_BB_Verdict"),
+    ):
+        if required:
+            if column in df.columns:
+                portfolio_pass = df[column].eq("ROBUST")
+            else:
+                portfolio_pass = pd.Series(False, index=df.index)
+            if "Strategy" in df.columns:
+                portfolio_rows = df["Strategy"].astype(str).str.startswith(("PENSION", "GLOBAL"))
+                mask_robust &= ~portfolio_rows | portfolio_pass
+            else:
+                mask_robust &= portfolio_pass
 
     # OOS CalMAR > B&H CalMAR
     mask_calmar = df["oos_calmar"] > df["bh_calmar"]

@@ -121,6 +121,7 @@ class ValidationManager:
         de10y: pd.DataFrame,
         wibor1m: pd.DataFrame | None,
         sample_offset: int = 0,
+        emit_report: bool = True,
     ) -> dict[str, pd.DataFrame]:
         legs = [
             PortfolioLeg(
@@ -171,23 +172,25 @@ class ValidationManager:
                 sample_offset=sample_offset,
             )
             results["mc"] = mc_results
-            mc_summary = analyze_portfolio_robustness(
-                results_df=mc_results,
-                baseline_metrics=compute_metrics(equity=baseline_portfolio),
-                thresholds=PORTFOLIO_THRESHOLDS_MC,
-                label="PENSION PORTFOLIO MC",
-            )
-            summaries.append(mc_summary)
+            if emit_report:
+                mc_summary = analyze_portfolio_robustness(
+                    results_df=mc_results,
+                    baseline_metrics=compute_metrics(equity=baseline_portfolio),
+                    thresholds=PORTFOLIO_THRESHOLDS_MC,
+                    label="PENSION PORTFOLIO MC",
+                )
+                summaries.append(mc_summary)
 
         def bootstrap_runner(
             frames: dict[str, pd.DataFrame],
             synthetic_cash: pd.DataFrame,
         ) -> pd.Series:
+            wibor1m_frame = frames.get("WIBOR1M")
             synthetic_derived = build_standard_two_asset_data(
                 wig=frames["WIG"],
                 tbsp=frames["TBSP"],
                 mmf=synthetic_cash,
-                wibor1m=frames["WIBOR1M"],
+                wibor1m=wibor1m_frame,
                 pl10y=frames["PL10Y"],
                 de10y=frames["DE10Y"],
                 mmf_floor=str(frames["WIG"].index.min().date()),
@@ -249,14 +252,15 @@ class ValidationManager:
                 sample_offset=sample_offset,
             )
             results["bootstrap"] = bootstrap_results
-            bootstrap_summary = analyze_portfolio_robustness(
-                results_df=bootstrap_results,
-                baseline_metrics=compute_metrics(equity=baseline_portfolio),
-                thresholds=PORTFOLIO_THRESHOLDS_BOOTSTRAP,
-                label="PENSION PORTFOLIO BOOTSTRAP",
-            )
-            summaries.append(bootstrap_summary)
-        if summaries:
+            if emit_report:
+                bootstrap_summary = analyze_portfolio_robustness(
+                    results_df=bootstrap_results,
+                    baseline_metrics=compute_metrics(equity=baseline_portfolio),
+                    thresholds=PORTFOLIO_THRESHOLDS_BOOTSTRAP,
+                    label="PENSION PORTFOLIO BOOTSTRAP",
+                )
+                summaries.append(bootstrap_summary)
+        if emit_report and summaries:
             logging.info("PENSION PORTFOLIO FINAL VERDICT: %s", combine_portfolio_verdicts(summaries))
         return results
 
@@ -274,6 +278,7 @@ class ValidationManager:
         test_y: int,
         baseline_portfolio: pd.Series,
         sample_offset: int = 0,
+        emit_report: bool = True,
     ) -> dict[str, pd.DataFrame]:
         legs = [
             PortfolioLeg(
@@ -331,13 +336,14 @@ class ValidationManager:
                 sample_offset=sample_offset,
             )
             results["mc"] = mc_results
-            mc_summary = analyze_portfolio_robustness(
-                results_df=mc_results,
-                baseline_metrics=compute_metrics(equity=baseline_portfolio),
-                thresholds=PORTFOLIO_THRESHOLDS_MC,
-                label="GLOBAL PORTFOLIO MC",
-            )
-            summaries.append(mc_summary)
+            if emit_report:
+                mc_summary = analyze_portfolio_robustness(
+                    results_df=mc_results,
+                    baseline_metrics=compute_metrics(equity=baseline_portfolio),
+                    thresholds=PORTFOLIO_THRESHOLDS_MC,
+                    label="GLOBAL PORTFOLIO MC",
+                )
+                summaries.append(mc_summary)
 
         def bootstrap_runner(
             synthetic_frames: dict[str, pd.DataFrame],
@@ -377,14 +383,15 @@ class ValidationManager:
                 sample_offset=sample_offset,
             )
             results["bootstrap"] = bootstrap_results
-            bootstrap_summary = analyze_portfolio_robustness(
-                results_df=bootstrap_results,
-                baseline_metrics=compute_metrics(equity=baseline_portfolio),
-                thresholds=PORTFOLIO_THRESHOLDS_BOOTSTRAP,
-                label="GLOBAL PORTFOLIO BOOTSTRAP",
-            )
-            summaries.append(bootstrap_summary)
-        if summaries:
+            if emit_report:
+                bootstrap_summary = analyze_portfolio_robustness(
+                    results_df=bootstrap_results,
+                    baseline_metrics=compute_metrics(equity=baseline_portfolio),
+                    thresholds=PORTFOLIO_THRESHOLDS_BOOTSTRAP,
+                    label="GLOBAL PORTFOLIO BOOTSTRAP",
+                )
+                summaries.append(bootstrap_summary)
+        if emit_report and summaries:
             logging.info("GLOBAL PORTFOLIO FINAL VERDICT: %s", combine_portfolio_verdicts(summaries))
         return results
 

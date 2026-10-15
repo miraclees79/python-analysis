@@ -28,12 +28,15 @@ matplotlib.use("Agg")
 from moj_system.config import (
     ASSET_REGISTRY,
     BASE_GRIDS,
+    BOND_GRIDS,
     BOND_THRESHOLDS_BOOTSTRAP,
     BOND_THRESHOLDS_MC,
     EQUITY_THRESHOLDS_BOOTSTRAP,
     EQUITY_THRESHOLDS_MC,
     GRID_SETS,
     OUTPUT_DIR,
+    PORTFOLIO_THRESHOLDS_BOOTSTRAP,
+    PORTFOLIO_THRESHOLDS_MC,
     SWEEP_WINDOW_CONFIGS,
     THRESHOLDS_BOOTSTRAP,
     THRESHOLDS_MC,
@@ -42,10 +45,12 @@ from moj_system.core.global_engine import (
     allocation_walk_forward_n,
 )
 from moj_system.core.pension_engine import (
+    StandardTwoAssetData,
     allocation_walk_forward,
     build_signal_series,
     build_standard_two_asset_data,
 )
+from moj_system.core.portfolio_robustness import analyze_portfolio_robustness
 from moj_system.core.research import (
     analyze_production_candidates,
     extract_flat_regime_stats,
@@ -69,11 +74,17 @@ from moj_system.core.universe import (
     get_allocation_settings,
     prepare_asset_series,
     resolve_train_years,
+    wf_grid_kwargs,
 )
 from moj_system.core.utils import build_mmf_extended
 from moj_system.data.builder import build_and_upload
 from moj_system.data.data_manager import load_local_csv
 from moj_system.data.updater import DataUpdater
+from moj_system.scripts.validate_robustness import ValidationManager
+
+GLOBAL_VARIANTS = tuple(
+    key for key, config in ASSET_REGISTRY.items() if config.get("type") == "portfolio_global"
+)
 
 # ==============================================================================
 # HELPER FUNCTIONS
@@ -243,10 +254,14 @@ class SweepManager:
         n_mc: int,
         n_boot: int,
         data_map: dict[str, pd.DataFrame],
+        n_mc_portfolio: int = 0,
+        n_boot_portfolio: int = 0,
     ) -> None:
 
         self.n_mc = n_mc
         self.n_boot = n_boot
+        self.n_mc_portfolio = n_mc_portfolio
+        self.n_boot_portfolio = n_boot_portfolio
         self.data_map = data_map
         self.rob_engine = RobustnessEngine(n_jobs=get_n_jobs())
         self.creds_path = str(Path(tempfile.gettempdir()) / "credentials.json")
@@ -255,6 +270,38 @@ class SweepManager:
         self.wf_cache = {}
         self.mc_cache = {}
         self.boot_cache = {}
+        self.portfolio_manager = ValidationManager(
+            n_mc=n_mc_portfolio,
+            n_boot=n_boot_portfolio,
+            run_weights_perturb=False,
+        )
+
+    @staticmethod
+    def _summarize_portfolio_tests(
+        results: dict[str, pd.DataFrame],
+        baseline_portfolio: pd.Series,
+        label: str,
+    ) -> dict[str, dict[str, Any]]:
+        summaries: dict[str, dict[str, Any]] = {}
+        baseline_metrics = compute_metrics(equity=baseline_portfolio)
+        for kind, thresholds in (
+            ("mc", PORTFOLIO_THRESHOLDS_MC),
+            ("bootstrap", PORTFOLIO_THRESHOLDS_BOOTSTRAP),
+        ):
+            if kind not in results:
+                continue
+            sample_results = results[kind]
+            if sample_results.empty:
+                logging.error("%s portfolio %s produced no valid samples.", label, kind.upper())
+                summaries[kind] = {"verdict": "FRAGILE", "metrics": {}}
+                continue
+            summaries[kind] = analyze_portfolio_robustness(
+                results_df=sample_results,
+                baseline_metrics=baseline_metrics,
+                thresholds=thresholds,
+                label=f"{label} PORTFOLIO {kind.upper()}",
+            )
+        return summaries
 
     def _create_portfolio_wf_results(
         self,
@@ -325,6 +372,8 @@ class SweepManager:
             f"test: {test_y}, stop type: {stop_type} ...",
         )
         cash_df = self.data_map.get("MMF_EXT")
+        if cash_df is None:
+            raise ValueError("Missing MMF_EXT data required for walk-forward validation.")
         grids = GRID_SETS[grid_type]
         use_atr = stop_type == "atr"
         crypto_extra: dict[str, Any] = (
@@ -457,7 +506,7 @@ class SweepManager:
         self.boot_cache[cache_key] = result
         return result
 
-    def _prepare_pension_data(self) -> dict[str, pd.DataFrame | pd.Series]:
+    def _prepare_pension_data(self) -> StandardTwoAssetData:
         return build_standard_two_asset_data(
             wig=self.data_map["WIG"],
             tbsp=self.data_map["TBSP"],
@@ -482,6 +531,7 @@ class SweepManager:
         bb_verdicts_dict: dict,
         alloc_df: pd.DataFrame | None = None,
         weights_series: pd.Series | None = None,
+        portfolio_summaries: dict[str, dict[str, Any]] | None = None,
     ) -> dict:
 
         # Przekazujemy wagi do ekstrakcji
@@ -518,6 +568,12 @@ class SweepManager:
             first_bb_key = list(bb_verdicts_dict.keys())[0]
             bb_p05 = bb_verdicts_dict[first_bb_key].get("CAGR", {}).get("p05", pd.NA)
 
+        portfolio_summaries = portfolio_summaries or {}
+        portfolio_mc = portfolio_summaries.get("mc", {})
+        portfolio_bootstrap = portfolio_summaries.get("bootstrap", {})
+        portfolio_mc_metrics = portfolio_mc.get("metrics", {})
+        portfolio_boot_metrics = portfolio_bootstrap.get("metrics", {})
+
         return {
             "Strategy": strat_name,
             "train_years": train_y,
@@ -539,6 +595,15 @@ class SweepManager:
             "MC_p05_CAGR": mc_p05,
             "BB_Verdict": bb_verdict,
             "BB_p05_CAGR": bb_p05,
+            "Portfolio_MC_Verdict": portfolio_mc.get("verdict", "N/A"),
+            "Portfolio_MC_p05_CAGR": portfolio_mc_metrics.get("CAGR", {}).get("p05", pd.NA),
+            "Portfolio_MC_p05_Sharpe": portfolio_mc_metrics.get("Sharpe", {}).get("p05", pd.NA),
+            "Portfolio_MC_p05_MaxDD": portfolio_mc_metrics.get("MaxDD", {}).get("p05", pd.NA),
+            "Portfolio_BB_Verdict": portfolio_bootstrap.get("verdict", "N/A"),
+            "Portfolio_BB_p05_CAGR": portfolio_boot_metrics.get("CAGR", {}).get("p05", pd.NA),
+            "Portfolio_BB_p05_Sharpe": portfolio_boot_metrics.get("Sharpe", {}).get("p05", pd.NA),
+            "Portfolio_BB_p05_MaxDD": portfolio_boot_metrics.get("MaxDD", {}).get("p05", pd.NA),
+            "Portfolio_BB_p_loss": portfolio_boot_metrics.get("p_loss", pd.NA),
             **win_stats,
             **regime_metrics,
         }
@@ -650,6 +715,8 @@ class SweepManager:
         WIG = self.data_map.get("WIG")
         TBSP = self.data_map.get("TBSP")
         MMF_EXT = self.data_map.get("MMF_EXT")
+        if WIG is None or TBSP is None or MMF_EXT is None:
+            raise ValueError("PENSION sweep requires WIG, TBSP, and MMF_EXT data.")
 
         derived = self._prepare_pension_data()
 
@@ -774,6 +841,33 @@ class SweepManager:
             regime_metrics = extract_flat_regime_stats({})
 
         portfolio_wf_res = self._create_portfolio_wf_results(wf_results_ref=wf_res_eq, port_eq=port_eq)
+        portfolio_summaries: dict[str, dict[str, Any]] = {}
+        if self.n_mc_portfolio > 0 or self.n_boot_portfolio > 0:
+            portfolio_results = self.portfolio_manager._run_pension_portfolio_robustness(
+                wig=WIG,
+                tbsp=TBSP,
+                cash=MMF_EXT,
+                bond_gate=derived["bond_gate"],
+                wf_eq=wf_eq,
+                wf_res_eq=wf_res_eq,
+                wf_res_bd=wf_res_bd,
+                ret_eq=derived["ret_eq"],
+                ret_bd=derived["ret_bd"],
+                ret_mmf=derived["ret_mmf"],
+                baseline_portfolio=port_eq,
+                train_y=train_y,
+                test_y=test_y,
+                use_atr_eq=stop_type_eq == "atr",
+                pl10y=self.data_map["PL10Y"],
+                de10y=self.data_map["DE10Y"],
+                wibor1m=self.data_map.get("WIBOR1M"),
+                emit_report=False,
+            )
+            portfolio_summaries = self._summarize_portfolio_tests(
+                results=portfolio_results,
+                baseline_portfolio=port_eq,
+                label="PENSION",
+            )
 
         return self._compile_full_result(
             strat_name="PENSION",
@@ -788,6 +882,7 @@ class SweepManager:
             bb_verdicts_dict=bb_res,
             alloc_df=alloc_df,
             weights_series=port_wgts,
+            portfolio_summaries=portfolio_summaries,
         )
 
     def run_global_iteration(
@@ -805,8 +900,14 @@ class SweepManager:
         WIG = self.data_map.get("WIG")
         MMF_EXT = self.data_map.get("MMF_EXT")
         TBSP = self.data_map.get("TBSP")
+        if WIG is None or MMF_EXT is None or TBSP is None:
+            raise ValueError("GLOBAL sweep requires WIG, TBSP, and MMF_EXT data.")
         derived = self._prepare_pension_data()
-        fx_map = {c: self.data_map.get(f"{c}PLN")["Zamkniecie"] for c in ["USD", "EUR", "JPY"]}
+        fx_map = {}
+        for currency in ("USD", "EUR", "JPY"):
+            fx_frame = self.data_map.get(f"{currency}PLN")
+            if fx_frame is not None:
+                fx_map[currency] = fx_frame["Zamkniecie"]
         assets = build_global_assets(
             wig_df=WIG,
             fx_map=fx_map,
@@ -820,11 +921,13 @@ class SweepManager:
         settings = get_allocation_settings(cfg=cfg, assets=assets)
 
         rets_dict, sigs_full, mc_res, bb_res = {}, {}, {}, {}
+        frames_dict, wf_results_dict, wf_configs = {}, {}, {}
 
         for lbl, spec in assets.items():
             ret_s, proc_px = prepare_asset_series(label=lbl, spec=spec)
             rets_dict[lbl] = ret_s
             leg_train = resolve_train_years(cfg=cfg, spec=spec, default_train=train_y)
+            leg_kwargs = wf_grid_kwargs(spec=spec, use_atr=stop_type_eq == "atr")
 
             # POPRAWKA: Dodano df=proc_px i jawne nazewnictwo
             wf_e, wf_r, wf_t = self.get_cached_wf(
@@ -837,6 +940,13 @@ class SweepManager:
             )
 
             sigs_full[lbl] = build_signal_series(wf_equity=wf_e, wf_trades=wf_t)
+            frames_dict[lbl] = proc_px
+            wf_results_dict[lbl] = wf_r
+            wf_configs[lbl] = {
+                **leg_kwargs,
+                "train_years": leg_train,
+                "use_atr_stop": stop_type_eq == "atr",
+            }
 
             # MC & Boot (Global components)
             if self.n_mc > 0:
@@ -878,6 +988,20 @@ class SweepManager:
             grid_type="BOND",
             entry_gate=derived["bond_gate"],
         )
+        rets_dict["TBSP"] = TBSP["Zamkniecie"].pct_change().dropna()
+        sigs_full["TBSP"] = build_signal_series(wf_equity=wf_bd_e, wf_trades=wf_bd_t)
+        frames_dict["TBSP"] = TBSP
+        wf_results_dict["TBSP"] = wf_bd_r
+        wf_configs["TBSP"] = {
+            "filter_modes_override": ["ma"],
+            "X_grid": BOND_GRIDS["X_GRID"],
+            "Y_grid": BOND_GRIDS["Y_GRID"],
+            "fast_grid": BOND_GRIDS["FAST_GRID"],
+            "slow_grid": BOND_GRIDS["SLOW_GRID"],
+            "use_atr_stop": False,
+            "entry_gate_series": derived["bond_gate"],
+            "train_years": train_y,
+        }
         if self.n_mc > 0:
             mc_res["TBSP"] = self.get_cached_mc(
                 asset_name="TBSP",
@@ -977,6 +1101,27 @@ class SweepManager:
         portfolio_wf_res = self._create_portfolio_wf_results(
             wf_results_ref=portfolio_wf_results, port_eq=port_eq
         )
+        portfolio_summaries: dict[str, dict[str, Any]] = {}
+        if self.n_mc_portfolio > 0 or self.n_boot_portfolio > 0:
+            portfolio_results = self.portfolio_manager._run_global_portfolio_robustness(
+                frames=frames_dict,
+                cash=MMF_EXT,
+                wf_results=wf_results_dict,
+                wf_configs=wf_configs,
+                returns=rets_dict,
+                bond_gate=derived["bond_gate"],
+                asset_keys=list(rets_dict.keys()),
+                settings=settings,
+                train_y=train_y,
+                test_y=test_y,
+                baseline_portfolio=port_eq,
+                emit_report=False,
+            )
+            portfolio_summaries = self._summarize_portfolio_tests(
+                results=portfolio_results,
+                baseline_portfolio=port_eq,
+                label=variant_key,
+            )
 
         return self._compile_full_result(
             strat_name=variant_key,
@@ -991,6 +1136,7 @@ class SweepManager:
             bb_verdicts_dict=bb_res,
             alloc_df=alloc_df,
             weights_series=port_wgts,
+            portfolio_summaries=portfolio_summaries,
         )
 
 
@@ -1020,14 +1166,40 @@ def print_sweep_report(
         "oos_maxdd",
         "MC_Verdict",
         "BB_Verdict",
+        "Portfolio_MC_Verdict",
+        "Portfolio_BB_Verdict",
     ]
     if "MC_p05_CAGR" in results_df.columns:
         display_cols.append("MC_p05_CAGR")
+    display_cols.extend(
+        column
+        for column in (
+            "Portfolio_MC_p05_CAGR",
+            "Portfolio_MC_p05_Sharpe",
+            "Portfolio_MC_p05_MaxDD",
+            "Portfolio_BB_p05_CAGR",
+            "Portfolio_BB_p05_Sharpe",
+            "Portfolio_BB_p05_MaxDD",
+            "Portfolio_BB_p_loss",
+        )
+        if column in results_df.columns
+    )
 
     existing_cols = [c for c in display_cols if c in results_df.columns]
     format_df = results_df[existing_cols].copy()
 
-    pct_cols = ["oos_cagr", "oos_maxdd", "MC_p05_CAGR"]
+    pct_cols = [
+        "oos_cagr",
+        "oos_maxdd",
+        "MC_p05_CAGR",
+        "Portfolio_MC_p05_CAGR",
+        "Portfolio_MC_p05_Sharpe",
+        "Portfolio_MC_p05_MaxDD",
+        "Portfolio_BB_p05_CAGR",
+        "Portfolio_BB_p05_Sharpe",
+        "Portfolio_BB_p05_MaxDD",
+        "Portfolio_BB_p_loss",
+    ]
 
     for col in pct_cols:
         if col in format_df.columns:
@@ -1128,13 +1300,42 @@ def print_sweep_report(
     logging.info(msg=sep)
 
 
-def main() -> None:
+def _build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Professional Multi-Strategy Sweeper")
     parser.add_argument("--mode", choices=["SINGLE", "PENSION", "GLOBAL", "ALL"], required=True)
     parser.add_argument("--assets", nargs="+", help="Dla trybu SINGLE (np. WIG20TR SP500)")
-    parser.add_argument("--n_mc", type=int, default=0, help="Liczba probek MC")
-    parser.add_argument("--n_boot", type=int, default=0, help="Liczba probek Bootstrap")
+    parser.add_argument(
+        "--global-variant",
+        choices=GLOBAL_VARIANTS,
+        help="Run only this GLOBAL portfolio subtype; omitted means all variants.",
+    )
+    parser.add_argument(
+        "--n-mc-component",
+        "--n_mc",
+        dest="n_mc_component",
+        type=int,
+        default=0,
+        help="MC samples per individual component.",
+    )
+    parser.add_argument(
+        "--n-boot-component",
+        "--n_boot",
+        dest="n_boot_component",
+        type=int,
+        default=0,
+        help="Bootstrap samples per individual component.",
+    )
+    parser.add_argument("--n-mc-portfolio", type=int, default=0, help="Portfolio MC samples.")
+    parser.add_argument("--n-boot-portfolio", type=int, default=0, help="Portfolio bootstrap samples.")
+    return parser
+
+
+def main() -> None:
+    parser = _build_argument_parser()
     args = parser.parse_args()
+
+    if args.global_variant and args.mode not in {"GLOBAL", "ALL"}:
+        parser.error("--global-variant can only be used with --mode GLOBAL or ALL")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     log_file = OUTPUT_DIR / f"sweep_{args.mode.lower()}_run.log"
@@ -1154,7 +1355,7 @@ def main() -> None:
 
     logging.info("Preparing data map for all assets...")
     creds_path = str(Path(tempfile.gettempdir()) / "credentials.json")
-    folder_id = os.environ.get("GDRIVE_FOLDER_ID")
+    folder_id = os.environ.get("GDRIVE_FOLDER_ID", "")
 
     # Przechowujemy wszystkie dane w jednej mapie (UPPERCASE)
     data_map = {}
@@ -1208,13 +1409,23 @@ def main() -> None:
     # Przygotowanie przedłużonego MMF (raz dla wszystkich)
     mmf_raw = load_local_csv("fund_2720", "MMF")
     wibor = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
-    data_map["MMF_EXT"] = build_mmf_extended(mmf_raw, wibor, floor_date="1995-01-02")
+    data_map["MMF_EXT"] = (
+        build_mmf_extended(mmf_raw, wibor, floor_date="1995-01-02")
+        if wibor is not None
+        else mmf_raw
+    )
 
     # 2. Calculate Common OOS Start
     common_start = get_common_oos_start(data_map, SWEEP_WINDOW_CONFIGS)
 
     # 3. Init Manager with the map
-    manager = SweepManager(args.n_mc, args.n_boot, data_map)
+    manager = SweepManager(
+        n_mc=args.n_mc_component,
+        n_boot=args.n_boot_component,
+        data_map=data_map,
+        n_mc_portfolio=args.n_mc_portfolio,
+        n_boot_portfolio=args.n_boot_portfolio,
+    )
     results = []
 
     # 4. Iteration loops
@@ -1230,7 +1441,8 @@ def main() -> None:
                         results.append(res)
 
     if args.mode in ["GLOBAL", "ALL"]:
-        for var in ["GLOBAL_A", "GLOBAL_B", "GLOBAL_CRYPTO", "GLOBAL_B_CRYPTO"]:
+        global_variants = [args.global_variant] if args.global_variant else GLOBAL_VARIANTS
+        for var in global_variants:
             for ty, te in SWEEP_WINDOW_CONFIGS:
                 for st in ["fixed", "atr"]:
                     logging.info(
@@ -1258,10 +1470,12 @@ def main() -> None:
         )
 
         # --- GENEROWANIE KANDYDATÓW ---
-        require_boot_flag = args.n_boot > 0
+        require_boot_flag = args.n_boot_component > 0
         candidates_df = analyze_production_candidates(
             results_df=final_df,
             require_bootstrap=require_boot_flag,
+            require_portfolio_mc=args.n_mc_portfolio > 0,
+            require_portfolio_bootstrap=args.n_boot_portfolio > 0,
         )
 
         print_sweep_report(

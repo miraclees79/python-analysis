@@ -116,7 +116,7 @@ def _sharded_bootstrap_single_sample(
         )
 
         n_synth = len(synthetic)
-        synthetic_df = combined.iloc[:n_synth, [combined.columns.get_loc(price_col)]].copy()
+        synthetic_df = combined[[price_col]].iloc[:n_synth].copy()
         synthetic_df[price_col] = synthetic[price_col].values
 
         synthetic_cash = combined.iloc[:n_synth][["cash_price"]].copy()
@@ -223,7 +223,7 @@ class ShardedValidationManager:
         self.n_boot = n_boot
         self.run_weights_perturb = run_weights_perturb
         self.creds_path = str(Path(tempfile.gettempdir()) / "credentials.json")
-        self.folder_id = os.environ.get("GDRIVE_FOLDER_ID")
+        self.folder_id = os.environ.get("GDRIVE_FOLDER_ID", "")
 
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -242,17 +242,19 @@ class ShardedValidationManager:
 
         ax1.plot(
             strategy_equity.index,
-            strategy_equity.values,
+            strategy_equity.to_numpy(),
             label="Strategy (OOS)",
             color="steelblue",
             linewidth=2,
         )
+        bh_norm: pd.Series | None = None
         if bh_equity is not None:
             bh_aligned = bh_equity.reindex(index=strategy_equity.index).ffill()
-            bh_norm = bh_aligned / bh_aligned.iloc[0]
+            bh_series = bh_aligned / bh_aligned.iloc[0]
+            bh_norm = bh_series
             ax1.plot(
-                bh_norm.index,
-                bh_norm.values,
+                bh_series.index,
+                bh_series.to_numpy(),
                 label="Buy & Hold",
                 color="grey",
                 linestyle="--",
@@ -267,16 +269,16 @@ class ShardedValidationManager:
         dd_strat = strategy_equity / strategy_equity.cummax() - 1.0
         ax2.fill_between(
             dd_strat.index,
-            dd_strat.values,
+            dd_strat.to_numpy(),
             0.0,
             color="steelblue",
             alpha=0.3,
             label="Strategy DD",
         )
 
-        if bh_equity is not None:
+        if bh_norm is not None:
             dd_bh = bh_norm / bh_norm.cummax() - 1.0
-            ax2.plot(dd_bh.index, dd_bh.values, color="grey", linestyle="--", alpha=0.5)
+            ax2.plot(dd_bh.index, dd_bh.to_numpy(), color="grey", linestyle="--", alpha=0.5)
 
         ax2.set_ylabel(ylabel="Drawdown")
         ax2.grid(visible=True, alpha=0.3)
@@ -497,10 +499,8 @@ class ShardedValidationManager:
             msg=f"VALIDATING PENSION PORTFOLIO | Train: {train_y} | Test: {test_y} | EQ Stop: {stop_type_eq}",
         )
 
-        wig_df = load_local_csv(
-            ticker="wig",
-            label="WIG",
-        ).loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
+        wig_raw = load_local_csv(ticker="wig", label="WIG")
+        wig_df = wig_raw.loc[wig_raw.index >= pd.Timestamp("1995-01-02")]
 
         mmf_df = load_local_csv(
             ticker="fund_2720",
@@ -515,6 +515,8 @@ class ShardedValidationManager:
             extension_source="stooq",
             credentials_path=self.creds_path,
         )
+        if tbsp_df is None:
+            sys.exit("Failed to build TBSP series")
 
         wibor1m_df = load_local_csv(ticker="wibor1m", label="WIBOR1M", mandatory=False)
         pl10y_df = load_local_csv(ticker="pl10y", label="PL10Y")
@@ -606,10 +608,7 @@ class ShardedValidationManager:
             entry_gate=derived["bond_gate"],
         )
 
-        if self.run_mode == "worker":
-            return
-
-        # --- MERGE SPECIFIC: Portfolio & Allocation ---
+        # Workers also need the baseline portfolio to run portfolio MC/bootstrap.
         sig_eq = build_signal_series(wf_equity=wf_eq, wf_trades=wf_tr_eq)
         sig_bd = build_signal_series(wf_equity=wf_bd_eq, wf_trades=wf_bd_tr)
 
@@ -731,14 +730,16 @@ class ShardedValidationManager:
         fx_hedged = cfg.get("fx_hedged", True)
         use_atr = stop_type_eq == "atr"
 
-        wig_df = load_local_csv(
-            ticker="wig",
-            label="WIG",
-        ).loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
+        wig_raw = load_local_csv(ticker="wig", label="WIG")
+        wig_df = wig_raw.loc[wig_raw.index >= pd.Timestamp("1995-01-02")]
 
         mmf_df = load_local_csv(ticker="fund_2720", label="MMF")
         wibor1m_df = load_local_csv(ticker="wibor1m", label="WIBOR1M", mandatory=False)
-        mmf_ext = build_mmf_extended(mmf_df=mmf_df, wibor1m_df=wibor1m_df, floor_date="1995-01-02")
+        mmf_ext = (
+            build_mmf_extended(mmf_df=mmf_df, wibor1m_df=wibor1m_df, floor_date="1995-01-02")
+            if wibor1m_df is not None
+            else mmf_df
+        )
 
         tbsp_df = build_and_upload(
             folder_id=self.folder_id,
@@ -748,6 +749,8 @@ class ShardedValidationManager:
             extension_source="stooq",
             credentials_path=self.creds_path,
         )
+        if tbsp_df is None:
+            sys.exit("Failed to build TBSP series")
 
         assets = build_global_assets(
             wig_df=wig_df,

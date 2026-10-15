@@ -7,6 +7,8 @@ Replaces legacy load_stooq_local.
 """
 
 import logging
+import sys
+from typing import Literal, overload
 
 import pandas as pd
 
@@ -18,6 +20,25 @@ def ensure_data_dir_exists() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
+@overload
+def load_local_csv(
+    ticker: str,
+    label: str,
+    data_start: str = ...,
+    mandatory: Literal[True] = ...,
+) -> pd.DataFrame: ...
+
+
+@overload
+def load_local_csv(
+    ticker: str,
+    label: str,
+    data_start: str = ...,
+    *,
+    mandatory: bool,
+) -> pd.DataFrame | None: ...
+
+
 def load_local_csv(
     ticker: str,
     label: str,
@@ -26,6 +47,9 @@ def load_local_csv(
 ) -> pd.DataFrame | None:
     """
     Loads a local CSV file from moj_system/data/raw_csv/.
+
+    A mandatory file that is missing or unreadable terminates the process;
+    only optional files can yield None.
     """
     # Używamy bezpośrednio DATA_DIR
     path = DATA_DIR / f"{ticker}.csv"
@@ -33,8 +57,6 @@ def load_local_csv(
     if not path.exists():
         if mandatory:
             logging.error(f"Missing data file: {path}")
-            import sys
-
             sys.exit(1)
         return None
 
@@ -49,11 +71,14 @@ def load_local_csv(
         )
     except Exception as e:
         logging.error(f"Error reading {path}: {e}")
+        if mandatory:
+            sys.exit(1)
         return None
 
     if df.empty or "Data" not in df.columns:
         if mandatory:
             logging.error(f"Corrupted or empty file: {path}")
+            sys.exit(1)
         return None
 
     df["Data"] = pd.to_datetime(df["Data"], errors="coerce")

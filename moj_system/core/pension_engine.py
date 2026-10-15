@@ -46,6 +46,7 @@ DEPENDENCIES
 from __future__ import annotations
 
 import logging
+from typing import TypedDict
 
 import numpy as np
 import pandas as pd
@@ -56,6 +57,16 @@ from moj_system.core.strategy_engine import (
 
 # --- DODAJ TEN IMPORT ---
 from moj_system.core.utils import build_mmf_extended, reallocation_gate, signals_to_target_weights
+
+
+class StandardTwoAssetData(TypedDict):
+    mmf_ext: pd.DataFrame
+    bond_gate: pd.Series
+    spread_pf: pd.Series
+    yield_pf: pd.Series
+    ret_eq: pd.Series
+    ret_bd: pd.Series
+    ret_mmf: pd.Series
 
 # ============================================================
 # LAYER 2 — WEIGHT MAPPING
@@ -1299,7 +1310,7 @@ def build_standard_two_asset_data(
     yield_lookback_days: int = 63,
     spread_change_window: int = 63,
     spread_change_cap_bp: float = 50.0,
-) -> dict:
+) -> StandardTwoAssetData:
     """
     Build all derived series required by the 2-asset WIG+TBSP+MMF strategy.
 
@@ -1397,12 +1408,12 @@ def build_standard_two_asset_data(
         len(ret_mmf),
     )
 
-    return dict(
-        mmf_ext=mmf_ext,
-        bond_gate=bond_gate,
-        spread_pf=spread_pf,
-        yield_pf=yield_pf,
-        ret_eq=ret_eq,
-        ret_bd=ret_bd,
-        ret_mmf=ret_mmf,
-    )
+    return {
+        "mmf_ext": mmf_ext,
+        "bond_gate": bond_gate,
+        "spread_pf": spread_pf,
+        "yield_pf": yield_pf,
+        "ret_eq": ret_eq,
+        "ret_bd": ret_bd,
+        "ret_mmf": ret_mmf,
+    }
