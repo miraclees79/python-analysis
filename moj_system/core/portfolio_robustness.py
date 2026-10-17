@@ -365,12 +365,11 @@ def analyze_portfolio_robustness(
         else float("nan")
     )
 
-    for metric, config in thresholds.items():
-        if metric == "p_loss":
-            continue
+    for metric in metrics_to_show:
         if metric not in results_df.columns:
-            failures.append(f"Missing portfolio metric: {metric}")
-            criteria.append((False, f"Missing portfolio metric: {metric}"))
+            if metric in thresholds:
+                failures.append(f"Missing portfolio metric: {metric}")
+                criteria.append((False, f"Missing portfolio metric: {metric}"))
             continue
         values = results_df[metric]
         metric_summary[metric] = {
@@ -402,6 +401,7 @@ def analyze_portfolio_robustness(
                 f"{format_metric(float(values.quantile(0.75))):>10} "
                 f"{format_metric(float(values.quantile(0.95))):>10} {comparison_value:>10}"
             )
+        config = thresholds.get(metric, {})
         p05_min = config.get("p05_min")
         if p05_min is not None:
             p05 = float(values.quantile(0.05))

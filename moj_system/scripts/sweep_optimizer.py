@@ -599,10 +599,12 @@ class SweepManager:
             "Portfolio_MC_p05_CAGR": portfolio_mc_metrics.get("CAGR", {}).get("p05", pd.NA),
             "Portfolio_MC_p05_Sharpe": portfolio_mc_metrics.get("Sharpe", {}).get("p05", pd.NA),
             "Portfolio_MC_p05_MaxDD": portfolio_mc_metrics.get("MaxDD", {}).get("p05", pd.NA),
+            "Portfolio_MC_p05_CalMAR": portfolio_mc_metrics.get("CalMAR", {}).get("p05", pd.NA),
             "Portfolio_BB_Verdict": portfolio_bootstrap.get("verdict", "N/A"),
             "Portfolio_BB_p05_CAGR": portfolio_boot_metrics.get("CAGR", {}).get("p05", pd.NA),
             "Portfolio_BB_p05_Sharpe": portfolio_boot_metrics.get("Sharpe", {}).get("p05", pd.NA),
             "Portfolio_BB_p05_MaxDD": portfolio_boot_metrics.get("MaxDD", {}).get("p05", pd.NA),
+            "Portfolio_BB_p05_CalMAR": portfolio_boot_metrics.get("CalMAR", {}).get("p05", pd.NA),
             "Portfolio_BB_p_loss": portfolio_boot_metrics.get("p_loss", pd.NA),
             **win_stats,
             **regime_metrics,
@@ -1177,9 +1179,11 @@ def print_sweep_report(
             "Portfolio_MC_p05_CAGR",
             "Portfolio_MC_p05_Sharpe",
             "Portfolio_MC_p05_MaxDD",
+            "Portfolio_MC_p05_CalMAR",
             "Portfolio_BB_p05_CAGR",
             "Portfolio_BB_p05_Sharpe",
             "Portfolio_BB_p05_MaxDD",
+            "Portfolio_BB_p05_CalMAR",
             "Portfolio_BB_p_loss",
         )
         if column in results_df.columns
@@ -1195,9 +1199,11 @@ def print_sweep_report(
         "Portfolio_MC_p05_CAGR",
         "Portfolio_MC_p05_Sharpe",
         "Portfolio_MC_p05_MaxDD",
+        "Portfolio_MC_p05_CalMAR",
         "Portfolio_BB_p05_CAGR",
         "Portfolio_BB_p05_Sharpe",
         "Portfolio_BB_p05_MaxDD",
+        "Portfolio_BB_p05_CalMAR",
         "Portfolio_BB_p_loss",
     ]
 
@@ -1211,6 +1217,11 @@ def print_sweep_report(
         format_df["oos_calmar"] = format_df["oos_calmar"].apply(
             func=lambda x: round(number=x, ndigits=3) if pd.notna(x) else "N/A",
         )
+    for col in ("Portfolio_MC_p05_CalMAR", "Portfolio_BB_p05_CalMAR"):
+        if col in format_df.columns:
+            format_df[col] = format_df[col].apply(
+                func=lambda x: round(number=x, ndigits=3) if pd.notna(x) else "N/A",
+            )
 
     logging.info(
         msg=f"\n{format_df.to_string(index=False)}",
