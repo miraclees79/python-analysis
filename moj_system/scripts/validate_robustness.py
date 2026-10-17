@@ -92,10 +92,14 @@ class ValidationManager:
         n_mc: int,
         n_boot: int,
         run_weights_perturb: bool,
+        n_mc_portfolio: int | None = None,
+        n_boot_portfolio: int | None = None,
     ) -> None:
 
         self.n_mc = n_mc
         self.n_boot = n_boot
+        self.n_mc_portfolio = n_mc if n_mc_portfolio is None else n_mc_portfolio
+        self.n_boot_portfolio = n_boot if n_boot_portfolio is None else n_boot_portfolio
         self.run_weights_perturb = run_weights_perturb
         self.rob_engine = RobustnessEngine(n_jobs=get_n_jobs())
         self.creds_path = str(Path(tempfile.gettempdir()) / "credentials.json")
@@ -164,11 +168,11 @@ class ValidationManager:
             )
             return allocate(signals)
 
-        if self.n_mc > 0:
+        if self.n_mc_portfolio > 0:
             mc_results = self.rob_engine.run_portfolio_mc_test(
                 legs=legs,
                 runner=mc_runner,
-                n_samples=self.n_mc,
+                n_samples=self.n_mc_portfolio,
                 sample_offset=sample_offset,
             )
             results["mc"] = mc_results
@@ -237,7 +241,7 @@ class ValidationManager:
                 wf_results_bd=wf_res_bd_s,
             )[0]
 
-        if self.n_boot > 0:
+        if self.n_boot_portfolio > 0:
             context_frames = {
                 "PL10Y": add_ohlc_columns_for_context(pl10y),
                 "DE10Y": add_ohlc_columns_for_context(de10y),
@@ -248,7 +252,7 @@ class ValidationManager:
                 frames={"WIG": wig, "TBSP": tbsp, **context_frames},
                 cash_df=cash,
                 runner=bootstrap_runner,
-                n_samples=self.n_boot,
+                n_samples=self.n_boot_portfolio,
                 sample_offset=sample_offset,
             )
             results["bootstrap"] = bootstrap_results
@@ -328,11 +332,11 @@ class ValidationManager:
                 schedule=wf_results["TBSP"],
             )
 
-        if self.n_mc > 0:
+        if self.n_mc_portfolio > 0:
             mc_results = self.rob_engine.run_portfolio_mc_test(
                 legs=legs,
                 runner=mc_runner,
-                n_samples=self.n_mc,
+                n_samples=self.n_mc_portfolio,
                 sample_offset=sample_offset,
             )
             results["mc"] = mc_results
@@ -374,12 +378,12 @@ class ValidationManager:
                 schedule=synthetic_schedule,
             )
 
-        if self.n_boot > 0:
+        if self.n_boot_portfolio > 0:
             bootstrap_results = self.rob_engine.run_portfolio_bootstrap_test(
                 frames=frames,
                 cash_df=cash,
                 runner=bootstrap_runner,
-                n_samples=self.n_boot,
+                n_samples=self.n_boot_portfolio,
                 sample_offset=sample_offset,
             )
             results["bootstrap"] = bootstrap_results
@@ -959,6 +963,10 @@ def main() -> None:
     parser.add_argument("--stop", choices=["fixed", "atr"], default="fixed")
     parser.add_argument("--n_mc", type=int, default=1000)
     parser.add_argument("--n_boot", type=int, default=500)
+    parser.add_argument("--n-mc-portfolio", type=int, default=None, help="Portfolio MC samples (default: --n_mc).")
+    parser.add_argument(
+        "--n-boot-portfolio", type=int, default=None, help="Portfolio bootstrap samples (default: --n_boot)."
+    )
     parser.add_argument(
         "--weights_perturb",
         action="store_true",
@@ -984,6 +992,8 @@ def main() -> None:
         n_mc=args.n_mc,
         n_boot=args.n_boot,
         run_weights_perturb=args.weights_perturb,
+        n_mc_portfolio=args.n_mc_portfolio,
+        n_boot_portfolio=args.n_boot_portfolio,
     )
 
     if args.mode == "SINGLE":

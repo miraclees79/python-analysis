@@ -95,7 +95,9 @@ jobs:
             --test ${{ inputs.test || '2' }} \
             --stop ${{ inputs.stop || 'atr' }} \
             --n_mc ${{ inputs.worker_mc || '100' }} \
-            --n_boot ${{ inputs.worker_boot || '50' }}
+            --n_boot ${{ inputs.worker_boot || '50' }} \
+            --n-mc-portfolio 100 \
+            --n-boot-portfolio 50
             
       - name: Upload Shard Artifacts
         uses: actions/upload-artifact@v4

@@ -216,11 +216,15 @@ class ShardedValidationManager:
         n_mc: int,
         n_boot: int,
         run_weights_perturb: bool,
+        n_mc_portfolio: int | None = None,
+        n_boot_portfolio: int | None = None,
     ) -> None:
         self.run_mode = run_mode
         self.shard_id = shard_id
         self.n_mc = n_mc
         self.n_boot = n_boot
+        self.n_mc_portfolio = n_mc if n_mc_portfolio is None else n_mc_portfolio
+        self.n_boot_portfolio = n_boot if n_boot_portfolio is None else n_boot_portfolio
         self.run_weights_perturb = run_weights_perturb
         self.creds_path = str(Path(tempfile.gettempdir()) / "credentials.json")
         self.folder_id = os.environ.get("GDRIVE_FOLDER_ID", "")
@@ -625,8 +629,10 @@ class ShardedValidationManager:
         )
 
         portfolio_manager = ValidationManager(
-            n_mc=self.n_mc if self.run_mode == "worker" else 0,
-            n_boot=self.n_boot if self.run_mode == "worker" else 0,
+            n_mc=0,
+            n_boot=0,
+            n_mc_portfolio=self.n_mc_portfolio if self.run_mode == "worker" else 0,
+            n_boot_portfolio=self.n_boot_portfolio if self.run_mode == "worker" else 0,
             run_weights_perturb=False,
         )
         portfolio_results = portfolio_manager._run_pension_portfolio_robustness(
@@ -899,8 +905,10 @@ class ShardedValidationManager:
         )
 
         portfolio_manager = ValidationManager(
-            n_mc=self.n_mc if self.run_mode == "worker" else 0,
-            n_boot=self.n_boot if self.run_mode == "worker" else 0,
+            n_mc=0,
+            n_boot=0,
+            n_mc_portfolio=self.n_mc_portfolio if self.run_mode == "worker" else 0,
+            n_boot_portfolio=self.n_boot_portfolio if self.run_mode == "worker" else 0,
             run_weights_perturb=False,
         )
         portfolio_results = portfolio_manager._run_global_portfolio_robustness(
@@ -1007,6 +1015,10 @@ def main() -> None:
     parser.add_argument("--stop", choices=["fixed", "atr"], default="fixed")
     parser.add_argument("--n_mc", type=int, default=100)
     parser.add_argument("--n_boot", type=int, default=50)
+    parser.add_argument("--n-mc-portfolio", type=int, default=None, help="Portfolio MC samples per shard (default: --n_mc).")
+    parser.add_argument(
+        "--n-boot-portfolio", type=int, default=None, help="Portfolio bootstrap samples per shard (default: --n_boot)."
+    )
     parser.add_argument("--weights_perturb", action="store_true")
     args = parser.parse_args()
 
@@ -1032,6 +1044,8 @@ def main() -> None:
         n_mc=args.n_mc,
         n_boot=args.n_boot,
         run_weights_perturb=args.weights_perturb,
+        n_mc_portfolio=args.n_mc_portfolio,
+        n_boot_portfolio=args.n_boot_portfolio,
     )
 
     if args.mode == "SINGLE":

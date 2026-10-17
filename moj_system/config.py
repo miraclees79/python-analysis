@@ -118,16 +118,16 @@ CRYPTO_THRESHOLDS_BOOTSTRAP = {
 }
 
 PORTFOLIO_THRESHOLDS_MC = {
-    "CAGR": {"p05_min": 0.00, "label": "portfolio p05 CAGR > 0%"},
+    "CAGR": {"p05_min": 0.04, "label": "portfolio p05 CAGR > 4%"},
     "Sharpe": {"p05_min": 0.00, "label": "portfolio p05 Sharpe > 0"},
-    "MaxDD": {"p05_min": -0.20, "label": "portfolio p05 MaxDD > -20%"},
+    "MaxDD": {"p05_min": -0.24, "label": "portfolio p05 MaxDD > -24%"}, # Maximum drawdown threshold for the portfolio, based on Pardo (2xmaxDD from baseline = 2x0.12 = 0.24)
 }
 
 PORTFOLIO_THRESHOLDS_BOOTSTRAP = {
     "CAGR": {"p05_min": -0.01, "label": "portfolio p05 CAGR > -1%"},
-    "Sharpe": {"p05_min": -0.10, "label": "portfolio p05 Sharpe > -0.10"},
-    "MaxDD": {"p05_min": -0.25, "label": "portfolio p05 MaxDD > -25%"},
-    "p_loss": {"max": 0.20, "label": "portfolio P(CAGR < 0) < 20%"},
+    "Sharpe": {"p05_min": 0, "label": "portfolio p05 Sharpe > 0"},
+    "MaxDD": {"p05_min": -0.35, "label": "portfolio p05 MaxDD > -35%"}, # Maximum drawdown threshold for the portfolio, based on half max drawdown of WIG B&H (-68%)
+    "p_loss": {"max": 0.10, "label": "portfolio P(CAGR < 0) < 10%"},
 }
 
 THRESHOLDS_MC: dict[str, dict[str, Any]] = {
