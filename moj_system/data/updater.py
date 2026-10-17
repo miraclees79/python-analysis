@@ -203,6 +203,30 @@ class DataUpdater:
             logging.error(msg=f"ZIP error for {stooq_ticker}: {e}")
         return None
 
+    def fetch_stooq_history(
+        self,
+        stooq_ticker: str,
+        zip_type: str = "fund_pl",
+        label: str | None = None,
+    ) -> pd.DataFrame | None:
+        """Return validated Stooq history in memory without writing the fund CSV."""
+        zip_data = self._get_zip_content(zip_type=zip_type)
+        if not zip_data:
+            return None
+
+        history = self._extract_from_zip(zip_data=zip_data, stooq_ticker=stooq_ticker)
+        if history is None or history.empty:
+            return None
+
+        validated = self._validate_and_clean(
+            df=history,
+            label=label or f"fund_{Path(stooq_ticker).stem}",
+        )
+        if validated is None or validated.empty:
+            return None
+
+        return validated.set_index("Data").sort_index()
+
     def _fetch_yfinance_data(
         self,
         ticker_yf: str,
