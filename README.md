@@ -107,6 +107,7 @@ sample.
 |---|---|
 | `GDRIVE_FOLDER_ID` | Google Drive output folder |
 | `GOOGLE_CREDENTIALS` | Service account JSON |
+| `GEMINI_API_KEY` | Optional Gemini benchmark parsing/proxy proposals; only used when explicitly enabled |
 | `ZIP_URL` | PPE data source URL |
 | `ZIP_PASSWORD` | PPE archive password |
 | `INT_FILE_NAME` | PDF filename inside PPE archive |
@@ -132,6 +133,12 @@ python moj_system/scripts/validate_robustness.py --mode SINGLE --asset WIG20TR -
 
 # KNF fund refresh
 python moj_system/scripts/refresh_knf.py --all
+
+# Fund review with optional Gemini fallback (requires GEMINI_API_KEY)
+python moj_system/scripts/fund_reviewer.py --update --use-gemini
+```
+
+Manual benchmark corrections belong in `moj_system/data/fund_benchmark_overrides.csv`. The semicolon-delimited file uses `subfundId`, `components_json`, `kind` (`official` or `proxy`), `notes`, and optional `portfolio_spread_bps`; component keys must exist in `benchmark_catalog.py` and weights are decimal fractions summing to 1.
 ---
 
 ## Configuration

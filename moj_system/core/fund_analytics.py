@@ -57,30 +57,62 @@ class FundPerformanceEngine:
         }
 
     @staticmethod
-    def compute_relative_metrics(fund_log_ret: pd.Series, benchmark_log_ret: pd.Series) -> dict:
-        """Performs OLS regression: fund_ret ~ alpha + beta * benchmark_ret."""
-        common = fund_log_ret.index.intersection(benchmark_log_ret.index)
+    def compute_relative_metrics(
+        fund_log_ret: pd.Series,
+        benchmark_log_ret: pd.Series,
+        periods_per_year: int = TRADING_DAYS_PER_YEAR,
+    ) -> dict:
+        """Return classical annualized Information Ratio and regression statistics."""
+        common = fund_log_ret.index.intersection(benchmark_log_ret.index).sort_values()
         if len(common) < 30:
-            return {"alpha": np.nan, "beta": np.nan, "tracking_error": np.nan, "ir": np.nan}
+            return {
+                "alpha": np.nan,
+                "beta": np.nan,
+                "tracking_error": np.nan,
+                "ir": np.nan,
+                "appraisal_ratio": np.nan,
+                "active_return": np.nan,
+                "correlation": np.nan,
+                "r_squared": np.nan,
+                "n_relative_observations": len(common),
+            }
 
-        y = fund_log_ret.loc[common].values
-        x = benchmark_log_ret.loc[common].values
-        X = np.column_stack([np.ones(len(x)), x])
+        fund_log_values = fund_log_ret.loc[common].values
+        benchmark_log_values = benchmark_log_ret.loc[common].values
+        active_returns = np.expm1(fund_log_values) - np.expm1(benchmark_log_values)
+        active_te = float(active_returns.std(ddof=1))
+        active_return_ann = float(active_returns.mean() * periods_per_year)
+        active_te_ann = float(active_te * np.sqrt(periods_per_year))
+        ir = (
+            float(np.sqrt(periods_per_year) * active_returns.mean() / active_te)
+            if active_te > 0.0
+            else np.nan
+        )
 
-        coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
-        alpha_daily, beta = coeffs
-        residuals = y - (alpha_daily + beta * x)
-        te_daily = residuals.std()
-
-        alpha_ann = float(np.exp(alpha_daily * TRADING_DAYS_PER_YEAR) - 1)
-        te_ann = float(te_daily * np.sqrt(TRADING_DAYS_PER_YEAR))
-        ir = (alpha_ann / te_ann) if te_ann > 0 else np.nan
+        regression = np.column_stack([np.ones(len(benchmark_log_values)), benchmark_log_values])
+        coefficients, _, _, _ = np.linalg.lstsq(regression, fund_log_values, rcond=None)
+        alpha_daily, beta = coefficients
+        residuals = fund_log_values - (alpha_daily + beta * benchmark_log_values)
+        residual_te = float(residuals.std(ddof=1) * np.sqrt(periods_per_year))
+        alpha_ann = float(np.exp(alpha_daily * periods_per_year) - 1.0)
+        appraisal_ratio = alpha_ann / residual_te if residual_te > 0.0 else np.nan
+        correlation = (
+            float(np.corrcoef(fund_log_values, benchmark_log_values)[0, 1])
+            if np.std(fund_log_values) > 0.0 and np.std(benchmark_log_values) > 0.0
+            else np.nan
+        )
 
         return {
             "alpha": round(alpha_ann, 4),
             "beta": round(float(beta), 4),
-            "tracking_error": round(te_ann, 4),
+            "tracking_error": round(active_te_ann, 4),
             "ir": round(ir, 4),
+            "appraisal_ratio": round(appraisal_ratio, 4),
+            "active_return": round(active_return_ann, 4),
+            "correlation": round(correlation, 4) if np.isfinite(correlation) else np.nan,
+            "r_squared": round(correlation**2, 4) if np.isfinite(correlation) else np.nan,
+            "residual_tracking_error": round(residual_te, 4),
+            "n_relative_observations": len(common),
         }
 
     @staticmethod
@@ -89,25 +121,27 @@ class FundPerformanceEngine:
         benchmark_log_ret: pd.Series,
         window: int = 252,
         step: int = 63,
+        periods_per_year: int = TRADING_DAYS_PER_YEAR,
     ) -> dict:
         """Calculates rolling Information Ratio (IR)."""
-        common = fund_log_ret.index.intersection(benchmark_log_ret.index)
+        common = fund_log_ret.index.intersection(benchmark_log_ret.index).sort_values()
         if len(common) < window:
             return {"pct_ir_positive": np.nan, "n_ir_windows": 0}
 
         y_all = fund_log_ret.loc[common].values
         x_all = benchmark_log_ret.loc[common].values
+        active_returns = np.expm1(y_all) - np.expm1(x_all)
         n = len(common)
 
         ir_vals = []
         for start in range(0, n - window + 1, step):
-            y, x = y_all[start : start + window], x_all[start : start + window]
-            X = np.column_stack([np.ones(window), x])
-            coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
-            resid = y - (coeffs[0] + coeffs[1] * x)
-            te = resid.std() * np.sqrt(TRADING_DAYS_PER_YEAR)
-            a_ann = float(np.exp(coeffs[0] * TRADING_DAYS_PER_YEAR) - 1)
-            ir_vals.append(a_ann / te if te > 0 else np.nan)
+            active = active_returns[start : start + window]
+            active_te = float(active.std(ddof=1))
+            ir_vals.append(
+                float(np.sqrt(periods_per_year) * active.mean() / active_te)
+                if active_te > 0.0
+                else np.nan,
+            )
 
         valid = [v for v in ir_vals if not np.isnan(v)]
         pct_pos = sum(1 for v in valid if v > 0) / len(valid) if valid else np.nan

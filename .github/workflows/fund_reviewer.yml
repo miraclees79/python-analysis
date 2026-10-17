@@ -4,7 +4,13 @@ on:
   schedule:
     # Uruchamia się w  piątki o 23:00 UTC
     - cron: '0 23 * * 5'
-  workflow_dispatch: 
+  workflow_dispatch:
+    inputs:
+      use_gemini:
+        description: 'Użyj GEMINI_API_KEY do benchmarków nierozpoznanych i proxy kategorii'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -29,15 +35,25 @@ jobs:
         env:
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          USE_GEMINI: ${{ inputs.use_gemini }}
         run: |
           echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
+          GEMINI_FLAG=""
+          if [ "$USE_GEMINI" = "true" ] && [ -n "$GEMINI_API_KEY" ]; then
+            GEMINI_FLAG="--use-gemini"
+          elif [ "$USE_GEMINI" = "true" ]; then
+            echo "::warning::Gemini requested but GEMINI_API_KEY is not configured."
+          fi
 
           # 2. Następnie odpalamy rewizję funduszy z flagą --update (dociągnie KNF i wygeneruje raporty)
-          python moj_system/scripts/fund_reviewer.py --update
+          python moj_system/scripts/fund_reviewer.py --update $GEMINI_FLAG
 
       - name: Upload Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fund-review-logs
-          path: outputs/fund_ranking_*.csv
+          path: |
+            outputs/fund_ranking_*.csv
+            outputs/fund_benchmark_review_*.csv

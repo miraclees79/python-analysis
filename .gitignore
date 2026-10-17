@@ -17,9 +17,14 @@ __pycache__/
 *.temp
 
 # Dane i wyniki (prośba użytkownika)
-tests/
+tests/*
+!tests/
+!tests/test_fund_benchmarks.py
 ai_context/
 analiza wynikow/
+!analiza wynikow/
+analiza wynikow/*
+!analiza wynikow/fund_performance.gs
 outputs/
 *.xlsx
 
