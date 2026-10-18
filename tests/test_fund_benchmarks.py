@@ -4,6 +4,7 @@ import json
 import math
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -106,6 +107,11 @@ class BenchmarkBuilderTests(unittest.TestCase):
         self.assertAlmostEqual(float(result.prices.iloc[-1]), 115.5)
         self.assertEqual(result.quality, "proxy")
         self.assertAlmostEqual(result.coverage, 1.0)
+        world_detail = next(item for item in result.component_details if item["index_key"] == "MSCI_WORLD")
+        self.assertEqual(world_detail["ticker"], "URTH")
+        self.assertEqual(world_detail["source"], "local")
+        self.assertEqual(world_detail["fx_ticker"], "usdpln")
+        self.assertEqual(world_detail["fx_source"], "local")
 
     def test_rate_leg_uses_actual_365_accrual_and_component_spread(self) -> None:
         series = {
@@ -164,6 +170,20 @@ class BenchmarkBuilderTests(unittest.TestCase):
 
 
 class GeminiBenchmarkResolverTests(unittest.TestCase):
+    @staticmethod
+    def _valid_response() -> Mock:
+        response = Mock()
+        response.text = json.dumps(
+            {
+                "components": [
+                    {"index_key": "WIG", "weight": 1.0, "spread_bps": 0, "hedged_to_pln": False},
+                ],
+                "confidence": 0.9,
+                "reason": "Polish equity benchmark.",
+            },
+        )
+        return response
+
     def test_validates_llm_output_and_reuses_cache(self) -> None:
         response = Mock()
         response.text = json.dumps(
@@ -195,7 +215,12 @@ class GeminiBenchmarkResolverTests(unittest.TestCase):
             first = GeminiBenchmarkResolver(api_key="test-key", cache_path=cache_path, client=client)
             resolved = first.resolve_kid_text("90% WIG and 10% POLSTR")
             second_client = Mock()
-            second = GeminiBenchmarkResolver(api_key="test-key", cache_path=cache_path, client=second_client)
+            second = GeminiBenchmarkResolver(
+                api_key="test-key",
+                model="gemini-3.1-flash-lite",
+                cache_path=cache_path,
+                client=second_client,
+            )
             cached = second.resolve_kid_text("90% WIG and 10% POLSTR")
 
         self.assertIsNotNone(resolved)
@@ -203,6 +228,175 @@ class GeminiBenchmarkResolverTests(unittest.TestCase):
         self.assertEqual(cached["components"], resolved["components"])
         client.models.generate_content.assert_called_once()
         second_client.models.generate_content.assert_not_called()
+
+    def test_retries_server_error_with_backoff(self) -> None:
+        class ApiError(Exception):
+            code = 503
+
+        current_time = [1_800_000_000.0]
+
+        def advance_clock(seconds: float) -> None:
+            current_time[0] += seconds
+
+        client = Mock()
+        client.models.generate_content.side_effect = [ApiError("service unavailable"), self._valid_response()]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            resolver = GeminiBenchmarkResolver(
+                api_key="test-key",
+                cache_path=Path(temp_dir) / "cache.json",
+                client=client,
+                sleep=advance_clock,
+                clock=lambda: current_time[0],
+            )
+
+            result = resolver.resolve_kid_text("100% WIG")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(client.models.generate_content.call_count, 2)
+
+    def test_falls_back_to_lite_model_after_rate_limit(self) -> None:
+        class ApiError(Exception):
+            code = 429
+
+        client = Mock()
+        client.models.generate_content.side_effect = [ApiError("quota exceeded"), self._valid_response()]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            resolver = GeminiBenchmarkResolver(
+                api_key="test-key",
+                cache_path=Path(temp_dir) / "cache.json",
+                client=client,
+                sleep=Mock(),
+            )
+
+            result = resolver.resolve_kid_text("100% WIG")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["model"], "gemini-3.1-flash-lite")
+        self.assertEqual(
+            [call.kwargs["model"] for call in client.models.generate_content.call_args_list],
+            ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
+        )
+
+    def test_skips_model_when_daily_budget_is_exhausted(self) -> None:
+        client = Mock()
+        client.models.generate_content.return_value = self._valid_response()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "cache.json"
+            quota_path = cache_path.with_name("benchmark_llm_quota.json")
+            quota_path.write_text(
+                json.dumps(
+                    {
+                        "day": datetime.now(UTC).date().isoformat(),
+                        "requests": {"gemini-3.5-flash-lite": 503},
+                        "minutes": {},
+                    },
+                ),
+                encoding="utf-8",
+            )
+            resolver = GeminiBenchmarkResolver(
+                api_key="test-key",
+                cache_path=cache_path,
+                client=client,
+                sleep=Mock(),
+            )
+
+            result = resolver.resolve_kid_text("100% WIG")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["model"], "gemini-3.1-flash-lite")
+        self.assertEqual(client.models.generate_content.call_args.kwargs["model"], "gemini-3.1-flash-lite")
+
+    def test_batch_fallback_recovers_only_invalid_items(self) -> None:
+        requests = {
+            "fund-a": ("kid", {"benchmark": "100% WIG"}),
+            "fund-b": ("kid", {"benchmark": "100% TBSP"}),
+        }
+        first_key = GeminiBenchmarkResolver._cache_key(*requests["fund-a"])
+        second_key = GeminiBenchmarkResolver._cache_key(*requests["fund-b"])
+
+        def batch_response(items: list[dict[str, object]]) -> Mock:
+            response = Mock()
+            response.text = json.dumps({"results": items})
+            return response
+
+        valid_a = {
+            "id": first_key,
+            "components": [{"index_key": "WIG", "weight": 1.0, "spread_bps": 0, "hedged_to_pln": False}],
+            "confidence": 0.9,
+            "reason": "Polish equity benchmark.",
+        }
+        invalid_b = {
+            "id": second_key,
+            "components": [{"index_key": "NOT_IN_CATALOG", "weight": 1.0}],
+            "confidence": 0.9,
+            "reason": "Invalid index.",
+        }
+        valid_b = {
+            "id": second_key,
+            "components": [{"index_key": "TBSP", "weight": 1.0, "spread_bps": 0, "hedged_to_pln": False}],
+            "confidence": 0.9,
+            "reason": "Polish bond benchmark.",
+        }
+        client = Mock()
+        client.models.generate_content.side_effect = [
+            batch_response([valid_a, invalid_b]),
+            batch_response([valid_b]),
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            resolver = GeminiBenchmarkResolver(
+                api_key="test-key",
+                cache_path=Path(temp_dir) / "cache.json",
+                client=client,
+                sleep=Mock(),
+            )
+
+            result = resolver.resolve_many(requests)
+
+        self.assertEqual(result["fund-a"]["components"][0]["index_key"], "WIG")
+        self.assertEqual(result["fund-b"]["components"][0]["index_key"], "TBSP")
+        self.assertEqual(
+            [call.kwargs["model"] for call in client.models.generate_content.call_args_list],
+            ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
+        )
+
+    def test_proxy_batch_uses_configured_review_model(self) -> None:
+        client = Mock()
+        request = ("proxy", {"name": "Fund A", "category": "equity"})
+        cache_key = GeminiBenchmarkResolver._cache_key(*request)
+        response = Mock()
+        response.text = json.dumps(
+            {
+                "results": [
+                    {
+                        "id": cache_key,
+                        "components": [
+                            {"index_key": "WIG", "weight": 1.0, "spread_bps": 0, "hedged_to_pln": False},
+                        ],
+                        "confidence": 0.9,
+                        "reason": "Polish equity proxy.",
+                    },
+                ],
+            },
+        )
+        client.models.generate_content.return_value = response
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "os.environ",
+            {"GEMINI_REVIEW_MODEL": "gemini-3.8-flash"},
+        ):
+            resolver = GeminiBenchmarkResolver(
+                api_key="test-key",
+                cache_path=Path(temp_dir) / "cache.json",
+                client=client,
+                sleep=Mock(),
+            )
+
+            result = resolver.resolve_many(
+                {"fund-a": request},
+                primary_model=resolver.review_model,
+            )
+
+        self.assertIn("fund-a", result)
+        self.assertEqual(client.models.generate_content.call_args.kwargs["model"], "gemini-3.8-flash")
 
     def test_rejects_unknown_catalog_key_and_bad_weight_sum(self) -> None:
         unknown = GeminiBenchmarkResolver._validate_response(
@@ -312,6 +506,8 @@ class RelativeFundMetricTests(unittest.TestCase):
                     "frequency": "daily",
                     "coverage": 1.0,
                     "components": "WIG:100.0%",
+                    "component_tickers": "WIG:WIG.WA[file:wig]",
+                    "component_sources": "WIG:local",
                     "unresolved": "",
                     "is_proxy": False,
                     "rankable": True,
@@ -325,6 +521,8 @@ class RelativeFundMetricTests(unittest.TestCase):
         self.assertEqual(one_year["benchmark_quality"], "kid_full")
         self.assertEqual(one_year["category_funds"], 4)
         self.assertEqual(one_year["benchmark_components"], "WIG:100.0%")
+        self.assertEqual(one_year["benchmark_component_tickers"], "WIG:WIG.WA[file:wig]")
+        self.assertEqual(one_year["benchmark_component_sources"], "WIG:local")
         self.assertTrue(np.isfinite(one_year["ir"]))
         self.assertTrue(np.isfinite(one_year["peer_ir"]))
 

@@ -139,6 +139,10 @@ python moj_system/scripts/fund_reviewer.py --update --use-gemini
 ```
 
 Manual benchmark corrections belong in `moj_system/data/fund_benchmark_overrides.csv`. The semicolon-delimited file uses `subfundId`, `components_json`, `kind` (`official` or `proxy`), `notes`, and optional `portfolio_spread_bps`; component keys must exist in `benchmark_catalog.py` and weights are decimal fractions summing to 1.
+
+Gemini benchmark resolution defaults to `gemini-3.5-flash-lite`, with `gemini-3.1-flash-lite` as fallback for bulk KID parsing. Both use the configured limits of 15 RPM, 250k TPM, and 503 RPD. Proxy proposals use `gemini-3.8-flash` as a limited review model (5 RPM, 250k TPM, 20 RPD), then fall back to the Lite chain. Requests are batched in groups of 25 by default; set the GitHub repository variables `GEMINI_BULK_MODEL`, `GEMINI_REVIEW_MODEL`, `GEMINI_FALLBACK_MODELS` (comma-separated), and `GEMINI_BATCH_SIZE` to override this. The resolver retries HTTP 500/503/504 with backoff, switches models on HTTP 429, and persists its daily usage counter and result cache to Google Drive when `GDRIVE_FOLDER_ID` is available. The configured quota profile also covers `gemma-4-26b-a4b-it` (30 RPM, 16k TPM, 14,400 RPD); Gemma is not in the default chain because benchmark batches can exceed its smaller TPM limit.
+
+The `fund_benchmark_review_*.csv` output includes `benchmark_component_tickers` and `benchmark_component_sources`, with FX series shown separately for foreign-currency components.
 ---
 
 ## Configuration

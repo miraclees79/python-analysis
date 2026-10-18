@@ -15,6 +15,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: fund-review-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   run-review:
     runs-on: ubuntu-latest
@@ -36,6 +40,10 @@ jobs:
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_BULK_MODEL: ${{ vars.GEMINI_BULK_MODEL || 'gemini-3.5-flash-lite' }}
+          GEMINI_REVIEW_MODEL: ${{ vars.GEMINI_REVIEW_MODEL || 'gemini-3.8-flash' }}
+          GEMINI_FALLBACK_MODELS: ${{ vars.GEMINI_FALLBACK_MODELS || 'gemini-3.1-flash-lite' }}
+          GEMINI_BATCH_SIZE: ${{ vars.GEMINI_BATCH_SIZE || '25' }}
           USE_GEMINI: ${{ inputs.use_gemini }}
         run: |
           echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json

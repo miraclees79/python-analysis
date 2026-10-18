@@ -87,6 +87,8 @@ FINAL_COLS = [
     "benchmark_frequency",
     "benchmark_coverage",
     "benchmark_components",
+    "benchmark_component_tickers",
+    "benchmark_component_sources",
     "benchmark_unresolved",
     "benchmark_reason",
     "benchmark_is_proxy",
@@ -111,7 +113,36 @@ class FundReviewer:
         self.gdrive = GDriveClient(credentials_path=self.creds_path)
         self.folder_id = os.environ.get("GDRIVE_FOLDER_ID")
         self.benchmark_builder = BenchmarkBuilder()
-        self.gemini = GeminiBenchmarkResolver() if use_gemini else None
+        self.benchmark_cache_path = OUTPUT_DIR / "benchmark_llm_cache.json"
+        self.benchmark_quota_path = OUTPUT_DIR / "benchmark_llm_quota.json"
+        if use_gemini and self.folder_id:
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            self.gdrive.download_file(
+                self.folder_id,
+                self.benchmark_cache_path.name,
+                self.benchmark_cache_path,
+            )
+            self.gdrive.download_file(
+                self.folder_id,
+                self.benchmark_quota_path.name,
+                self.benchmark_quota_path,
+            )
+
+        def sync_gemini_state() -> None:
+            if not self.folder_id:
+                return
+            for state_path in (self.benchmark_cache_path, self.benchmark_quota_path):
+                if state_path.is_file():
+                    self.gdrive.upload_file(self.folder_id, str(state_path))
+
+        self.gemini = (
+            GeminiBenchmarkResolver(
+                cache_path=self.benchmark_cache_path,
+                state_changed=sync_gemini_state if self.folder_id else None,
+            )
+            if use_gemini
+            else None
+        )
         self.benchmark_overrides_path = (
             PROJECT_ROOT / "moj_system" / "data" / "fund_benchmark_overrides.csv"
         )
@@ -399,7 +430,48 @@ class FundReviewer:
         """Resolve and build each fund's official KID benchmark or explicit proxy."""
         benchmark_data: dict[str, dict[str, object]] = {}
         manual_overrides = self._load_benchmark_overrides()
-        for fund_row in df_funds.to_dict(orient="records"):
+        fund_rows = df_funds.to_dict(orient="records")
+        gemini_results: dict[str, dict[str, object]] = {}
+        if self.gemini is not None:
+            gemini_requests: dict[str, tuple[str, dict[str, str]]] = {}
+            for fund_row in fund_rows:
+                fund_key = self._normalize_id(fund_row.get("subfundId"))
+                if fund_key is None or fund_key in manual_overrides:
+                    continue
+                raw_text = fund_row.get("benchmark")
+                benchmark_text = raw_text.strip() if isinstance(raw_text, str) else ""
+                parsed = parse_benchmark_text(benchmark_text)
+                if not benchmark_text or parsed.is_no_benchmark:
+                    gemini_requests[fund_key] = (
+                        "proxy",
+                        {
+                            "name": str(fund_row.get("knf_name", fund_row.get("name", ""))),
+                            "category": str(fund_row.get("category", "")),
+                            "classification": str(fund_row.get("classification", "")),
+                            "risk_level": str(fund_row.get("riskLevel", "")),
+                        },
+                    )
+                elif parsed.unresolved:
+                    gemini_requests[fund_key] = ("kid", {"benchmark": benchmark_text})
+            batch_size = int(os.environ.get("GEMINI_BATCH_SIZE", "25"))
+            for operation in ("kid", "proxy"):
+                operation_requests = {
+                    fund_key: request
+                    for fund_key, request in gemini_requests.items()
+                    if request[0] == operation
+                }
+                if operation_requests:
+                    gemini_results.update(
+                        self.gemini.resolve_many(
+                            operation_requests,
+                            batch_size=batch_size,
+                            primary_model=(
+                                self.gemini.review_model if operation == "proxy" else None
+                            ),
+                        ),
+                    )
+
+        for fund_row in fund_rows:
             fund_key = self._normalize_id(fund_row.get("subfundId"))
             if fund_key is None:
                 continue
@@ -419,16 +491,7 @@ class FundReviewer:
                 is_category_proxy = manual["kind"] == "proxy"
                 resolution_reason = str(manual.get("reason", "Manual override"))
             elif not benchmark_text or parsed.is_no_benchmark:
-                proposal = (
-                    self.gemini.propose_proxy(
-                        name=str(fund_row.get("knf_name", fund_row.get("name", ""))),
-                        category=str(fund_row.get("category", "")),
-                        classification=str(fund_row.get("classification", "")),
-                        risk_level=str(fund_row.get("riskLevel", "")),
-                    )
-                    if self.gemini is not None
-                    else None
-                )
+                proposal = gemini_results.get(fund_key)
                 if proposal is not None:
                     llm_result = proposal
                     parsed = self._parsed_from_gemini(proposal)
@@ -450,7 +513,7 @@ class FundReviewer:
                         else "No official benchmark or category proxy is available."
                     )
             elif parsed.unresolved and self.gemini is not None:
-                resolved = self.gemini.resolve_kid_text(benchmark_text)
+                resolved = gemini_results.get(fund_key)
                 if resolved is not None:
                     llm_result = resolved
                     parsed = self._parsed_from_gemini(resolved)
@@ -467,6 +530,29 @@ class FundReviewer:
                 else "daily"
             )
             built = self.benchmark_builder.build(parsed, frequency=frequency)
+            component_details = {
+                str(detail.get("index_key")): detail
+                for detail in built.component_details
+                if isinstance(detail, Mapping)
+            }
+            component_tickers: list[str] = []
+            component_sources: list[str] = []
+            for component in parsed.components:
+                spec = INDEX_CATALOG[component.index_key]
+                detail = component_details.get(component.index_key, {})
+                ticker = str(detail.get("ticker") or spec.yfinance_ticker or spec.data_file or "unknown")
+                source_name = str(detail.get("source", "unreported"))
+                if source_name == "local" and spec.data_file:
+                    ticker = f"{ticker}[file:{spec.data_file}]"
+                if spec.proxy and source_name != "unreported":
+                    source_name = f"{source_name},catalog_proxy"
+                component_tickers.append(f"{component.index_key}:{ticker}")
+                component_sources.append(f"{component.index_key}:{source_name}")
+                fx_ticker = str(detail.get("fx_ticker", ""))
+                fx_source = str(detail.get("fx_source", "not_required"))
+                if fx_ticker and fx_source != "not_required":
+                    component_tickers.append(f"{spec.currency}/PLN:{fx_ticker}")
+                    component_sources.append(f"{spec.currency}/PLN:{fx_source}")
             if built.quality in {"unresolved", "none", "unavailable"}:
                 quality = "unresolved"
             elif is_category_proxy or built.quality == "proxy":
@@ -489,6 +575,8 @@ class FundReviewer:
                     f"{':hedged_to_pln' if component.hedged_to_pln else ''}"
                     for component in parsed.components
                 ),
+                "component_tickers": ";".join(component_tickers),
+                "component_sources": ";".join(component_sources),
                 "unresolved": " | ".join(built.unresolved or parsed.unresolved),
                 "is_proxy": is_proxy,
                 "rankable": (
@@ -608,6 +696,8 @@ class FundReviewer:
                 "benchmark_frequency": frequency,
                 "benchmark_coverage": benchmark_data.get("coverage", 0.0),
                 "benchmark_components": benchmark_data.get("components", ""),
+                "benchmark_component_tickers": benchmark_data.get("component_tickers", ""),
+                "benchmark_component_sources": benchmark_data.get("component_sources", ""),
                 "benchmark_unresolved": benchmark_data.get("unresolved", ""),
                 "benchmark_reason": benchmark_data.get("reason", ""),
                 "benchmark_is_proxy": bool(benchmark_data.get("is_proxy", False)),
@@ -745,6 +835,8 @@ class FundReviewer:
             "benchmark_frequency",
             "benchmark_coverage",
             "benchmark_components",
+            "benchmark_component_tickers",
+            "benchmark_component_sources",
             "benchmark_unresolved",
             "benchmark_reason",
             "benchmark_is_proxy",

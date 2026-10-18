@@ -25,12 +25,13 @@ class BuiltBenchmark:
     coverage: float
     component_keys: tuple[str, ...]
     unresolved: tuple[str, ...] = ()
+    component_details: tuple[dict[str, object], ...] = ()
 
 
 class BenchmarkBuilder:
     def __init__(self, yfinance_downloader: YFinanceDownloader | None = None) -> None:
         self._price_cache: dict[str, tuple[pd.Series | None, str]] = {}
-        self._fx_cache: dict[str, pd.Series | None] = {}
+        self._fx_cache: dict[str, tuple[pd.Series | None, str, str]] = {}
         self._yfinance_downloader = yfinance_downloader or self._download_yfinance
 
     @staticmethod
@@ -88,29 +89,36 @@ class BenchmarkBuilder:
         self._price_cache[spec.key] = (series, source)
         return series, source
 
-    def _load_fx(self, currency: str) -> pd.Series | None:
+    def _load_fx(self, currency: str) -> tuple[pd.Series | None, str, str]:
         if currency == "PLN":
-            return None
+            return None, "not_required", ""
         if currency in self._fx_cache:
             return self._fx_cache[currency]
         spec = FX_FILES.get(currency)
         if spec is None:
-            self._fx_cache[currency] = None
-            return None
+            result = (None, "unavailable", "")
+            self._fx_cache[currency] = result
+            return result
 
         frame = load_local_csv(ticker=spec[0], label=f"{currency}/PLN", mandatory=False)
         fx: pd.Series | None = None
+        source = "unavailable"
         if frame is not None and "Zamkniecie" in frame:
             local = self._clean_series(frame["Zamkniecie"])
             if not local.empty:
                 fx = local
+                source = "local"
         if fx is None:
             downloaded = self._yfinance_downloader(spec[1])
             if downloaded is not None:
                 clean = self._clean_series(downloaded)
-                fx = clean if not clean.empty else None
-        self._fx_cache[currency] = fx
-        return fx
+                if not clean.empty:
+                    fx = clean
+                    source = "yfinance_proxy"
+        ticker = spec[0] if source == "local" else spec[1]
+        result = (fx, source, ticker)
+        self._fx_cache[currency] = result
+        return result
 
     @staticmethod
     def _rate_returns(rate_percent: pd.Series, spread_bps: float) -> pd.Series:
@@ -136,6 +144,7 @@ class BenchmarkBuilder:
             return BuiltBenchmark(None, "unresolved", "unresolved", frequency, 0.0, (), parsed.unresolved)
 
         component_returns: dict[str, pd.Series] = {}
+        component_details: list[dict[str, object]] = []
         sources: set[str] = set()
         proxy_used = False
         unresolved: list[str] = []
@@ -144,22 +153,57 @@ class BenchmarkBuilder:
             spec = INDEX_CATALOG.get(component.index_key)
             if spec is None:
                 unresolved.append(f"unknown catalog key: {component.index_key}")
+                component_details.append(
+                    {
+                        "index_key": component.index_key,
+                        "weight": component.weight,
+                        "ticker": "",
+                        "source": "unavailable",
+                        "fx_ticker": "",
+                        "fx_source": "not_required",
+                    },
+                )
                 continue
             index_prices, source = self._load_index(spec)
+            ticker = spec.yfinance_ticker or spec.data_file or ""
             if index_prices is None or index_prices.empty:
                 unresolved.append(f"no series available for {component.index_key}")
+                component_details.append(
+                    {
+                        "index_key": component.index_key,
+                        "weight": component.weight,
+                        "spread_bps": component.spread_bps,
+                        "ticker": ticker,
+                        "source": source,
+                        "fx_ticker": "",
+                        "fx_source": "not_required",
+                    },
+                )
                 continue
             sources.add(source)
             proxy_used = proxy_used or spec.proxy or source == "yfinance_proxy"
+            fx_ticker = ""
+            fx_source = "not_required"
 
             if spec.asset_type == "rate":
                 returns = self._rate_returns(index_prices, component.spread_bps)
             else:
                 prices = index_prices
                 if spec.currency != "PLN" and not component.hedged_to_pln:
-                    fx = self._load_fx(spec.currency)
+                    fx, fx_source, fx_ticker = self._load_fx(spec.currency)
                     if fx is None or fx.empty:
                         unresolved.append(f"no {spec.currency}/PLN FX series for {component.index_key}")
+                        component_details.append(
+                            {
+                                "index_key": component.index_key,
+                                "weight": component.weight,
+                                "spread_bps": component.spread_bps,
+                                "ticker": ticker,
+                                "source": source,
+                                "fx_ticker": fx_ticker,
+                                "fx_source": fx_source,
+                            },
+                        )
                         continue
                     fx_aligned = fx.reindex(prices.index).ffill(limit=5)
                     prices = (prices * fx_aligned).dropna()
@@ -168,6 +212,17 @@ class BenchmarkBuilder:
                 returns = prices.pct_change(fill_method=None).fillna(0.0)
                 returns = self._add_spread(returns, component.spread_bps)
             component_returns[component.index_key] = returns
+            component_details.append(
+                {
+                    "index_key": component.index_key,
+                    "weight": component.weight,
+                    "spread_bps": component.spread_bps,
+                    "ticker": ticker,
+                    "source": source,
+                    "fx_ticker": fx_ticker,
+                    "fx_source": fx_source,
+                },
+            )
 
         if unresolved:
             return BuiltBenchmark(
@@ -178,6 +233,7 @@ class BenchmarkBuilder:
                 0.0,
                 tuple(component_returns),
                 tuple(unresolved),
+                tuple(component_details),
             )
         if not component_returns:
             return BuiltBenchmark(None, "unavailable", "unresolved", frequency, 0.0, (), ("no components",))
@@ -207,4 +263,5 @@ class BenchmarkBuilder:
             frequency,
             coverage,
             tuple(component_returns),
+            component_details=tuple(component_details),
         )

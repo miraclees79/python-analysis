@@ -6,7 +6,7 @@ import socket
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 from google.oauth2 import service_account
@@ -74,14 +74,15 @@ class GDriveClient:
         filename: str,
     ) -> str | None:
 
-        if not self.service:
+        service: Any = self.service
+        if not service:
             return None
         try:
             parent_query = f"'{parent_id}' in parents" if parent_id else "'root' in parents"
             query = f"name='{filename}' and {parent_query} and trashed=false"
 
             # DODAJ num_retries=5
-            results = self.service.files().list(q=query, fields="files(id,name)").execute(num_retries=5)
+            results = service.files().list(q=query, fields="files(id,name)").execute(num_retries=5)
             files = results.get("files", [])
             return files[0]["id"] if files else None
         except (ConnectionResetError, socket.timeout):
@@ -98,11 +99,12 @@ class GDriveClient:
     ) -> pd.DataFrame | None:
 
         file_id = self.find_file_id(folder_id, filename)
-        if not file_id:
+        service: Any = self.service
+        if not file_id or not service:
             return None
 
         buf = io.BytesIO()
-        request = self.service.files().get_media(fileId=file_id)
+        request = service.files().get_media(fileId=file_id)
         downloader = MediaIoBaseDownload(buf, request)
         done = False
         while not done:
@@ -114,6 +116,32 @@ class GDriveClient:
         except Exception as e:
             logging.error(f"Bląd dekodowania CSV: {e}")
             return None
+
+    def download_file(
+        self,
+        folder_id: str,
+        filename: str,
+        local_path: str | Path,
+    ) -> bool:
+        file_id = self.find_file_id(folder_id, filename)
+        service: Any = self.service
+        if not file_id or not service:
+            return False
+        try:
+            buffer = io.BytesIO()
+            request = service.files().get_media(fileId=file_id)
+            downloader = MediaIoBaseDownload(buffer, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            target = Path(local_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(buffer.getvalue())
+            logging.info("Downloaded file from Drive: %s", filename)
+            return True
+        except Exception as exc:
+            logging.warning("Could not download file from Drive (%s): %s", filename, type(exc).__name__)
+            return False
 
     def upload_file(
         self,
@@ -173,7 +201,7 @@ class GDriveClient:
                     # Czasami błąd wynika z wygasłego tokenu lub zerwanego gniazda.
                     # Twardy reset połączenia z serwerami Google:
                     self.service = self._get_service()
-                    service = self.service
+                    service = cast(Any, self.service)
                 else:
                     logging.error(msg=f"All upload attempts failed for {filename}")
                     return None
