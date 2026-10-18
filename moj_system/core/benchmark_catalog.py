@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 
@@ -22,7 +22,11 @@ INDEX_CATALOG: dict[str, IndexSpec] = {
     "WIG20TR": IndexSpec(
         "WIG20TR", ("WIG20TR", "WIG 20 TR", "WIG20 TR"), "wig20tr", "WIG20TR.WA", "PLN", "price"
     ),
-    "WIG30TR": IndexSpec("WIG30TR", ("WIG30TR", "WIG 30 TR"), None, "WIG30TR.WA", "PLN", "price", True),
+    "WIG30TR": IndexSpec("WIG30TR", ("WIG30TR", "WIG 30 TR"), "wig30tr", "WIG30TR.WA", "PLN", "price"),
+    "WIGTECH": IndexSpec(
+        "WIGTECH", ("WIGTECHTR", "WIGTECH TR", "WIGTECH", "WIGTECTR"), "wigtechtr", None, "PLN", "price"
+    ),
+    "CECE": IndexSpec("CECE", ("CECE NET TR", "CECE"), "ceeplus", None, "PLN", "price", True),
     "MWIG40TR": IndexSpec(
         "MWIG40TR",
         ("MWIG40TR", "MWIG40 TR", "MWIG40 Total Return", "MWIG40"),
@@ -39,10 +43,10 @@ INDEX_CATALOG: dict[str, IndexSpec] = {
         "PLN",
         "price",
     ),
-    "WIGDIV": IndexSpec("WIGDIV", ("WIGDIV", "WIG DIV"), "etfbdivpl", None, "PLN", "price", True),
+    "WIGDIV": IndexSpec("WIGDIV", ("WIGDIV", "WIG DIV"), "wigdiv", None, "PLN", "price"),
     "TBSP": IndexSpec(
         "TBSP",
-        ("TBSP INDEX", "TBSP", "TREASURY BONDSPOT POLAND", "TREASURY BOND SPOT POLAND"),
+        ("TBSP INDEX", "TBSP", "TBSB", "TREASURY BONDSPOT POLAND", "TREASURY BOND SPOT POLAND"),
         "tbsp",
         None,
         "PLN",
@@ -55,15 +59,21 @@ INDEX_CATALOG: dict[str, IndexSpec] = {
         None,
         "PLN",
         "price",
-        True,
     ),
-    "GPWB_B1Y4Y": IndexSpec("GPWB_B1Y4Y", ("GPWB B1Y4Y",), "tbsp", None, "PLN", "price", True),
-    "GPWB_B1Y3Y": IndexSpec("GPWB_B1Y3Y", ("GPWB B1Y3Y",), "tbsp", None, "PLN", "price", True),
-    "GPWB_B5Y": IndexSpec("GPWB_B5Y", ("GPWB B5Y",), "tbsp", None, "PLN", "price", True),
-    "GPWB_CENTR": IndexSpec("GPWB_CENTR", ("GPWB CENTR",), "tbsp", None, "PLN", "price", True),
+    "GPWB_B1Y4Y": IndexSpec("GPWB_B1Y4Y", ("GPWB B1Y4Y",), "gpwb_b1y4y", None, "PLN", "price"),
+    "GPWB_B1Y3Y": IndexSpec("GPWB_B1Y3Y", ("GPWB B1Y3Y",), "gpwb_b1y3y", None, "PLN", "price"),
+    "GPWB_B5Y": IndexSpec("GPWB_B5Y", ("GPWB B5Y",), "gpwb_b5y", None, "PLN", "price"),
+    "GPWB_CENTR": IndexSpec("GPWB_CENTR", ("GPWB CENTR",), "gpwb_centr", None, "PLN", "price"),
      "MSCI_WORLD": IndexSpec(
           "MSCI_WORLD",
-          ("MSCI WORLD NET TOTAL RETURN", "MSCI WORLD USD INDEX", "MSCI WORLD", "MSCITR", "NDDUWI"),
+          (
+               "MSCI WORLD NET TOTAL RETURN",
+               "MSCI WORLD USD INDEX",
+               "MSCI WORLD",
+               "MSCITR",
+               "NDDUWI",
+               "BLOOMBERG DEVELOPED MARKETS QUALITY LARGE MID CAP",
+          ),
           "msci_world_combined",
           "URTH",
           "USD",
@@ -72,6 +82,18 @@ INDEX_CATALOG: dict[str, IndexSpec] = {
      ),
     "MSCI_ACWI": IndexSpec(
         "MSCI_ACWI", ("MSCI ACWI", "MSCI WORLD ALL COUNTRIES"), None, "ACWI", "USD", "price", True
+    ),
+    "MSCI_ACWI_ROBOTICS_AI": IndexSpec(
+        "MSCI_ACWI_ROBOTICS_AI",
+        ("MSCI ACWI ROBOTICS AI", "MSCI ACWI IMI INNOVATION"),
+        None,
+        "BOTZ",
+        "USD",
+        "price",
+        True,
+    ),
+    "MSCI_JAPAN": IndexSpec(
+        "MSCI_JAPAN", ("MSCI JAPAN JPY NET TOTAL RETURN", "MSCI JAPAN"), None, "EWJ", "USD", "price", True
     ),
     "MSCI_POLAND_IMI": IndexSpec(
         "MSCI_POLAND_IMI", ("MSCI POLAND IMI LOC GROSS", "MIMLPOLG"), "wig", None, "PLN", "price", True
@@ -83,23 +105,29 @@ INDEX_CATALOG: dict[str, IndexSpec] = {
         "MSCI_WORLD_MID_CAP", ("MSCI WORLD MID CAP",), None, "IWR", "USD", "price", True
     ),
     "MSCI_WORLD_HEALTH_CARE": IndexSpec(
-        "MSCI_WORLD_HEALTH_CARE", ("MSCI WORLD HEALTH CARE",), None, "XLV", "USD", "price", True
+        "MSCI_WORLD_HEALTH_CARE", ("MSCI WORLD HEALTH CARE",), None, "IXJ", "USD", "price", True
     ),
     "MSCI_WORLD_TECH": IndexSpec(
-        "MSCI_WORLD_TECH",
-        ("MSCI WORLD INFORMATION TECHNOLOGY", "MSCI WORLD IMI CYBER SECURITY"),
-        None,
-        "XLK",
-        "USD",
-        "price",
-        True,
+        "MSCI_WORLD_TECH", ("MSCI WORLD INFORMATION TECHNOLOGY",), None, "IXN", "USD", "price", True
+    ),
+    "MSCI_WORLD_CYBER": IndexSpec(
+        "MSCI_WORLD_CYBER", ("MSCI WORLD IMI CYBER SECURITY",), None, "CIBR", "USD", "price", True
+    ),
+    "MSCI_WORLD_SPACE": IndexSpec(
+        "MSCI_WORLD_SPACE", ("MSCI WORLD IMI SPACE EXPLORATION",), None, "UFO", "USD", "price", True
+    ),
+    "MSCI_WORLD_NEW_ENERGY": IndexSpec(
+        "MSCI_WORLD_NEW_ENERGY", ("MSCI WORLD IMI NEW ENERGY SELECT",), None, "ICLN", "USD", "price", True
     ),
     "MSCI_WORLD_REAL_ESTATE": IndexSpec(
-        "MSCI_WORLD_REAL_ESTATE", ("MSCI WORLD REAL ESTATE",), None, "VNQ", "USD", "price", True
+        "MSCI_WORLD_REAL_ESTATE", ("MSCI WORLD REAL ESTATE",), None, "REET", "USD", "price", True
     ),
     "MSCI_WORLD_COMMODITY": IndexSpec(
-        "MSCI_WORLD_COMMODITY",
-        ("MSCI WORLD COMMODITY PRODUCERS", "MSCI ACWI SELECT GOLD MINERS"),
+        "MSCI_WORLD_COMMODITY", ("MSCI WORLD COMMODITY PRODUCERS",), None, "PICK", "USD", "price", True
+    ),
+    "GOLD_MINERS": IndexSpec(
+        "GOLD_MINERS",
+        ("MSCI ACWI SELECT GOLD MINERS", "MARKETVECTOR GLOBAL GOLD MINERS"),
         None,
         "GDX",
         "USD",
@@ -108,7 +136,16 @@ INDEX_CATALOG: dict[str, IndexSpec] = {
     ),
     "MSCI_USA": IndexSpec(
         "MSCI_USA",
-        ("MSCI USA NET TOTAL RETURN", "MSCI USA", "SPTR500N", "S&P 500", "S P 500"),
+        (
+            "MSCI USA NET TOTAL RETURN",
+            "MSCI USA",
+            "MSCI DAILY TR NET USA",
+            "BLOOMBERG US LARGE CAP",
+            "BLOOMBERG US AGGREGATE EQUITY",
+            "SPTR500N",
+            "S&P 500",
+            "S P 500",
+        ),
         "sp500",
         "SPY",
         "USD",
@@ -117,7 +154,13 @@ INDEX_CATALOG: dict[str, IndexSpec] = {
     ),
     "MSCI_EM": IndexSpec(
         "MSCI_EM",
-        ("MSCI EMERGING MARKETS NET TOTAL RETURN", "MSCI EMERGING MARKETS", "MSCI EM"),
+        (
+            "MSCI EMERGING MARKETS NET TOTAL RETURN",
+            "MSCI EMERGING MARKETS",
+            "MSCI EMERGING ASIA",
+            "BLOOMBERG EMERGING MARKETS LARGE MID CAP",
+            "MSCI EM",
+        ),
         None,
         "EEM",
         "USD",
@@ -150,7 +193,13 @@ INDEX_CATALOG: dict[str, IndexSpec] = {
         "MSCI_EURO_GOVT_BOND", ("MSCI EUROZONE GOVERNMENT BOND INDEX",), None, "IEGA.AS", "EUR", "price", True
     ),
     "MSCI_EURO_GREEN_BOND": IndexSpec(
-        "MSCI_EURO_GREEN_BOND", ("BLOOMBERG MSCI EURO GREEN BOND INDEX",), None, None, "EUR", "price", True
+        "MSCI_EURO_GREEN_BOND", ("BLOOMBERG MSCI EURO GREEN BOND INDEX",), None, "BNDX", "USD", "price", True
+    ),
+    "EUROSTOXX_LARGE": IndexSpec(
+        "EUROSTOXX_LARGE", ("EURO STOXX TOTAL MARKET VALUE LARGE",), None, "EZU", "USD", "price", True
+    ),
+    "BLOOMBERG_MULTIVERSE": IndexSpec(
+        "BLOOMBERG_MULTIVERSE", ("BLOOMBERG MULTIVERSE INDEX",), None, "BNDW", "USD", "price", True
     ),
     "BLOOMBERG_AGGREGATE": IndexSpec(
         "BLOOMBERG_AGGREGATE",
@@ -164,6 +213,15 @@ INDEX_CATALOG: dict[str, IndexSpec] = {
     "BLOOMBERG_SERIES_E_PL_GOVT_1_5Y": IndexSpec(
         "BLOOMBERG_SERIES_E_PL_GOVT_1_5Y",
         ("BLOOMBERG SERIES E POLAND GOVT 1 5 YR BOND INDEX", "BEPDG1"),
+        "tbsp",
+        None,
+        "PLN",
+        "price",
+        True,
+    ),
+    "BLOOMBERG_SERIES_E_PL_GOVT_ALL": IndexSpec(
+        "BLOOMBERG_SERIES_E_PL_GOVT_ALL",
+        ("BLOOMBERG SERIES E POLAND GOVT ALL 1 YR BOND INDEX", "BLOOMBERG SERIES E POLAND GOVT 1 YR BOND INDEX"),
         "tbsp",
         None,
         "PLN",
@@ -206,7 +264,12 @@ INDEX_CATALOG: dict[str, IndexSpec] = {
     ),
     "JPM_EMBI": IndexSpec(
         "JPM_EMBI",
-        ("JPMORGAN EMBI GLOBAL DIVERSIFIED", "JPM EMBI GLOBAL DIVERSIFIED"),
+        (
+            "JPMORGAN EMBI GLOBAL DIVERSIFIED",
+            "JPM EMBI GLOBAL DIVERSIFIED",
+            "JPMORGAN EMERGING MARKET BOND INDEX GLOBAL DIVERSIFIED",
+            "ICE BOFAML EMERGING MARKETS EXTERNAL SOVEREIGN INDEX",
+        ),
         None,
         "EMB",
         "USD",
@@ -223,6 +286,7 @@ INDEX_CATALOG: dict[str, IndexSpec] = {
             "ICE BOFAML POLAND GOVERNMENT INDEX",
             "ICE BOFA 1 3 YEAR POLAND GOVERNMENT INDEX",
             "ICE BOFA ALL MATURITY POLISH GOVERNMENT INDEX",
+            "ICE BOFAML ALL MATURITY POLISH GOVERNMENT INDEX",
             "G1PL",
             "GOPL",
             "G0PL",
@@ -244,10 +308,10 @@ INDEX_CATALOG: dict[str, IndexSpec] = {
     ),
     "ICE_EURO_HIGH_YIELD": IndexSpec(
         "ICE_EURO_HIGH_YIELD",
-        ("ICE BOFA EURO HIGH YIELD INDEX", "HE00"),
+        ("ICE BOFA EURO HIGH YIELD INDEX", "HE00", "MSCI EUR HY CORPORATE BOND INDEX"),
         None,
-        "IHYG.AS",
-        "EUR",
+        "HYG",
+        "USD",
         "price",
         True,
     ),
@@ -274,33 +338,45 @@ INDEX_CATALOG: dict[str, IndexSpec] = {
         "BITCOIN", ("BLOOMBERG BITCOIN INDEX", "BITCOIN"), "btc", "BTC-USD", "USD", "price", True
     ),
     "WIBOR_ON": IndexSpec(
-        "WIBOR_ON", ("WIBOR O N", "WIBOR ON", "WIBOR OVERNIGHT"), "wibor1m", None, "PLN", "rate", True
+        "WIBOR_ON", ("WIBOR O N", "WIBOR ON", "WIBOR OVERNIGHT"), "wiboron", None, "PLN", "rate"
     ),
     "WIBOR_1M": IndexSpec(
         "WIBOR_1M", ("WIBOR 1M", "WIBOR1M", "WIBO1M", "WIBOR1M ASK PRICE"), "wibor1m", None, "PLN", "rate"
     ),
     "WIBOR_3M": IndexSpec(
-        "WIBOR_3M", ("WIBOR 3M", "WIBOR3M", "WIBO3M", "WIBR3M"), "wibor1m", None, "PLN", "rate", True
+        "WIBOR_3M", ("WIBOR 3M", "WIBOR3M", "WIBO3M", "WIBR3M"), "wibor3m", None, "PLN", "rate"
     ),
-    "WIBOR_6M": IndexSpec(
-        "WIBOR_6M", ("WIBOR 6M", "WIBOR6M", "WIBO6M"), "wibor1m", None, "PLN", "rate", True
-    ),
-    "WIBOR_1Y": IndexSpec("WIBOR_1Y", ("WIBOR 1Y", "WIBOR1Y"), "wibor1m", None, "PLN", "rate", True),
-    "WIBID_1M": IndexSpec("WIBID_1M", ("WIBID 1M", "WIBID1M"), "wibor1m", None, "PLN", "rate", True),
-    "WIBID_3M": IndexSpec("WIBID_3M", ("WIBID 3M", "WIBID3M"), "wibor1m", None, "PLN", "rate", True),
-    "WIBID_6M": IndexSpec("WIBID_6M", ("WIBID 6M", "WIBID6M"), "wibor1m", None, "PLN", "rate", True),
-    "WIBID_ON": IndexSpec(
-        "WIBID_ON", ("WIBID O N", "WIBID ON", "WIBID1M"), "wibor1m", None, "PLN", "rate", True
-    ),
-    "WIRON_ON": IndexSpec("WIRON_ON", ("WIRON O N", "WIRON ON"), "wibor1m", None, "PLN", "rate", True),
-    "WIRON_3M": IndexSpec("WIRON_3M", ("WIRON 3M", "WIRON3M"), "wibor1m", None, "PLN", "rate", True),
-    "WIRON_6M": IndexSpec("WIRON_6M", ("WIRON 6M", "WIRON6M"), "wibor1m", None, "PLN", "rate", True),
-    "POLONIA": IndexSpec("POLONIA", ("POLONIA",), "wibor1m", None, "PLN", "rate", True),
+    "WIBOR_6M": IndexSpec("WIBOR_6M", ("WIBOR 6M", "WIBOR6M", "WIBO6M"), "wibor6m", None, "PLN", "rate"),
+    "WIBOR_1Y": IndexSpec("WIBOR_1Y", ("WIBOR 1Y", "WIBOR1Y"), "wibor1y", None, "PLN", "rate"),
+    "WIBID_1M": IndexSpec("WIBID_1M", ("WIBID 1M", "WIBID1M"), "wibid1m", None, "PLN", "rate"),
+    "WIBID_3M": IndexSpec("WIBID_3M", ("WIBID 3M", "WIBID3M"), "wibid3m", None, "PLN", "rate"),
+    "WIBID_6M": IndexSpec("WIBID_6M", ("WIBID 6M", "WIBID6M"), "wibid6m", None, "PLN", "rate"),
+    "WIBID_ON": IndexSpec("WIBID_ON", ("WIBID O N", "WIBID ON"), "wibidon", None, "PLN", "rate"),
+    "WIRON_ON": IndexSpec("WIRON_ON", ("WIRON O N", "WIRON ON"), "wironon", None, "PLN", "rate"),
+    "WIRON_3M": IndexSpec("WIRON_3M", ("WIRON 3M", "WIRON3M"), "wiron3m", None, "PLN", "rate"),
+    "WIRON_6M": IndexSpec("WIRON_6M", ("WIRON 6M", "WIRON6M"), "wiron6m", None, "PLN", "rate"),
+    # POLSTR ma krótką historię na stooq, więc POLONIA i POLSTR używają WIBOR O/N jako proxy.
+    "POLONIA": IndexSpec("POLONIA", ("POLONIA",), "wiboron", None, "PLN", "rate", True),
     "POLSTR": IndexSpec(
-        "POLSTR", ("POLSTR", "POLSTR INDEKS JEDNOPODSTAWOWY"), "wibor1m", None, "PLN", "rate", True
+        "POLSTR", ("POLSTR", "POLSTR INDEKS JEDNOPODSTAWOWY"), "wiboron", None, "PLN", "rate", True
     ),
     "EURIBOR_1M": IndexSpec("EURIBOR_1M", ("1M EURIBOR", "EURIBOR 1M"), None, None, "EUR", "rate"),
 }
+
+# ETF-i z USA ładowane z d_us_txt.zip (etykieta pliku: us_<ticker>); yfinance zostaje fallbackiem.
+US_ETF_TICKERS: tuple[str, ...] = (
+    "ACWI", "EEM", "INDA", "MCHI", "TUR", "IWY", "IWR", "IXJ", "IXN", "CIBR", "UFO", "ICLN", "REET",
+    "PICK", "GDX", "SHY", "BNDW", "BNDX", "BIL", "PDBC", "EMB", "IGOV", "EWJ", "BOTZ", "EZU", "HYG",
+)  # fmt: skip
+
+
+def us_etf_label(ticker: str) -> str:
+    return f"us_{ticker.lower()}"
+
+
+for _key, _spec in list(INDEX_CATALOG.items()):
+    if _spec.data_file is None and _spec.yfinance_ticker in US_ETF_TICKERS:
+        INDEX_CATALOG[_key] = replace(_spec, data_file=us_etf_label(_spec.yfinance_ticker))
 
 
 def normalize_index_text(text: str) -> str:

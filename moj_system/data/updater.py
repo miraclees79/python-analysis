@@ -17,6 +17,7 @@ import requests
 import yfinance as yf
 
 from moj_system.config import DATA_DIR
+from moj_system.core.benchmark_catalog import US_ETF_TICKERS, us_etf_label
 from moj_system.data.gdrive import GDriveClient
 
 # --- JAWNE DEKLARACJE TYPÓW (naprawia błąd Pylance) ---
@@ -32,6 +33,7 @@ ZIP_MAPPING = {
     "currencies": "d_world_txt.zip",
     "fund_pl": "d_pl_txt.zip",
     "etf_pl": "d_pl_txt.zip",
+    "etf_us": "d_us_txt.zip",
     "bonds": "d_world_txt.zip",
     "crypto": "d_world_txt.zip",
 }
@@ -71,6 +73,18 @@ DEFAULT_TICKERS = [
     {"label": "nikkei225", "stooq": "^nkx", "yf": "^N225", "type": "index_world"},
     {"label": "nasdaq100", "stooq": "^ndx", "yf": "^NDX", "type": "index_world"},
     {"label": "wibor1m", "stooq": "plopln1m", "yf": None, "type": "currencies"},
+    {"label": "wibor3m", "stooq": "plopln3m", "yf": None, "type": "currencies"},
+    {"label": "wibor6m", "stooq": "plopln6m", "yf": None, "type": "currencies"},
+    {"label": "wibor1y", "stooq": "plopln1y", "yf": None, "type": "currencies"},
+    {"label": "wiboron", "stooq": "ploplnon", "yf": None, "type": "currencies"},
+    {"label": "wibid1m", "stooq": "plbpln1m", "yf": None, "type": "currencies"},
+    {"label": "wibid3m", "stooq": "plbpln3m", "yf": None, "type": "currencies"},
+    {"label": "wibid6m", "stooq": "plbpln6m", "yf": None, "type": "currencies"},
+    {"label": "wibidon", "stooq": "plbplnon", "yf": None, "type": "currencies"},
+    {"label": "wironon", "stooq": "plwpln00", "yf": None, "type": "currencies"},
+    {"label": "wiron3m", "stooq": "plwpln3m", "yf": None, "type": "currencies"},
+    {"label": "wiron6m", "stooq": "plwpln6m", "yf": None, "type": "currencies"},
+    {"label": "polstr", "stooq": "plspln00", "yf": None, "type": "currencies"},
     {"label": "usdpln", "stooq": "usdpln", "yf": "USDPLN=X", "type": "currencies"},
     {"label": "eurpln", "stooq": "eurpln", "yf": "EURPLN=X", "type": "currencies"},
     {"label": "jpypln", "stooq": "jpypln", "yf": "JPYPLN=X", "type": "currencies"},
@@ -78,6 +92,14 @@ DEFAULT_TICKERS = [
     {"label": "pl10y", "stooq": "10yply.b", "yf": None, "type": "bonds"},
     {"label": "fund_2720", "stooq": "2720.n", "yf": None, "type": "fund_pl", "knf": "195983"},
     {"label": "wbbw", "stooq": "^gpwbbwz", "yf": None, "type": "index_pl"},
+    {"label": "gpwb_b1y3y", "stooq": "^gpwbb1y3y", "yf": None, "type": "index_pl"},
+    {"label": "gpwb_b1y4y", "stooq": "^gpwbb1y4y", "yf": None, "type": "index_pl"},
+    {"label": "gpwb_b5y", "stooq": "^gpwbb5y", "yf": None, "type": "index_pl"},
+    {"label": "gpwb_centr", "stooq": "^gpwbcentr", "yf": None, "type": "index_pl"},
+    {"label": "wigdiv", "stooq": "wigdiv", "yf": None, "type": "index_pl"},
+    {"label": "wig30tr", "stooq": "wig30tr", "yf": "WIG30TR.WA", "type": "index_pl"},
+    {"label": "wigtechtr", "stooq": "wigtechtr", "yf": None, "type": "index_pl"},
+    {"label": "ceeplus", "stooq": "ceeplus", "yf": None, "type": "index_pl"},
     {"label": "btc", "stooq": "btc.v", "yf": "BTC-USD", "type": "crypto"},
     {"label": "eth", "stooq": "eth.v", "yf": None, "type": "crypto"},
 ]
@@ -97,6 +119,10 @@ ETF_TICKERS = [
     {"label": "etfbspxpl", "stooq": "etfbspxpl.pl", "yf": "ETFBSPXPL.WA", "type": "etf_pl"},
     {"label": "etfsp500", "stooq": "etfsp500.pl", "yf": "ETFSP500.WA", "type": "etf_pl"},
     {"label": "etfdax", "stooq": "etfdax.pl", "yf": "ETFDAX.WA", "type": "etf_pl"},
+]
+
+US_ETF_ITEMS = [
+    {"label": us_etf_label(t), "stooq": f"{t.lower()}.us", "yf": t, "type": "etf_us"} for t in US_ETF_TICKERS
 ]
 
 
@@ -547,6 +573,14 @@ class DataUpdater:
                 yf_ticker=item.get("yf"),
                 knf_id=item.get("knf"),
                 gpw_isin=item.get("gpw_isin"),
+                zip_type=item["type"],
+            )
+
+        for item in US_ETF_ITEMS:
+            self.update_ticker(
+                label=item["label"],
+                stooq_ticker=item["stooq"],
+                yf_ticker=item["yf"],
                 zip_type=item["type"],
             )
 

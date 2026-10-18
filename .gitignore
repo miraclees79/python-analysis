@@ -37,3 +37,4 @@ outputs/
 /moj_system/data/zips
 /moj_system/zips/
 /moj_system/__pycache__
+/moj_system/data/market_data_tickers_stooq
