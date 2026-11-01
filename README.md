@@ -152,7 +152,9 @@ positions** into a volatile working directory (`KSL_DATA_DIR`, default: a temp
 folder), so nothing from `moj_system/data/raw_csv/` is required:
 
 - Stooq funds/ETFs: `historia<id>.csv` / `historia<etf>.pl.csv` from the `Dane`
-  subfolder (uploaded by `fund_data_refresher`),
+  folder created by `fund_data_refresher`. It is looked up by name on the whole
+  Drive (same query as `DataUpdater`), so it does not have to live inside
+  `GDRIVE_FOLDER_ID`, which only needs `ksl_positions.json` and the PPE files,
 - PPE: `full_ppe_history.csv` + `filtered_table.csv` (OCR) combined with the same
   `combine_ppe_history` logic as `ppe_manager`, without any upload.
 

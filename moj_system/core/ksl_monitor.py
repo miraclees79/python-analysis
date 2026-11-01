@@ -30,6 +30,7 @@ CONFIG_SCHEMA_VERSION = 1
 STALE_AFTER_DAYS = 7
 REFRESH_STATUS_FILENAME = "refresh_status.json"
 PPE_COMBINED_FILENAME = "ppe_combined.csv"
+KNF_NAMES_FILENAME = "knf_stooq_confirmed.csv"
 
 # Podfolder z historiami funduszy/ETF wgrywanymi przez DataUpdater (updater.GDRIVE_DATA_FOLDER_NAME).
 DRIVE_DATA_FOLDER_NAME = "Dane"
@@ -87,7 +88,8 @@ def default_data_dir() -> Path:
     return path
 
 
-def _read_stooq_fund_names() -> dict[str, str]:
+def _read_stooq_fund_names(data_dir: Path | None = None) -> dict[str, str]:
+    """Nazwy funduszy: pliki z repo (jeśli są), nadpisane przez knf_stooq_confirmed.csv z Drive."""
     names: dict[str, str] = {}
     names_dir = REPO_DATA_DIR.parent / "fund_names_stooq"
     for path in names_dir.glob("*.txt"):
@@ -95,8 +97,19 @@ def _read_stooq_fund_names() -> dict[str, str]:
             match = re.match(r"^\s*(\d+)\.N\s+(.+?)\s*$", line, flags=re.IGNORECASE)
             if match:
                 names[match.group(1)] = match.group(2).strip()
-    return names
 
+    names_csv = (data_dir or default_data_dir()) / KNF_NAMES_FILENAME
+    if names_csv.is_file():
+        try:
+            frame = pd.read_csv(names_csv, dtype=str, encoding="utf-8-sig").fillna("")
+            for row in frame.to_dict("records"):
+                stooq_id = str(row.get("stooq_id", "")).strip()
+                name = str(row.get("stooq_name", "")).strip() or str(row.get("knf_name", "")).strip()
+                if stooq_id.isdigit() and name:
+                    names[stooq_id] = name
+        except (OSError, ValueError, pd.errors.ParserError) as exc:
+            logging.warning("Nie udało się odczytać %s: %s", KNF_NAMES_FILENAME, exc)
+    return names
 
 def instrument_from_id(
     instrument_id: str,
@@ -111,7 +124,7 @@ def instrument_from_id(
     fund_match = _FUND_ID_RE.match(instrument_id)
     if fund_match:
         fund_id = fund_match.group(1)
-        names = stooq_names if stooq_names is not None else _read_stooq_fund_names()
+        names = stooq_names if stooq_names is not None else _read_stooq_fund_names(data_dir)
         return Instrument(
             instrument_id,
             names.get(fund_id, f"Fundusz Stooq {fund_id}.n"),
@@ -144,10 +157,23 @@ def drive_filename(instrument: Instrument) -> str | None:
     return f"historia{instrument.source_ticker}.csv"
 
 
-def list_drive_instrument_ids(client: GDriveClient, folder_id: str) -> set[str]:
+def find_data_folder_id(client: GDriveClient) -> str | None:
+    """Folder z historiami funduszy/ETF; to samo zapytanie co w DataUpdater (po nazwie, cały Drive)."""
+    service: Any = client.service
+    if not service:
+        return None
+    query = (
+        f"name='{DRIVE_DATA_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' "
+        "and trashed=false"
+    )
+    items = service.files().list(q=query, fields="files(id)").execute(num_retries=5).get("files", [])
+    return str(items[0]["id"]) if items else None
+
+
+def list_drive_instrument_ids(client: GDriveClient) -> set[str]:
     """Instrumenty Stooq, których historie leżą w podfolderze danych na Drive."""
     service: Any = client.service
-    data_folder_id = client.find_file_id(parent_id=folder_id, filename=DRIVE_DATA_FOLDER_NAME)
+    data_folder_id = find_data_folder_id(client)
     if not service or not data_folder_id:
         return set()
     ids: set[str] = set()
@@ -182,7 +208,7 @@ def get_instrument_catalog(
 ) -> dict[str, Instrument]:
     """Katalog do wyboru: PPE, pliki obecne w data_dir oraz instrumenty znane z Drive (extra_ids)."""
     data_dir = data_dir or default_data_dir()
-    names = _read_stooq_fund_names()
+    names = _read_stooq_fund_names(data_dir)
     ids: set[str] = set(PPE_INSTRUMENTS) | set(extra_ids)
     for path in data_dir.glob("fund_*.csv"):
         match = re.fullmatch(r"fund_(\d+)", path.stem)
@@ -255,6 +281,13 @@ def calculate_position_metrics(
 
     prior_prices = series.loc[series.index < latest_date]
     daily_return_pct = latest_price / float(prior_prices.iloc[-1]) - 1 if not prior_prices.empty else None
+    monthly_returns: dict[int, float | None] = {}
+    for months in (1, 3):
+        target_date = latest_date - pd.DateOffset(months=months)
+        reference_prices = series.loc[series.index <= target_date]
+        monthly_returns[months] = (
+            latest_price / float(reference_prices.iloc[-1]) - 1 if not reference_prices.empty else None
+        )
     return {
         "selected_entry_date": selected_timestamp.date().isoformat(),
         "effective_entry_date": entry_date.date().isoformat(),
@@ -265,6 +298,8 @@ def calculate_position_metrics(
         "return_since_entry_pct": latest_price / entry_price - 1,
         "drawdown_from_peak_pct": drawdown_pct,
         "daily_return_pct": daily_return_pct,
+        "return_1m_pct": monthly_returns[1],
+        "return_3m_pct": monthly_returns[3],
         "ksl_level": ksl_pct,
         "warning_level": warning_pct,
         "ksl_status": ksl_status,
@@ -417,7 +452,8 @@ def refresh_instruments(
     if ppe_ids:
         results.extend(_refresh_ppe(ppe_ids, data_dir, client, folder_id))
 
-    stooq_names = _read_stooq_fund_names()
+    _refresh_names(data_dir, client, folder_id)
+    stooq_names = _read_stooq_fund_names(data_dir)
     data_folder_id: str | None = None
     for instrument_id in ids:
         if instrument_id in PPE_INSTRUMENTS:
@@ -428,7 +464,7 @@ def refresh_instruments(
             results.append(RefreshResult(instrument_id, False, "Nieznany instrument_id."))
             continue
         if data_folder_id is None:
-            data_folder_id = client.find_file_id(parent_id=folder_id, filename=DRIVE_DATA_FOLDER_NAME)
+            data_folder_id = find_data_folder_id(client)
         if not data_folder_id:
             results.append(
                 RefreshResult(instrument_id, False, f"Brak folderu {DRIVE_DATA_FOLDER_NAME} na Drive.")
@@ -450,6 +486,18 @@ def refresh_instruments(
     write_refresh_status(data_dir, results)
     return results
 
+
+def _refresh_names(data_dir: Path, client: GDriveClient, folder_id: str) -> None:
+    """Best effort: pobiera słownik nazw funduszy z folderu pozycji."""
+    tmp_path = data_dir / f"{KNF_NAMES_FILENAME}.tmp"
+    try:
+        if client.download_file(folder_id, KNF_NAMES_FILENAME, tmp_path):
+            tmp_path.replace(data_dir / KNF_NAMES_FILENAME)
+        else:
+            logging.warning("Brak pliku %s na Drive; nazwy funduszy z repo.", KNF_NAMES_FILENAME)
+    except OSError as exc:
+        logging.warning("Pobranie %s nie powiodło się: %s", KNF_NAMES_FILENAME, exc)
+        tmp_path.unlink(missing_ok=True)
 
 def write_refresh_status(data_dir: Path, results: list[RefreshResult]) -> None:
     payload = {
@@ -480,7 +528,7 @@ def refresh_is_due(data_dir: Path, instrument_ids: set[str], max_age_hours: floa
         return True
     if (datetime.now(timezone.utc) - refreshed_at).total_seconds() > max_age_hours * 3600:
         return True
-    names = _read_stooq_fund_names()
+    names = _read_stooq_fund_names(data_dir)
     for instrument_id in instrument_ids:
         instrument = instrument_from_id(instrument_id, data_dir, names)
         if instrument is not None and not instrument.data_file.is_file():
@@ -492,7 +540,7 @@ def refresh_is_due(data_dir: Path, instrument_ids: set[str], max_age_hours: floa
 
 
 def evaluate_positions(positions: list[dict[str, Any]], data_dir: Path) -> list[PositionResult]:
-    names = _read_stooq_fund_names()
+    names = _read_stooq_fund_names(data_dir)
     results: list[PositionResult] = []
     for position in positions:
         instrument = instrument_from_id(str(position["instrument_id"]), data_dir, names)
@@ -534,6 +582,8 @@ def result_to_row(result: PositionResult) -> dict[str, Any]:
     if metrics is None:
         return {**base, "Błąd": result.error}
     daily = metrics["daily_return_pct"]
+    return_1m = metrics["return_1m_pct"]
+    return_3m = metrics["return_3m_pct"]
     return {
         **base,
         "Data wejścia": metrics["effective_entry_date"],
@@ -545,6 +595,8 @@ def result_to_row(result: PositionResult) -> dict[str, Any]:
         "KSL Alert": metrics["ksl_status"],
         "KSL Warning": metrics["warning_status"],
         "1D return (%)": daily * 100 if daily is not None else None,
+        "1M return (%)": return_1m * 100 if return_1m is not None else None,
+        "3M return (%)": return_3m * 100 if return_3m is not None else None,
         "Świeżość": "NIEAKTUALNE" if metrics["is_stale"] else "OK",
         "Błąd": "",
     }

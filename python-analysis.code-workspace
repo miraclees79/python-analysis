@@ -1,0 +1,19 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"id": "python-analysis-sync-copilot",
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			"ruff": true,
+			"/^python -m py_compile moj_system\\\\core\\\\portfolio_robustness\\.py$/": {
+				"approve": true,
+				"matchCommandLine": true
+			}
+		},
+		"chat.sessionSync.enabled": true,
+        "github.copilot.chat.localIndex.enabled": true,
+	}
+}

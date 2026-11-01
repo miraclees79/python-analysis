@@ -27,7 +27,7 @@ analiza wynikow/*
 !analiza wynikow/fund_performance.gs
 outputs/
 *.xlsx
-
+tests/
 # Pliki tymczasowe w głównym katalogu
 
 

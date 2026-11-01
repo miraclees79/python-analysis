@@ -80,7 +80,7 @@ def main() -> None:
 
     @st.cache_data(ttl=3600, show_spinner=False)
     def cached_drive_ids(_client: GDriveClient, folder_id: str) -> list[str]:
-        return sorted(list_drive_instrument_ids(_client, folder_id))
+        return sorted(list_drive_instrument_ids(_client))
 
     try:
         client, folder_id = cached_client()

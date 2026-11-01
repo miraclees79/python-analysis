@@ -19,12 +19,18 @@ from __future__ import annotations
 
 import argparse
 import html
+import io
 import logging
 import os
 import smtplib
 import sys
 from datetime import datetime, timezone
 from email.message import EmailMessage
+
+import pandas as pd
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.dates import DateFormatter
+from matplotlib.figure import Figure
 
 from moj_system.config import OUTPUT_DIR
 from moj_system.core.ksl_monitor import (
@@ -56,6 +62,8 @@ TABLE_COLUMNS = [
     "Wynik od wejścia (%)",
     "Wynik od maksimum (%)",
     "1D return (%)",
+    "1M return (%)",
+    "3M return (%)",
     "Świeżość",
     "Błąd",
 ]
@@ -73,33 +81,104 @@ def _label(result: PositionResult) -> str:
     return result.instrument.label if result.instrument else str(result.position["instrument_id"])
 
 
-def build_svg(result: PositionResult, width: int = 320, height: int = 70) -> str:
-    """Mały wykres SVG: cena od wejścia i poziom KSL liczony od kroczącego maksimum."""
+def build_svg(result: PositionResult, width: int = 480, height: int = 90) -> str:
+    """Mały wykres SVG z ceną, poziomem KSL, ceną wejścia i skalą pionową."""
     if result.metrics is None:
         return ""
-    history = result.metrics["price_history"]
-    if len(history) < 2:
+    full_history = result.metrics["price_history"]
+    if len(full_history) < 2:
         return ""
-    history = history.iloc[:: max(1, len(history) // 200)]
-    if len(history) < 2:
-        return ""
+    step = max(1, len(full_history) // 200)
+    history = full_history.iloc[::step]
+    if history.index[-1] != full_history.index[-1]:
+        history = pd.concat([history, full_history.iloc[[-1]]])
     ksl_line = history.cummax() * (1 - float(result.position["ksl_pct"]))
     low = float(min(history.min(), ksl_line.min()))
-    span = (float(history.max()) - low) or 1.0
+    high = float(history.max())
+    span = (high - low) or 1.0
     count = len(history) - 1
+    plot_height = height - 18  # miejsce na daty pod wykresem
+    plot_top = 12
+    plot_bottom = plot_height - 2
+    left = 48
+    plot_width = width - left
+    entry_price = float(result.metrics["entry_price"])
 
     def points(values: list[float]) -> str:
         return " ".join(
-            f"{index / count * width:.1f},{height - (v - low) / span * (height - 4) - 2:.1f}"
+            f"{left + index / count * plot_width:.1f},"
+            f"{plot_bottom - (v - low) / span * (plot_bottom - plot_top):.1f}"
             for index, v in enumerate(values)
         )
 
+    def y_coordinate(value: float) -> float:
+        return plot_bottom - (value - low) / span * (plot_bottom - plot_top)
+
+    start = full_history.index[0].date().isoformat()
+    end = full_history.index[-1].date().isoformat()
+    text_y = height - 4
+    scale = "".join(
+        f'<line x1="{left}" y1="{y_coordinate(value):.1f}" x2="{width}" '
+        f'y2="{y_coordinate(value):.1f}" stroke="#eee"/>'
+        f'<text x="{left - 4}" y="{y_coordinate(value) + 3:.1f}" font-size="9" '
+        f'fill="#555" text-anchor="end">{value:.2f}</text>'
+        for value in (low + span * step / 4 for step in range(5))
+    )
     return (
         f'<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg">'
+        f"{scale}"
         f'<polyline fill="none" stroke="#1565c0" stroke-width="1.5" points="{points(history.tolist())}"/>'
         f'<polyline fill="none" stroke="#c62828" stroke-width="1" stroke-dasharray="3,2" '
-        f'points="{points(ksl_line.tolist())}"/></svg>'
+        f'points="{points(ksl_line.tolist())}"/>'
+        f'<line x1="{left}" y1="{y_coordinate(entry_price):.1f}" x2="{width}" '
+        f'y2="{y_coordinate(entry_price):.1f}" stroke="#2e7d32" stroke-width="1.5"/>'
+        f'<line x1="{left}" y1="{plot_height}" x2="{width}" y2="{plot_height}" stroke="#bbb"/>'
+        f'<text x="{left}" y="{text_y}" font-size="11" fill="#555">{start}</text>'
+        f'<text x="{width}" y="{text_y}" font-size="11" fill="#555" text-anchor="end">{end}</text></svg>'
     )
+
+
+def build_png(result: PositionResult) -> bytes | None:
+    """Renderuje wykres PNG, format obsługiwany przez klientów poczty, w tym Gmail."""
+    if result.metrics is None:
+        return None
+    history = result.metrics["price_history"]
+    if len(history) < 2:
+        return None
+
+    figure = Figure(figsize=(6.4, 2.4), dpi=120)
+    FigureCanvasAgg(figure)
+    axis = figure.subplots()
+    ksl_line = history.cummax() * (1 - float(result.position["ksl_pct"]))
+    axis.plot(history.index, history.to_numpy(), color="#1565c0", label="Cena")
+    axis.plot(ksl_line.index, ksl_line.to_numpy(), color="#c62828", linestyle="--", label="KSL")
+    axis.axhline(
+        float(result.metrics["entry_price"]), color="#2e7d32", linewidth=1.5, label="Cena wejścia"
+    )
+    axis.margins(y=0.15)
+    axis.set_ylabel("Cena")
+    axis.xaxis.set_major_formatter(DateFormatter("%Y-%m-%d"))
+    axis.set_xticks([history.index[0], history.index[-1]])
+    axis.grid(axis="y", color="#ddd", linewidth=0.7)
+    axis.legend(loc="upper left", ncol=3, fontsize=8)
+    figure.autofmt_xdate(rotation=0, ha="left")
+    figure.tight_layout()
+    buffer = io.BytesIO()
+    figure.savefig(buffer, format="png")
+    return buffer.getvalue()
+
+
+def build_email_charts(results: list[PositionResult]) -> tuple[dict[int, str], dict[str, bytes]]:
+    """Buduje CID-y i obrazy inline dla wykresów w treści e-maila."""
+    chart_cids: dict[int, str] = {}
+    images: dict[str, bytes] = {}
+    for index, result in enumerate(results):
+        image = build_png(result)
+        if image is not None:
+            cid = f"ksl-chart-{index}@report"
+            chart_cids[index] = cid
+            images[cid] = image
+    return chart_cids, images
 
 
 def build_subject(overall: str, results: list[PositionResult], today: str) -> str:
@@ -117,6 +196,7 @@ def build_html(
     overall: str,
     refresh_results: list[RefreshResult],
     generated_at: datetime,
+    chart_cids: dict[int, str] | None = None,
 ) -> str:
     head = "".join(f"<th>{html.escape(c)}</th>" for c in TABLE_COLUMNS)
     body: list[str] = []
@@ -131,12 +211,21 @@ def build_html(
             cells.append(f"<td>{text}</td>")
         body.append(f"<tr>{''.join(cells)}</tr>")
 
-    charts = "".join(
-        f"<div style='display:inline-block;margin:6px'><div style='font-size:12px'>"
-        f"{html.escape(str(r.position['account_label']))} — {html.escape(_label(r))}"
-        f"</div>{build_svg(r)}</div>"
-        for r in results
-    )
+    charts_list = []
+    for index, result in enumerate(results):
+        chart = (
+            f"<img src='cid:{chart_cids[index]}' alt='Wykres: "
+            f"{html.escape(_label(result))}' width='480' style='display:block;width:480px;max-width:100%'>"
+            if chart_cids is not None and index in chart_cids
+            else build_svg(result)
+        )
+        charts_list.append(
+            f"<div style='margin:10px 0 18px'>"
+            f"<div style='font-size:12px;line-height:18px;padding-bottom:10px'>"
+            f"{html.escape(str(result.position['account_label']))} — {html.escape(_label(result))}"
+            f"</div><div style='display:block;padding-top:4px'>{chart}</div></div>"
+        )
+    charts = "".join(charts_list)
     failures = [r for r in refresh_results if not r.ok]
     failures_html = (
         "<h3>Problemy z pobraniem danych</h3><ul>"
@@ -155,7 +244,7 @@ def build_html(
         f"<p>Status zbiorczy: <b style='color:{color}'>{html.escape(overall)}</b>"
         f" &middot; wygenerowano {generated_at:%Y-%m-%d %H:%M} UTC</p>"
         f"<table><tr>{head}</tr>{''.join(body)}</table>{failures_html}"
-        f"<h3>Wykresy od wejścia (niebieski: cena, czerwony: poziom KSL)</h3>{charts}"
+        f"<h3>Wykresy od wejścia (niebieski: cena, czerwony: KSL, zielony: cena wejścia)</h3>{charts}"
         "<p style='color:#777'>Prototyp: nie odtwarza wszystkich formuł KSL_Overview.</p></body></html>"
     )
 
@@ -176,7 +265,12 @@ def build_text(results: list[PositionResult], overall: str, subject: str) -> str
     return "\n".join(lines)
 
 
-def send_email(subject: str, text: str, html_body: str) -> None:
+def send_email(
+    subject: str,
+    text: str,
+    html_body: str,
+    inline_images: dict[str, bytes] | None = None,
+) -> None:
     host = os.environ.get("SMTP_HOST", "").strip()
     recipients = [a.strip() for a in os.environ.get("EMAIL_TO", "").split(",") if a.strip()]
     user = os.environ.get("SMTP_USER", "").strip()
@@ -191,6 +285,15 @@ def send_email(subject: str, text: str, html_body: str) -> None:
     message["To"] = ", ".join(recipients)
     message.set_content(text)
     message.add_alternative(html_body, subtype="html")
+    html_part = message.get_payload()[-1]
+    for cid, image in (inline_images or {}).items():
+        html_part.add_related(
+            image,
+            maintype="image",
+            subtype="png",
+            cid=f"<{cid}>",
+            disposition="inline",
+        )
     message.add_attachment(
         html_body.encode("utf-8"), maintype="text", subtype="html", filename=REPORT_FILENAME
     )
@@ -220,7 +323,10 @@ def run(send: bool, upload: bool) -> int:
     overall = overall_status(results)
     generated_at = datetime.now(timezone.utc)
     subject = build_subject(overall, results, generated_at.strftime("%Y-%m-%d"))
-    html_body = build_html(results, overall, refresh_results, generated_at)
+    chart_cids, chart_images = build_email_charts(results) if send else ({}, {})
+    html_body = build_html(
+        results, overall, refresh_results, generated_at, chart_cids if send else None
+    )
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     report_path = OUTPUT_DIR / REPORT_FILENAME
@@ -231,7 +337,7 @@ def run(send: bool, upload: bool) -> int:
         logging.error("Nie udało się wgrać %s na Google Drive.", REPORT_FILENAME)
         return 1
     if send:
-        send_email(subject, build_text(results, overall, subject), html_body)
+        send_email(subject, build_text(results, overall, subject), html_body, chart_images)
     return 0
 
 
