@@ -22,6 +22,59 @@ PPE_COLUMN_MAPPING = {
 }
 
 
+PPE_FUND_COLUMNS = ["equity", "balanced", "stable", "bond", "mmf"]
+
+
+def combine_ppe_history(
+    hist_df: pd.DataFrame,
+    ocr_df: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """
+    Łączy statyczną historię (sep=",") z odczytami OCR (sep=";", bez nagłówka)
+    w jeden numeryczny DataFrame indeksowany datą. Funkcja nie wykonuje I/O,
+    więc może być użyta także poza potokiem uploadu na GDrive.
+    """
+    hist_df = hist_df.copy()
+    hist_df.columns = ["Date", *PPE_FUND_COLUMNS]
+
+    hist_df["Data"] = pd.to_datetime(arg=hist_df["Date"], dayfirst=True, errors="coerce")
+    hist_df.dropna(subset=["Data"], inplace=True)
+    hist_df.set_index(keys="Data", inplace=True)
+    hist_df.drop(columns=["Date"], inplace=True)
+    hist_df.sort_index(inplace=True)
+
+    combined_df = hist_df
+    if ocr_df is not None and not ocr_df.empty:
+        ocr_df = ocr_df.copy()
+        # Ponieważ OCR zapisywano bez header=False, Pandas wczytał pierwszy wiersz jako nazwy kolumn.
+        # Odzyskujemy go i nadajemy poprawne nazwy kolumn (takie same jak dla historii).
+        if len(ocr_df.columns) == 6:
+            first_row = pd.DataFrame(data=[ocr_df.columns.tolist()])
+            ocr_df.columns = range(6)
+            ocr_df = pd.concat(objs=[first_row, ocr_df], ignore_index=True)
+            ocr_df.columns = ["Date", *PPE_FUND_COLUMNS]
+
+        ocr_df["Data"] = pd.to_datetime(arg=ocr_df["Date"], dayfirst=True, errors="coerce")
+        ocr_df.dropna(subset=["Data"], inplace=True)
+        ocr_df.set_index(keys="Data", inplace=True)
+        ocr_df.drop(columns=["Date"], inplace=True)
+        ocr_df.sort_index(inplace=True)
+
+        if not ocr_df.empty:
+            # Odrzucamy z historii te daty, które mamy już z OCR
+            hist_df = hist_df.loc[hist_df.index < ocr_df.index.min()]
+            combined_df = pd.concat(objs=[hist_df, ocr_df], axis=0)
+
+    # Konwertujemy wszystkie 5 funduszy, by wyeksportowany plik CSV był w 100% poprawny
+    for col in PPE_FUND_COLUMNS:
+        if not pd.api.types.is_numeric_dtype(combined_df[col]):
+            combined_df[col] = combined_df[col].astype(str).str.replace(pat=",", repl=".", regex=False)
+        combined_df[col] = pd.to_numeric(arg=combined_df[col], errors="coerce")
+
+    combined_df.ffill(inplace=True)
+    return combined_df
+
+
 def build_continuous_ppe_data(
     folder_id: str,
     credentials_path: str,
@@ -57,46 +110,8 @@ def build_continuous_ppe_data(
         "BEZPIECZNA JESIEŃ SFIO SUBFUNDUSZ KONSERWATYWNY",
     ]
 
-    # --- 3. Standaryzacja pliku z historią ---
-    hist_df.columns = ["Date", "equity", "balanced", "stable", "bond", "mmf"]
-
-    hist_df["Data"] = pd.to_datetime(arg=hist_df["Date"], dayfirst=True, errors="coerce")
-    hist_df.dropna(subset=["Data"], inplace=True)
-    hist_df.set_index(keys="Data", inplace=True)
-    hist_df.drop(columns=["Date"], inplace=True)
-    hist_df.sort_index(inplace=True)
-
-    # --- 4. Standaryzacja pliku z OCR ---
-    if ocr_df is not None and not ocr_df.empty:
-        # Ponieważ OCR zapisywano bez header=False, Pandas wczytał pierwszy wiersz jako nazwy kolumn.
-        # Odzyskujemy go i nadajemy poprawne nazwy kolumn (takie same jak dla historii).
-        if len(ocr_df.columns) == 6:
-            first_row = pd.DataFrame(data=[ocr_df.columns.tolist()])
-            ocr_df.columns = range(6)
-            ocr_df = pd.concat(objs=[first_row, ocr_df], ignore_index=True)
-            ocr_df.columns = ["Date", "equity", "balanced", "stable", "bond", "mmf"]
-
-        ocr_df["Data"] = pd.to_datetime(arg=ocr_df["Date"], dayfirst=True, errors="coerce")
-        ocr_df.dropna(subset=["Data"], inplace=True)
-        ocr_df.set_index(keys="Data", inplace=True)
-        ocr_df.drop(columns=["Date"], inplace=True)
-        ocr_df.sort_index(inplace=True)
-
-        # Odrzucamy z historii te daty, które mamy już z OCR
-        hist_df = hist_df.loc[hist_df.index < ocr_df.index.min()]
-        combined_df = pd.concat(objs=[hist_df, ocr_df], axis=0)
-    else:
-        combined_df = hist_df
-
-    # --- 5. Konwersja WSZYSTKICH kolumn na numeryczne ---
-    # Konwertujemy wszystkie 5 funduszy, by wyeksportowany plik CSV był w 100% poprawny
-    all_fund_cols = ["equity", "balanced", "stable", "bond", "mmf"]
-    for col in all_fund_cols:
-        if combined_df[col].dtype == object:
-            combined_df[col] = combined_df[col].astype(str).str.replace(pat=",", repl=".", regex=False)
-        combined_df[col] = pd.to_numeric(arg=combined_df[col], errors="coerce")
-
-    combined_df.ffill(inplace=True)
+    # --- 3-5. Standaryzacja, połączenie i konwersja numeryczna ---
+    combined_df = combine_ppe_history(hist_df=hist_df, ocr_df=ocr_df)
 
     # --- 6. Upload uaktualnionej historii na GDrive ---
     if ocr_df is not None and not ocr_df.empty:

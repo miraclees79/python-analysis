@@ -138,6 +138,50 @@ python moj_system/scripts/refresh_knf.py --all
 python moj_system/scripts/fund_reviewer.py --update --use-gemini
 ```
 
+## Private KSL Dashboard (prototype)
+
+The Streamlit app monitors positions configured in `ksl_positions.json` in the
+Google Drive folder identified by `GDRIVE_FOLDER_ID`. The example configuration
+in `outputs/ksl_positions.example.json` is based on the Fundusze KSL overview;
+review it before copying it to the private Drive folder. Positions are keyed by
+account and instrument, so the same fund held in separate accounts remains
+separate.
+
+Price data is downloaded from Drive **only for the instruments of active
+positions** into a volatile working directory (`KSL_DATA_DIR`, default: a temp
+folder), so nothing from `moj_system/data/raw_csv/` is required:
+
+- Stooq funds/ETFs: `historia<id>.csv` / `historia<etf>.pl.csv` from the `Dane`
+  subfolder (uploaded by `fund_data_refresher`),
+- PPE: `full_ppe_history.csv` + `filtered_table.csv` (OCR) combined with the same
+  `combine_ppe_history` logic as `ppe_manager`, without any upload.
+
+The app refreshes automatically on start when the data is missing or older than
+6 hours; the sidebar button **Odśwież dane z Drive** forces a refresh. Run it
+locally from any directory with credentials that can access the private folder:
+
+```bash
+streamlit run moj_system/scripts/ksl_dashboard.py --server.address 127.0.0.1
+```
+
+The prototype reports entry return, drawdown from the peak since entry, KSL and
+warning status, and data freshness. It does not yet reproduce every formula or
+column in the existing `KSL_Overview` sheet. Do not expose the app or its service
+account credentials through a public deployment.
+
+### Daily KSL report (GitHub Actions)
+
+`.github/workflows/ksl_report.yml` runs `python -m moj_system.scripts.ksl_report`
+daily (05:30 UTC, after the data refreshers). It refreshes the data into a
+temporary directory, builds `ksl_report.html`, uploads it to the Drive folder and
+e-mails it; the subject carries `[KSL ALERT]` / `[KSL WARNING]` when a threshold
+is breached and `[KSL] Problem z danymi` when data is missing or stale. The report
+is deliberately not published as a workflow artifact because it contains private
+position data. Required repository secrets: `GDRIVE_FOLDER_ID`,
+`GOOGLE_CREDENTIALS`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_TO`
+(comma-separated) and optionally `SMTP_PORT` (587 STARTTLS by default, 465 SSL)
+and `EMAIL_FROM`. Locally use `--no-email` / `--no-upload` to skip those steps.
+
 Manual benchmark corrections belong in `moj_system/data/fund_benchmark_overrides.csv`. The semicolon-delimited file uses `subfundId`, `components_json`, `kind` (`official` or `proxy`), `notes`, and optional `portfolio_spread_bps`; component keys must exist in `benchmark_catalog.py` and weights are decimal fractions summing to 1.
 
 Gemini benchmark resolution defaults to `gemini-3.5-flash-lite`, with `gemini-3.1-flash-lite` as fallback for bulk KID parsing. Both use the configured limits of 15 RPM, 250k TPM, and 503 RPD. Proxy proposals use `gemini-3.8-flash` as a limited review model (5 RPM, 250k TPM, 20 RPD), then fall back to the Lite chain. Requests are batched in groups of 25 by default; set the GitHub repository variables `GEMINI_BULK_MODEL`, `GEMINI_REVIEW_MODEL`, `GEMINI_FALLBACK_MODELS` (comma-separated), and `GEMINI_BATCH_SIZE` to override this. The resolver retries HTTP 500/503/504 with backoff, switches models on HTTP 429, and persists its daily usage counter and result cache to Google Drive when `GDRIVE_FOLDER_ID` is available. The configured quota profile also covers `gemma-4-26b-a4b-it` (30 RPM, 16k TPM, 14,400 RPD); Gemma is not in the default chain because benchmark batches can exceed its smaller TPM limit.

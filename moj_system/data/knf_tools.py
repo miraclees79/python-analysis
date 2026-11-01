@@ -14,6 +14,7 @@ import logging
 import re
 import time
 import unicodedata
+from numbers import Real
 from pathlib import Path
 
 import pandas as pd
@@ -83,9 +84,32 @@ class KNFTools:
         self.root_folder = self.gdrive.root_folder_id
 
     @staticmethod
-    def _integer_ids(values: pd.Series) -> set[int]:
-        numeric_values = pd.to_numeric(values, errors="coerce").dropna()
-        return {int(value) for value in numeric_values if float(value).is_integer()}
+    def _parse_positive_id(value: object) -> int | None:
+        if isinstance(value, bool) or not isinstance(value, (str, Real)):
+            return None
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not pd.notna(numeric_value) or not numeric_value.is_integer() or numeric_value <= 0:
+            return None
+        return int(numeric_value)
+
+    @staticmethod
+    def _log_duplicate_ids(ids: pd.Series, label: str, level: int = logging.ERROR) -> bool:
+        """Log every duplicated ID with the data rows (0-based) where it occurs."""
+        duplicated = ids[ids.duplicated(keep=False)]
+        if duplicated.empty:
+            return False
+        for value, rows in duplicated.groupby(duplicated).groups.items():
+            logging.log(
+                level,
+                "Duplicate %s %s in confirmed file at rows %s",
+                label,
+                value,
+                [int(row) for row in rows],
+            )
+        return True
 
     @staticmethod
     def _request_json(
@@ -275,6 +299,7 @@ class KNFTools:
     def fetch_knf_subfunds(
         self,
         use_tfi_scope: bool = True,
+        exclude_subfund_ids: set[int] | None = None,
     ) -> pd.DataFrame:
         """
         Deep Hydration: Fetches subfunds and crawls through KIDs to get
@@ -290,8 +315,12 @@ class KNFTools:
         all_subfunds = self._fetch_all_pages("/v1/subfunds", {"includeInactive": "false"})
 
         # Filter scope first to save API calls
+        excluded_ids = exclude_subfund_ids or set()
         scoped_raw = []
         for s in all_subfunds:
+            subfund_id = self._parse_positive_id(s.get("subfundId"))
+            if subfund_id in excluded_ids:
+                continue
             comp_id = fund_to_company.get(s.get("fundId"))
             tfi_name = company_map.get(comp_id, "")
             tfi_key = self.to_ascii(tfi_name.lower().strip())
@@ -503,6 +532,7 @@ class KNFTools:
                     return t
             return ""
 
+        stooq_df = stooq_df.copy()
         stooq_df["stooq_tfi_key"] = stooq_df["stooq_name"].apply(detect_tfi)
         stooq_df["stooq_norm"] = stooq_df.apply(
             lambda r: self.residual_name(r["stooq_name"], r["stooq_tfi_key"]),
@@ -511,6 +541,7 @@ class KNFTools:
 
         tfi_groups = {str(k): g.reset_index(drop=True) for k, g in stooq_df.groupby("stooq_tfi_key")}
         results = []
+        used_stooq_ids: set[int] = set()
 
         for knf_row in knf_df.to_dict(orient="records"):
             sfid_value = knf_row.get("subfundId")
@@ -526,13 +557,13 @@ class KNFTools:
                 "stooq_title": None,
                 "stooq_name": None,
             }
-            try:
-                sfid = int(float(sfid_value))
-            except (TypeError, ValueError, OverflowError):
+            sfid = self._parse_positive_id(sfid_value)
+            if sfid is None:
                 logging.warning("Skipping KNF row with invalid subfundId: %r", sfid_value)
                 results.append(result)
                 continue
             result["subfundId"] = sfid
+            candidate_subfund_id = sfid
 
             knf_name_value = knf_row.get("name")
             knf_name = knf_name_value.strip() if isinstance(knf_name_value, str) else ""
@@ -548,19 +579,38 @@ class KNFTools:
                 results.append(result)
                 continue
 
-            pool = tfi_groups.get(knf_tfi_key, stooq_df)
-            pool_norms = pool["stooq_norm"].tolist()
+            pool = tfi_groups.get(knf_tfi_key)
+            if pool is None or pool.empty:
+                logging.info("No Stooq candidates for TFI key %r; skipping cross-TFI matching.", knf_tfi_key)
+                results.append(result)
+                continue
+            candidate_pool = pool
+            attempted_stooq_ids: set[int] = set()
 
             def attempt_match(
                 row: pd.Series,
                 tier: str,
                 score: float,
+                *,
+                current_attempted_ids: set[int] = attempted_stooq_ids,
+                current_candidate_subfund_id: int = candidate_subfund_id,
+                current_name: str = knf_name,
+                current_result: dict[str, object] = result,
+                current_used_ids: set[int] = used_stooq_ids,
             ) -> bool:
+                stooq_id = self._parse_positive_id(row["stooq_id"])
+                if (
+                    stooq_id is None
+                    or stooq_id in current_used_ids
+                    or stooq_id in current_attempted_ids
+                ):
+                    return False
+                current_attempted_ids.add(stooq_id)
                 logging.info(
-                    f"  Candidate: {knf_name[:40]} -> {row['stooq_title']} ({tier}, score {score})",
+                    f"  Candidate: {current_name[:40]} -> {row['stooq_title']} ({tier}, score {score})",
                 )
-                if self._verify_price_match(sfid, int(row["stooq_id"])):
-                    result.update(
+                if self._verify_price_match(current_candidate_subfund_id, stooq_id):
+                    current_result.update(
                         {
                             "match_tier": tier,
                             "match_score": score,
@@ -570,29 +620,54 @@ class KNFTools:
                             "stooq_name": row["stooq_name"],
                         },
                     )
+                    current_used_ids.add(stooq_id)
                     return True
                 return False
 
             # Pass 1: Exact
-            exact = pool[pool["stooq_norm"] == knf_norm]
-            if not exact.empty and attempt_match(
-                exact.iloc[0], "exact", 100
-            ):
+            exact = candidate_pool[candidate_pool["stooq_norm"] == knf_norm]
+            matched = any(
+                attempt_match(row, "exact", 100)
+                for _, row in exact.iterrows()
+            )
+            if matched:
                 results.append(result)
                 continue
 
+            def fuzzy_candidates(
+                query: str,
+                current_pool: pd.DataFrame = candidate_pool,
+                current_attempted_ids: set[int] = attempted_stooq_ids,
+                current_used_ids: set[int] = used_stooq_ids,
+            ) -> list[tuple[pd.Series, float]]:
+                eligible = current_pool[
+                    ~current_pool["stooq_id"]
+                    .map(self._parse_positive_id)
+                    .isin(current_used_ids | current_attempted_ids)
+                ]
+                if eligible.empty:
+                    return []
+                matches = process.extract(
+                    query,
+                    eligible["stooq_norm"].tolist(),
+                    scorer=fuzz.token_sort_ratio,
+                    score_cutoff=FUZZY_THRESHOLD,
+                    limit=5,
+                )
+                candidates = []
+                for match in matches:
+                    score = match[1]
+                    index = match[2]
+                    if index is not None:
+                        candidates.append((eligible.iloc[index], round(score, 1)))
+                return candidates
+
             # Pass 2: Fuzzy
-            best_match = process.extractOne(
-                knf_norm,
-                pool_norms,
-                scorer=fuzz.token_sort_ratio,
-                score_cutoff=FUZZY_THRESHOLD,
+            matched = any(
+                attempt_match(row, "fuzzy", score)
+                for row, score in fuzzy_candidates(knf_norm)
             )
-            if best_match and attempt_match(
-                pool.iloc[best_match[2]],
-                "fuzzy",
-                round(best_match[1], 1),
-            ):
+            if matched:
                 results.append(result)
                 continue
 
@@ -604,23 +679,17 @@ class KNFTools:
                 if not fnorm:
                     continue
 
-                exact_h = pool[pool["stooq_norm"] == fnorm]
-                if not exact_h.empty and attempt_match(
-                    exact_h.iloc[0], "historical_exact", 100
+                exact_h = candidate_pool[candidate_pool["stooq_norm"] == fnorm]
+                if any(
+                    attempt_match(row, "historical_exact", 100)
+                    for _, row in exact_h.iterrows()
                 ):
                     matched_history = True
                     break
 
-                best_h = process.extractOne(
-                    fnorm,
-                    pool_norms,
-                    scorer=fuzz.token_sort_ratio,
-                    score_cutoff=FUZZY_THRESHOLD,
-                )
-                if best_h and attempt_match(
-                    pool.iloc[best_h[2]],
-                    "historical_fuzzy",
-                    round(best_h[1], 1),
+                if any(
+                    attempt_match(row, "historical_fuzzy", score)
+                    for row, score in fuzzy_candidates(fnorm)
                 ):
                     matched_history = True
                     break
@@ -657,24 +726,51 @@ class KNFTools:
             )
             return
 
-        confirmed_knf_ids = self._integer_ids(df_confirmed["subfundId"])
-        confirmed_stooq_ids = self._integer_ids(df_confirmed["stooq_id"])
-        knf_df = self.fetch_knf_subfunds(use_tfi_scope=use_tfi_scope)
+        parsed_knf_ids = df_confirmed["subfundId"].map(self._parse_positive_id)
+        parsed_stooq_ids = df_confirmed["stooq_id"].map(self._parse_positive_id)
+        invalid_rows = parsed_knf_ids.isna() | parsed_stooq_ids.isna()
+        if invalid_rows.any():
+            invalid_indices = df_confirmed.index[invalid_rows].tolist()
+            logging.error(
+                "Confirmed mapping file contains invalid or missing IDs at rows %s; "
+                "aborting automatic matching.",
+                invalid_indices,
+            )
+            return
+        has_duplicate_knf = self._log_duplicate_ids(parsed_knf_ids, "subfundId")
+        has_duplicate_stooq = self._log_duplicate_ids(parsed_stooq_ids, "stooq_id")
+        if has_duplicate_knf or has_duplicate_stooq:
+            logging.error(
+                "Confirmed mapping file contains duplicate subfundId or stooq_id values; "
+                "aborting automatic matching.",
+            )
+            return
+
+        confirmed_knf_ids = set(parsed_knf_ids.astype(int))
+        confirmed_stooq_ids = set(parsed_stooq_ids.astype(int))
+        knf_df = self.fetch_knf_subfunds(
+            use_tfi_scope=use_tfi_scope,
+            exclude_subfund_ids=confirmed_knf_ids,
+        )
 
         if knf_df.empty:
             logging.info("No new subfunds to match.")
             return
 
-        # Zapisujemy summary wszystkich pobranych funduszy. Przy use_tfi_scope=False
-        # wysyłany słownik może być bardzo duży.
+        # Summary covers subfunds not already present in the authoritative mapping.
         out_dir = Path("outputs")
         out_dir.mkdir(exist_ok=True)
         summary_path = out_dir / "knf_summary.csv"
         knf_df.to_csv(summary_path, index=False, sep=";")
-        self.gdrive.upload_csv(self.root_folder, str(summary_path))
+        if not self.gdrive.upload_csv(self.root_folder, str(summary_path)):
+            raise RuntimeError(f"Failed to upload {summary_path.name} to Google Drive.")
 
         knf_id_values = pd.to_numeric(knf_df["subfundId"], errors="coerce")
-        new_knf_mask = knf_id_values.notna() & (knf_id_values % 1 == 0) & ~knf_id_values.isin(confirmed_knf_ids)
+        new_knf_mask = (
+            knf_id_values.notna()
+            & (knf_id_values % 1 == 0)
+            & ~knf_id_values.isin(confirmed_knf_ids)
+        )
         knf_candidates = knf_df.loc[new_knf_mask].copy()
         if knf_candidates.empty:
             logging.info("No unconfirmed KNF subfunds require matching.")
@@ -717,9 +813,15 @@ class KNFTools:
         )
         match_df[review_mask].sort_values("match_score").to_csv(review_path, index=False, sep=";")
 
-        self.gdrive.upload_csv(self.root_folder, str(match_path))
-        self.gdrive.upload_csv(self.root_folder, str(unmatched_path))
-        self.gdrive.upload_csv(self.root_folder, str(review_path))
+        failed_uploads = [
+            path.name
+            for path in (match_path, unmatched_path, review_path)
+            if not self.gdrive.upload_csv(self.root_folder, str(path))
+        ]
+        if failed_uploads:
+            raise RuntimeError(
+                "Failed to upload result files to Google Drive: " + ", ".join(failed_uploads),
+            )
         logging.info("Matches uploaded to Google Drive.")
 
     def verify_confirmed_matches(
@@ -741,11 +843,50 @@ class KNFTools:
             logging.error("Confirmed list is empty or could not be downloaded.")
             return
 
-        # Zachowujemy tylko te, które mają ID Stooq
-        df_to_verify = df_confirmed.dropna(subset=["stooq_id"]).copy()
+        required_columns = {"subfundId", "stooq_id"}
+        missing_columns = required_columns - set(df_confirmed.columns)
+        if missing_columns:
+            logging.error(
+                "Confirmed mapping file is missing required columns %s; cannot verify prices.",
+                sorted(missing_columns),
+            )
+            return
 
-        if df_to_verify.empty:
-            logging.info("No valid stooq_id entries found in the confirmed list.")
+        valid_rows = []
+        for index, row in df_confirmed.iterrows():
+            subfund_id = self._parse_positive_id(row["subfundId"])
+            stooq_id = self._parse_positive_id(row["stooq_id"])
+            if subfund_id is None or stooq_id is None:
+                logging.warning("Skipping confirmed row %s with invalid or missing IDs.", index)
+                continue
+            valid_rows.append((index, row, subfund_id, stooq_id))
+
+        row_indices = [row[0] for row in valid_rows]
+        self._log_duplicate_ids(
+            pd.Series([row[2] for row in valid_rows], index=row_indices, dtype="int64"),
+            "subfundId",
+            logging.WARNING,
+        )
+        self._log_duplicate_ids(
+            pd.Series([row[3] for row in valid_rows], index=row_indices, dtype="int64"),
+            "stooq_id",
+            logging.WARNING,
+        )
+        knf_counts = pd.Series([row[2] for row in valid_rows]).value_counts()
+        stooq_counts = pd.Series([row[3] for row in valid_rows]).value_counts()
+        duplicate_rows = [
+            row for row in valid_rows
+            if knf_counts[row[2]] > 1 or stooq_counts[row[3]] > 1
+        ]
+        for duplicate_row in duplicate_rows:
+            index = duplicate_row[0]
+            logging.warning("Skipping confirmed row %s because its mapping uses a duplicate ID.", index)
+        duplicate_indices = {row[0] for row in duplicate_rows}
+        df_to_verify = [
+            row for row in valid_rows if row[0] not in duplicate_indices
+        ]
+        if not df_to_verify:
+            logging.info("No valid unique mappings found in the confirmed list.")
             return
 
         total_funds = len(df_to_verify)
@@ -756,9 +897,10 @@ class KNFTools:
         success_count = 0
         failed_funds = []
 
-        for row in df_to_verify.to_dict(orient="records"):
-            subfund_id = int(float(row["subfundId"]))
-            stooq_id = int(float(row["stooq_id"]))
+        for verification_row in df_to_verify:
+            row = verification_row[1]
+            subfund_id = verification_row[2]
+            stooq_id = verification_row[3]
             fund_name = row.get("name", f"Subfund {subfund_id}")
 
             logging.info(f"Verifying: {fund_name} (KNF: {subfund_id}, Stooq: {stooq_id})")

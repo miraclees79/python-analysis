@@ -22,7 +22,7 @@ tests/*
 !tests/test_fund_benchmarks.py
 ai_context/
 analiza wynikow/
-!analiza wynikow/
+analiza wynikow/
 analiza wynikow/*
 !analiza wynikow/fund_performance.gs
 outputs/
@@ -38,3 +38,4 @@ outputs/
 /moj_system/zips/
 /moj_system/__pycache__
 /moj_system/data/market_data_tickers_stooq
+GoogleSheets/

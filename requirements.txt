@@ -17,6 +17,7 @@ google-genai>=1.0.0
 
 # --- VISUALIZATION ---
 matplotlib>=3.7.0
+streamlit>=1.42.0
 
 # --- OCR PIPELINE (PPE DATA) ---
 pytesseract>=0.3.10

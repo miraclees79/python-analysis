@@ -164,6 +164,8 @@ class GDriveClient:
             mimetype = "application/json"
         elif filename.endswith(".txt"):
             mimetype = "text/plain"
+        elif filename.endswith(".html"):
+            mimetype = "text/html"
 
         existing_id = self.find_file_id(parent_id=folder_id, filename=filename)
 
