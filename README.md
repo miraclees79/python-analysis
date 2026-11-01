@@ -88,10 +88,10 @@ sample.
 
 | Workflow | Schedule | Trigger |
 |---|---|---|
-| `daily_strategy.yml` | 01:00 UTC daily | All assets in matrix |
+| `daily_strategy.yml` | 02:00 UTC daily | All assets in matrix |
 | `ocr_download.yml` | 00:00 UTC daily | PPE PDF OCR |
 | `fund_data_refresher.yml` | 23:00 UTC daily | TFI history update |
-| `fund_reviewer.yml` | Friday 23:00 UTC | TFI fund ranking |
+| `fund_reviewer.yml` | Saturday 01:00 UTC | TFI fund ranking |
 | `refresh_knf.yml` | Friday 01:00 UTC | KNF subfund matching |
 | `research_sweep.yml` | Manual only | Parameter sweeps |
 | `keepalive` | 1st of month | Repository activity |

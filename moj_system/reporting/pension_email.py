@@ -41,6 +41,30 @@ def _pct_weight(value: object) -> str:
         return "—"
 
 
+PERCENT_METRICS = ("CAGR", "MaxDD", "Vol")
+
+
+def _metrics_table(metrics: object) -> str:
+    """CAGR, MaxDD i Vol (ułamki w snapshocie) jako procenty; pozostałe metryki bez zmian."""
+    if not isinstance(metrics, dict) or not metrics:
+        return ""
+    rows = [
+        (k, _num(float(v) * 100, "{:.2f}", "%"))
+        if k in PERCENT_METRICS and _is_number(v)
+        else (k, _num(v, "{:.4f}"))
+        for k, v in metrics.items()
+    ]
+    return _kv_table(rows)
+
+
+def _is_number(value: object) -> bool:
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def _table(headers: list[str], rows: list[list[str]]) -> str:
     head = "".join(f"<th>{_esc(h)}</th>" for h in headers)
     body = "".join("<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>" for row in rows)
@@ -144,19 +168,23 @@ def build_html(snapshot: dict, chart_src: str | None) -> str:
             + _kv_table(
                 [
                     ("Data", _esc(last.get("date"))),
-                    ("Equity / Bond / MMF po", f"{_num(last.get('equity_after'), '{:.0f}')}% / "
-                     f"{_num(last.get('bond_after'), '{:.0f}')}% / {_num(last.get('mmf_after'), '{:.0f}')}%"),
+                    (
+                        "Equity / Bond / MMF po",
+                        f"{_pct_weight(last.get('equity_after'))} / {_pct_weight(last.get('bond_after'))}"
+                        f" / {_pct_weight(last.get('mmf_after'))}",
+                    ),
                     ("Powód", _esc(last.get("reason"))),
                 ]
             )
         )
 
-    metrics = snapshot.get("portfolio_metrics") or {}
-    if metrics:
-        sections.append(
-            "<h3>Metryki portfela (OOS)</h3>"
-            + _kv_table([(k, _num(v, "{:.4f}")) for k, v in metrics.items()])
-        )
+    for title, key in (
+        ("Metryki portfela (OOS)", "portfolio_metrics"),
+        ("Buy &amp; hold equity (OOS)", "bh_equity_metrics"),
+    ):
+        block = _metrics_table(snapshot.get(key))
+        if block:
+            sections.append(f"<h3>{title}</h3>{block}")
 
     ec = snapshot.get("execution_check")
     if ec:

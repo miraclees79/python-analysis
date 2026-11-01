@@ -18,6 +18,7 @@ from moj_system.reporting.pension_email import (
     DEFAULT_ACTION_COLOR,
     _esc,
     _kv_table,
+    _metrics_table,
     _num,
     _pct_weight,
     _position_section,
@@ -60,7 +61,7 @@ def _on_off(state: dict, key: str = "filter_on") -> str:
 def _metrics_section(title: str, metrics: dict) -> str:
     if not metrics:
         return ""
-    return f"<h3>{_esc(title)}</h3>" + _kv_table([(k, _num(v, "{:.4f}")) for k, v in metrics.items()])
+    return f"<h3>{_esc(title)}</h3>{_metrics_table(metrics)}"
 
 
 def _freshness_section(snapshot: dict) -> str:
