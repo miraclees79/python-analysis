@@ -181,7 +181,7 @@ account credentials through a public deployment.
 ### Daily KSL report (GitHub Actions)
 
 `.github/workflows/ksl_report.yml` runs `python -m moj_system.scripts.ksl_report`
-daily (05:30 UTC, after the data refreshers). It refreshes the data into a
+daily (04:00 UTC, after the data refreshers). It refreshes the data into a
 temporary directory, builds `ksl_report.html`, uploads it to the Drive folder and
 e-mails it; the subject carries `[KSL ALERT]` / `[KSL WARNING]` when a threshold
 is breached and `[KSL] Problem z danymi` when data is missing or stale. The report
