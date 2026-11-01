@@ -21,11 +21,9 @@ import argparse
 import html
 import io
 import logging
-import os
 import smtplib
 import sys
 from datetime import datetime, timezone
-from email.message import EmailMessage
 
 import pandas as pd
 from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -33,6 +31,7 @@ from matplotlib.dates import DateFormatter
 from matplotlib.figure import Figure
 
 from moj_system.config import OUTPUT_DIR
+from moj_system.core import mailer
 from moj_system.core.ksl_monitor import (
     PositionResult,
     RefreshResult,
@@ -271,41 +270,7 @@ def send_email(
     html_body: str,
     inline_images: dict[str, bytes] | None = None,
 ) -> None:
-    host = os.environ.get("SMTP_HOST", "").strip()
-    recipients = [a.strip() for a in os.environ.get("EMAIL_TO", "").split(",") if a.strip()]
-    user = os.environ.get("SMTP_USER", "").strip()
-    password = os.environ.get("SMTP_PASSWORD", "")
-    if not host or not recipients:
-        raise RuntimeError("Brak SMTP_HOST lub EMAIL_TO; ustaw sekrety albo użyj --no-email.")
-    port = int(os.environ.get("SMTP_PORT", "").strip() or "587")
-
-    message = EmailMessage()
-    message["Subject"] = subject
-    message["From"] = os.environ.get("EMAIL_FROM", "").strip() or user
-    message["To"] = ", ".join(recipients)
-    message.set_content(text)
-    message.add_alternative(html_body, subtype="html")
-    html_part = message.get_payload()[-1]
-    for cid, image in (inline_images or {}).items():
-        html_part.add_related(
-            image,
-            maintype="image",
-            subtype="png",
-            cid=f"<{cid}>",
-            disposition="inline",
-        )
-    message.add_attachment(
-        html_body.encode("utf-8"), maintype="text", subtype="html", filename=REPORT_FILENAME
-    )
-
-    smtp_class = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
-    with smtp_class(host, port, timeout=60) as smtp:
-        if port != 465:
-            smtp.starttls()
-        if user:
-            smtp.login(user, password)
-        smtp.send_message(message)
-    logging.info("Wysłano e-mail do %d odbiorców.", len(recipients))
+    mailer.send_email(subject, text, html_body, inline_images, attachment_name=REPORT_FILENAME)
 
 
 def run(send: bool, upload: bool) -> int:

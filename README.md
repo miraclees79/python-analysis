@@ -116,6 +116,10 @@ sample.
 ---
 
 
+## E-mail reports (`--email`)
+
+`daily_runner.py` sends no e-mail unless called with `--email`; the flag works for every asset (single, GLOBAL_*, PENSION). The report is built from the signal snapshot JSON and sent with the chart inline, using the SMTP secrets (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, `EMAIL_TO`). Without them the send is skipped with a log message. In `daily_strategy.yml` the flag is set only for the `PENSION` matrix entry.
+
 ## Quick Start (CLI)
 
 ```bash
@@ -123,6 +127,9 @@ sample.
 python moj_system/scripts/daily_runner.py --asset WIG20TR
 python moj_system/scripts/daily_runner.py --asset PENSION
 python moj_system/scripts/daily_runner.py --asset GLOBAL_B
+
+# Same, plus HTML report e-mailed with the chart (opt-in for every asset, incl. PENSION)
+python moj_system/scripts/daily_runner.py --asset PENSION --email
 
 # Parameter sweep (manual trigger)
 python moj_system/scripts/sweep_optimizer.py --mode PENSION --n_mc 500

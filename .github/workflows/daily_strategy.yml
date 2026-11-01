@@ -41,11 +41,17 @@ jobs:
         env:
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
           
         run: |
           # Zapisz credentials do pliku (wymagane przez GDriveClient)
           echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
-          python -m moj_system.scripts.daily_runner --asset ${{ matrix.asset }}
+          python -m moj_system.scripts.daily_runner --asset ${{ matrix.asset }} ${{ matrix.asset == 'PENSION' && '--email' || '' }}
 
       # 4. Archiwizacja wyników
       - name: Upload Artifacts

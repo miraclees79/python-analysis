@@ -67,6 +67,8 @@ from moj_system.reporting.global_equity_daily_output import (
 from moj_system.reporting.multiasset_daily_output import (
     build_daily_outputs as build_multiasset_outputs,
 )
+from moj_system.reporting.pension_email import send_pension_report
+from moj_system.reporting.strategy_email import send_global_report, send_single_asset_report
 
 
 def setup_logging(
@@ -92,6 +94,7 @@ def run_single_asset(
     asset_name: str,
     stop_mode_arg: str,
     creds_path: str,
+    send_email: bool = False,
 ) -> None:
 
     cfg = ASSET_REGISTRY[asset_name]
@@ -180,7 +183,7 @@ def run_single_asset(
         regime_metrics = extract_flat_regime_stats({})  # Zwróci słownik z NaN
 
     # Wysyłanie (wewnętrznie wywołuje upload na GDrive)
-    build_daily_outputs(
+    outputs = build_daily_outputs(
         wf_equity=wf_equity,
         wf_trades=wf_trades,
         wf_metrics=wf_metrics,
@@ -195,11 +198,14 @@ def run_single_asset(
         gdrive_folder_id=os.environ.get("GDRIVE_FOLDER_ID"),
         gdrive_credentials=creds_path if Path(creds_path).exists() else None,
     )
+    if send_email:
+        send_single_asset_report(asset_name, outputs["snapshot_path"], outputs["chart_path"])
 
 
 def run_pension_portfolio(
     stop_mode_arg: str,
     creds_path: str,
+    send_email: bool = False,
 ) -> None:
 
     cfg = ASSET_REGISTRY["PENSION"]
@@ -332,7 +338,7 @@ def run_pension_portfolio(
     print_live_regime_report(regime_metrics)
 
     # Wysyłanie (wewnętrznie wywołuje upload na GDrive)
-    build_multiasset_outputs(
+    outputs = build_multiasset_outputs(
         wf_eq,
         wf_tr_eq,
         wf_res_eq,
@@ -360,12 +366,15 @@ def run_pension_portfolio(
         gdrive_folder_id=folder_id,
         gdrive_credentials=creds_path,
     )
+    if send_email:
+        send_pension_report(outputs["snapshot_path"], outputs["chart_path"])
 
 
 def run_global_portfolio(
     asset_key: str,
     stop_mode_arg: str,
     creds_path: str,
+    send_email: bool = False,
 ) -> None:
 
     cfg = ASSET_REGISTRY[asset_key]
@@ -564,7 +573,7 @@ def run_global_portfolio(
     )
 
     # Wysyłanie (wewnętrznie wywołuje upload na GDrive) - z nowymi argumentami
-    build_global_outputs(
+    outputs = build_global_outputs(
         wf_results_dict=wf_results_dict,
         wf_trades_dict=wf_trades_dict,
         price_df_dict=price_df_dict,
@@ -585,6 +594,8 @@ def run_global_portfolio(
         gdrive_folder_id=folder_id,
         gdrive_credentials=creds_path,
     )
+    if send_email:
+        send_global_report(asset_key, outputs["snapshot_path"], outputs["chart_path"])
 
 
 def main() -> None:
@@ -596,6 +607,11 @@ def main() -> None:
         help="Asset key: WIG20TR, PENSION, GLOBAL_A, etc.",
     )
     parser.add_argument("--stop_mode", type=str, choices=["fixed", "atr", "auto"], default="auto")
+    parser.add_argument(
+        "--email",
+        action="store_true",
+        help="Wyślij raport e-mailem (wszystkie strategie, w tym PENSION).",
+    )
     args = parser.parse_args()
 
     cfg = ASSET_REGISTRY.get(args.asset)
@@ -608,11 +624,11 @@ def main() -> None:
     updater.run_full_update(get_funds=False)
 
     if cfg["type"] == "portfolio_pension":
-        run_pension_portfolio(args.stop_mode, creds_path)
+        run_pension_portfolio(args.stop_mode, creds_path, send_email=args.email)
     elif cfg["type"] == "portfolio_global":
-        run_global_portfolio(args.asset, args.stop_mode, creds_path)
+        run_global_portfolio(args.asset, args.stop_mode, creds_path, send_email=args.email)
     else:
-        run_single_asset(args.asset, args.stop_mode, creds_path)
+        run_single_asset(args.asset, args.stop_mode, creds_path, send_email=args.email)
 
     logging.info(f"Execution of {args.asset} completed successfully.")
 
