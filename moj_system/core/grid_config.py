@@ -84,8 +84,7 @@ class OptimizationGridConfig:
             keys=override_keys,
         )
         changes = {
-            _GRID_KEY_TO_FIELD[key]: getattr(overrides, _GRID_KEY_TO_FIELD[key])
-            for key in override_keys
+            _GRID_KEY_TO_FIELD[key]: getattr(overrides, _GRID_KEY_TO_FIELD[key]) for key in override_keys
         }
         return replace(self, **changes)
 

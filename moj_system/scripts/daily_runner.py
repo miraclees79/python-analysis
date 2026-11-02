@@ -50,12 +50,11 @@ def setup_logging(
     )
 
 
-
 def build_pipeline(
-    asset_key:   str,
-    stop_mode:   str,
-    facade:      MarketDataFacade,
-    send_email:  bool,
+    asset_key: str,
+    stop_mode: str,
+    facade: MarketDataFacade,
+    send_email: bool,
 ) -> DailyStrategyPipeline:
     asset_type = ASSET_REGISTRY[asset_key]["type"]
     if asset_type == "portfolio_pension":
