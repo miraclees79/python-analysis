@@ -14,6 +14,7 @@ import logging
 import os
 import sys
 import tempfile
+from abc import abstractmethod
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -27,8 +28,6 @@ matplotlib.use("Agg")
 # --- PATH SETUP ---
 from moj_system.config import (
     ASSET_REGISTRY,
-    BASE_GRIDS,
-    BOND_GRIDS,
     BOND_THRESHOLDS_BOOTSTRAP,
     BOND_THRESHOLDS_MC,
     EQUITY_THRESHOLDS_BOOTSTRAP,
@@ -44,12 +43,14 @@ from moj_system.config import (
 from moj_system.core.global_engine import (
     allocation_walk_forward_n,
 )
+from moj_system.core.grid_config import OptimizationGridConfig
 from moj_system.core.pension_engine import (
     StandardTwoAssetData,
     allocation_walk_forward,
     build_signal_series,
     build_standard_two_asset_data,
 )
+from moj_system.core.pipeline_base import BaseStrategyPipeline
 from moj_system.core.portfolio_robustness import analyze_portfolio_robustness
 from moj_system.core.research import (
     analyze_production_candidates,
@@ -74,11 +75,9 @@ from moj_system.core.universe import (
     get_allocation_settings,
     prepare_asset_series,
     resolve_train_years,
-    wf_grid_kwargs,
+    wf_grid_config,
 )
-from moj_system.core.utils import build_mmf_extended
-from moj_system.data.builder import build_and_upload
-from moj_system.data.data_manager import load_local_csv
+from moj_system.data.market_data_facade import MarketDataFacade
 from moj_system.data.updater import DataUpdater
 from moj_system.scripts.validate_robustness import ValidationManager
 
@@ -89,6 +88,20 @@ GLOBAL_VARIANTS = tuple(
 # ==============================================================================
 # HELPER FUNCTIONS
 # ==============================================================================
+
+_SWEEP_BASE_GRID_KEYS: tuple[str, ...] = ("X_GRID", "Y_GRID", "FAST_GRID", "SLOW_GRID", "N_ATR_GRID")
+_SWEEP_CRYPTO_GRID_KEYS: tuple[str, ...] = (*_SWEEP_BASE_GRID_KEYS, "TV_GRID", "SL_GRID", "MOM_LB_GRID")
+
+
+def sweep_grid_config(
+    grid_type: str,
+) -> OptimizationGridConfig:
+    """Injectable grid config for a ``GRID_SETS`` entry (EQUITY / BOND / CRYPTO)."""
+    grid_keys = _SWEEP_CRYPTO_GRID_KEYS if grid_type == "CRYPTO" else _SWEEP_BASE_GRID_KEYS
+    return OptimizationGridConfig.from_mapping(
+        grids=GRID_SETS[grid_type],
+        keys=grid_keys,
+    )
 
 
 def _extract_window_rows(
@@ -374,32 +387,18 @@ class SweepManager:
         cash_df = self.data_map.get("MMF_EXT")
         if cash_df is None:
             raise ValueError("Missing MMF_EXT data required for walk-forward validation.")
-        grids = GRID_SETS[grid_type]
+        grid_config = sweep_grid_config(grid_type=grid_type)
         use_atr = stop_type == "atr"
-        crypto_extra: dict[str, Any] = (
-            {
-                "tv_grid": grids["TV_GRID"],
-                "sl_grid": grids["SL_GRID"],
-                "mom_lookback_grid": grids["MOM_LB_GRID"],
-            }
-            if grid_type == "CRYPTO"
-            else {}
-        )
 
         wf_equity, wf_results, wf_trades = walk_forward(
             df=df,
             cash_df=cash_df,
             train_years=train_y,
             test_years=test_y,
-            X_grid=grids["X_GRID"],
-            Y_grid=grids["Y_GRID"],
-            fast_grid=grids["FAST_GRID"],
-            slow_grid=grids["SLOW_GRID"],
+            grid_config=grid_config,
             use_atr_stop=use_atr,
-            N_atr_grid=grids["N_ATR_GRID"] if use_atr else None,
             entry_gate_series=entry_gate,
             n_jobs=get_n_jobs(),
-            **crypto_extra,
         )
         self.wf_cache[cache_key] = (wf_equity, wf_results, wf_trades)
         return wf_equity, wf_results, wf_trades
@@ -473,16 +472,7 @@ class SweepManager:
             f"test: {test_y}, stop type: {stop_type}",
         )
         use_atr = stop_type == "atr"
-        grids = GRID_SETS[grid_type]
-        crypto_extra: dict[str, Any] = (
-            {
-                "tv_grid": grids["TV_GRID"],
-                "sl_grid": grids["SL_GRID"],
-                "mom_lookback_grid": grids["MOM_LB_GRID"],
-            }
-            if grid_type == "CRYPTO"
-            else {}
-        )
+        grid_config = sweep_grid_config(grid_type=grid_type)
         bb_df = self.rob_engine.run_bootstrap_test(
             df=df,
             cash_df=cash_df,
@@ -490,13 +480,8 @@ class SweepManager:
             train_years=train_y,
             test_years=test_y,
             use_atr_stop=use_atr,
-            N_atr_grid=grids["N_ATR_GRID"] if use_atr else None,
-            X_grid=grids["X_GRID"],
-            Y_grid=grids["Y_GRID"],
-            fast_grid=grids["FAST_GRID"],
-            slow_grid=grids["SLOW_GRID"],
+            grid_config=grid_config,
             filter_modes_override=["ma"] if grid_type == "BOND" else None,
-            **crypto_extra,
         )
         result = analyze_bootstrap(
             results_df=bb_df,
@@ -681,11 +666,7 @@ class SweepManager:
                 train_years=train_y,
                 test_years=test_y,
                 use_atr_stop=use_atr,
-                N_atr_grid=BASE_GRIDS["N_ATR_GRID"] if use_atr else None,
-                X_grid=BASE_GRIDS["X_GRID"],
-                Y_grid=BASE_GRIDS["Y_GRID"],
-                fast_grid=BASE_GRIDS["FAST_GRID"],
-                slow_grid=BASE_GRIDS["SLOW_GRID"],
+                grid_config=sweep_grid_config(grid_type="EQUITY"),
             )
             bb_res[asset_name] = analyze_bootstrap(
                 bb_df,
@@ -929,7 +910,7 @@ class SweepManager:
             ret_s, proc_px = prepare_asset_series(label=lbl, spec=spec)
             rets_dict[lbl] = ret_s
             leg_train = resolve_train_years(cfg=cfg, spec=spec, default_train=train_y)
-            leg_kwargs = wf_grid_kwargs(spec=spec, use_atr=stop_type_eq == "atr")
+            leg_grid_config = wf_grid_config(spec=spec)
 
             # POPRAWKA: Dodano df=proc_px i jawne nazewnictwo
             wf_e, wf_r, wf_t = self.get_cached_wf(
@@ -945,7 +926,7 @@ class SweepManager:
             frames_dict[lbl] = proc_px
             wf_results_dict[lbl] = wf_r
             wf_configs[lbl] = {
-                **leg_kwargs,
+                "grid_config": leg_grid_config,
                 "train_years": leg_train,
                 "use_atr_stop": stop_type_eq == "atr",
             }
@@ -996,10 +977,7 @@ class SweepManager:
         wf_results_dict["TBSP"] = wf_bd_r
         wf_configs["TBSP"] = {
             "filter_modes_override": ["ma"],
-            "X_grid": BOND_GRIDS["X_GRID"],
-            "Y_grid": BOND_GRIDS["Y_GRID"],
-            "fast_grid": BOND_GRIDS["FAST_GRID"],
-            "slow_grid": BOND_GRIDS["SLOW_GRID"],
+            "grid_config": sweep_grid_config(grid_type="BOND"),
             "use_atr_stop": False,
             "entry_gate_series": derived["bond_gate"],
             "train_years": train_y,
@@ -1311,6 +1289,123 @@ def print_sweep_report(
     logging.info(msg=sep)
 
 
+# ==============================================================================
+# SWEEP PIPELINES (Template Method adapters over SweepManager iterations)
+# ==============================================================================
+
+
+class SweepIterationPipeline(BaseStrategyPipeline[dict[str, pd.DataFrame], dict[str, Any] | None]):
+    """One sweep iteration: shared data map -> simulation + robustness -> result row."""
+
+    def __init__(
+        self,
+        manager: SweepManager,
+        train_y: int,
+        test_y: int,
+        stop_type: str,
+        common_start: pd.Timestamp,
+    ) -> None:
+        self.manager = manager
+        self.train_y = train_y
+        self.test_y = test_y
+        self.stop_type = stop_type
+        self.common_start = common_start
+
+    def load_data(self) -> dict[str, pd.DataFrame]:
+        return self.manager.data_map
+
+    @abstractmethod
+    def run_simulation(
+        self,
+        market_data: dict[str, pd.DataFrame],  # noqa: ARG002 - fixed by the pipeline interface
+    ) -> dict[str, Any] | None:
+        """Run the iteration through ``SweepManager`` and return its result row."""
+
+    def generate_reports(
+        self,
+        market_data: dict[str, pd.DataFrame],  # noqa: ARG002 - fixed by the pipeline interface
+        simulation: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        return {"result": simulation}
+
+
+class SingleAssetSweepPipeline(SweepIterationPipeline):
+    def __init__(
+        self,
+        manager: SweepManager,
+        asset_name: str,
+        train_y: int,
+        test_y: int,
+        stop_type: str,
+        common_start: pd.Timestamp,
+    ) -> None:
+        super().__init__(
+            manager=manager,
+            train_y=train_y,
+            test_y=test_y,
+            stop_type=stop_type,
+            common_start=common_start,
+        )
+        self.asset_name = asset_name
+
+    def run_simulation(
+        self,
+        market_data: dict[str, pd.DataFrame],  # noqa: ARG002 - fixed by the pipeline interface
+    ) -> dict[str, Any] | None:
+        return self.manager.run_single_asset_iteration(
+            asset_name=self.asset_name,
+            train_y=self.train_y,
+            test_y=self.test_y,
+            stop_type=self.stop_type,
+            common_start=self.common_start,
+        )
+
+
+class PensionSweepPipeline(SweepIterationPipeline):
+    def run_simulation(
+        self,
+        market_data: dict[str, pd.DataFrame],  # noqa: ARG002 - fixed by the pipeline interface
+    ) -> dict[str, Any] | None:
+        return self.manager.run_pension_iteration(
+            train_y=self.train_y,
+            test_y=self.test_y,
+            stop_type_eq=self.stop_type,
+            common_start=self.common_start,
+        )
+
+
+class GlobalSweepPipeline(SweepIterationPipeline):
+    def __init__(
+        self,
+        manager: SweepManager,
+        variant_key: str,
+        train_y: int,
+        test_y: int,
+        stop_type: str,
+        common_start: pd.Timestamp,
+    ) -> None:
+        super().__init__(
+            manager=manager,
+            train_y=train_y,
+            test_y=test_y,
+            stop_type=stop_type,
+            common_start=common_start,
+        )
+        self.variant_key = variant_key
+
+    def run_simulation(
+        self,
+        market_data: dict[str, pd.DataFrame],  # noqa: ARG002 - fixed by the pipeline interface
+    ) -> dict[str, Any] | None:
+        return self.manager.run_global_iteration(
+            variant_key=self.variant_key,
+            train_y=self.train_y,
+            test_y=self.test_y,
+            stop_type_eq=self.stop_type,
+            common_start=self.common_start,
+        )
+
+
 def _build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Professional Multi-Strategy Sweeper")
     parser.add_argument("--mode", choices=["SINGLE", "PENSION", "GLOBAL", "ALL"], required=True)
@@ -1366,64 +1461,12 @@ def main() -> None:
 
     logging.info("Preparing data map for all assets...")
     creds_path = str(Path(tempfile.gettempdir()) / "credentials.json")
-    folder_id = os.environ.get("GDRIVE_FOLDER_ID", "")
-
-    # Przechowujemy wszystkie dane w jednej mapie (UPPERCASE)
-    data_map = {}
-
-    # Ładowanie walut dla GLOBAL
-    for c in ["USD", "EUR", "JPY"]:
-        df = load_local_csv(f"{c.lower()}pln", f"{c}PLN")
-        if df is not None:
-            data_map[f"{c}PLN"] = df
-
-    # Ładowanie serii przedłużonych
-    data_map["TBSP"] = build_and_upload(
-        folder_id,
-        "tbsp_extended_full.csv",
-        "tbsp_extended_combined.csv",
-        "^tbsp",
-        "stooq",
-        creds_path,
+    facade = MarketDataFacade(
+        folder_id=os.environ.get("GDRIVE_FOLDER_ID", ""),
+        credentials_path=creds_path,
     )
-    data_map["MSCI_WORLD"] = build_and_upload(
-        folder_id,
-        "msci_world_wsj_raw.csv",
-        "msci_world_combined.csv",
-        "URTH",
-        "yfinance",
-        creds_path,
-        is_msci_world=True,
-    )
-    data_map["STOXX600"] = build_and_upload(
-        folder_id,
-        "stoxx600.csv",
-        "stoxx600_combined.csv",
-        "^STOXX",
-        "yfinance",
-        creds_path,
-    )
-
-    # Ładowanie reszty
-    check_list = ["SP500", "NIKKEI225", "WIG20TR", "NASDAQ100", "PL10Y", "DE10Y", "WIBOR1M"]
-    if args.assets:
-        check_list.extend([a.upper() for a in args.assets])
-
-    for asset_key in set(check_list):
-        if asset_key in data_map:
-            continue
-        df = load_local_csv(asset_key.lower(), asset_key, mandatory=False)
-        if df is not None:
-            data_map[asset_key] = df
-
-    data_map["WIG"] = load_local_csv("wig", "WIG").loc[lambda x: x.index >= pd.Timestamp("1995-01-02")]
-    # Przygotowanie przedłużonego MMF (raz dla wszystkich)
-    mmf_raw = load_local_csv("fund_2720", "MMF")
-    wibor = load_local_csv("wibor1m", "WIBOR1M", mandatory=False)
-    data_map["MMF_EXT"] = (
-        build_mmf_extended(mmf_raw, wibor, floor_date="1995-01-02")
-        if wibor is not None
-        else mmf_raw
+    data_map = facade.get_sweep_data_map(
+        extra_asset_keys=args.assets or [],
     )
 
     # 2. Calculate Common OOS Start
@@ -1447,7 +1490,15 @@ def main() -> None:
                     logging.info(
                         f"\n{'=' * 80}\nSINGLE SWEEP: {asset} | {ty}+{te} | {st}\n{'=' * 80}",
                     )
-                    res = manager.run_single_asset_iteration(asset, ty, te, st, common_start)
+                    single_pipeline = SingleAssetSweepPipeline(
+                        manager=manager,
+                        asset_name=asset,
+                        train_y=ty,
+                        test_y=te,
+                        stop_type=st,
+                        common_start=common_start,
+                    )
+                    res = single_pipeline.execute_pipeline()["result"]
                     if res:
                         results.append(res)
 
@@ -1459,7 +1510,15 @@ def main() -> None:
                     logging.info(
                         f"\n{'=' * 80}\nGLOBAL SWEEP: {var} | {ty}+{te} | {st}\n{'=' * 80}",
                     )
-                    res = manager.run_global_iteration(var, ty, te, st, common_start)
+                    global_pipeline = GlobalSweepPipeline(
+                        manager=manager,
+                        variant_key=var,
+                        train_y=ty,
+                        test_y=te,
+                        stop_type=st,
+                        common_start=common_start,
+                    )
+                    res = global_pipeline.execute_pipeline()["result"]
                     if res:
                         results.append(res)
 
@@ -1467,7 +1526,14 @@ def main() -> None:
         for ty, te in SWEEP_WINDOW_CONFIGS:
             for st in ["fixed", "atr"]:
                 logging.info(f"\n{'=' * 80}\nPENSION SWEEP: {ty}+{te} | {st}\n{'=' * 80}")
-                res = manager.run_pension_iteration(ty, te, st, common_start)
+                pension_pipeline = PensionSweepPipeline(
+                    manager=manager,
+                    train_y=ty,
+                    test_y=te,
+                    stop_type=st,
+                    common_start=common_start,
+                )
+                res = pension_pipeline.execute_pipeline()["result"]
                 if res:
                     results.append(res)
 
