@@ -21,6 +21,7 @@ from moj_system.core.global_engine import (
     build_price_df_from_returns,
     build_return_series,
 )
+from moj_system.core.grid_config import OptimizationGridConfig
 from moj_system.data.builder import build_and_upload
 from moj_system.data.data_manager import load_local_csv
 
@@ -296,3 +297,22 @@ def wf_grid_kwargs(
         kwargs["sl_grid"] = grids["SL_GRID"]
         kwargs["mom_lookback_grid"] = grids["MOM_LB_GRID"]
     return kwargs
+
+
+_LEG_GRID_KEYS: tuple[str, ...] = ("X_GRID", "Y_GRID", "FAST_GRID", "SLOW_GRID", "N_ATR_GRID")
+
+
+def wf_grid_config(
+    spec: AssetSpec,
+) -> OptimizationGridConfig:
+    """Injectable counterpart of ``wf_grid_kwargs``: the grids of one equity/crypto leg.
+
+    Non-crypto legs only override the X/Y/fast/slow/N_ATR grids (the remaining
+    grids keep the engine defaults); crypto legs use the full CRYPTO_GRIDS set.
+    """
+    if spec.is_crypto:
+        return OptimizationGridConfig.from_mapping(grids=CRYPTO_GRIDS)
+    return OptimizationGridConfig.from_mapping(
+        grids=BASE_GRIDS,
+        keys=_LEG_GRID_KEYS,
+    )

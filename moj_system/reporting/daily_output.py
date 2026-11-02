@@ -50,26 +50,41 @@ PUBLIC API
 
 from __future__ import annotations
 
-import datetime as dt
 import json
 import logging
-import tempfile
 from pathlib import Path
+from typing import Any
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 
 from moj_system.core.research import get_current_adx_regime
+from moj_system.core.state_analytics import (
+    compute_ma_filter_state,
+    compute_mom_filter_state,
+    extract_open_position,
+    get_active_window_params,
+)
 from moj_system.reporting.output_base import (
+    append_log_row,
     atomic_write,
-    atomic_write_bytes,
     fetch_file_from_drive,
     load_existing_log,
+    resolve_artifact_paths,
+    resolve_run_date,
+    save_figure_atomically,
+    upload_artifacts_to_drive,
+)
+from moj_system.reporting.report_context import SingleAssetReportContext
+from moj_system.reporting.snapshot_builder import (
+    SnapshotBuilder,
+    compute_stop_levels,
+    round_metrics,
+    stop_gap_pct,
 )
 
 # ---------------------------------------------------------------------------
@@ -82,119 +97,6 @@ BOUNDARY_EXITS = {"CARRY", "SAMPLE_END"}
 # ---------------------------------------------------------------------------
 # Signal extraction helpers
 # ---------------------------------------------------------------------------
-
-
-def _get_active_window_params(wf_results: pd.DataFrame) -> dict:
-    """Extracts parameters and identifies if ATR or Fixed stop is used."""
-    if wf_results is None or wf_results.empty:
-        return {}
-    last = wf_results.iloc[-1]
-
-    def _safe_float(key: str, default: float | None = None) -> float | None:
-        val = last.get(key)
-        if val is None or (isinstance(val, float) and np.isnan(val)):
-            return default
-        return float(val)
-
-    use_atr = bool(last.get("use_atr_stop", False))
-    stop_val = _safe_float("N_atr" if use_atr else "X", 0.10)
-    stop_label = "N_atr" if use_atr else "X"
-
-    params = {
-        "filter_mode": last.get("filter_mode", "ma"),
-        "stop_param": stop_val,
-        "stop_label": stop_label,
-        "use_atr_stop": use_atr,
-        "Y": _safe_float("Y", 0.10),
-        "fast": int(_safe_float("fast", 50)),
-        "slow": int(_safe_float("slow", 200)),
-        "stop_loss": _safe_float("stop_loss", 0.05),
-        "mom_lookback": int(_safe_float("mom_lookback", 252)),
-        "atr_window": int(_safe_float("atr_window", 20)),
-        "TestStart": pd.Timestamp(last["TestStart"]),
-        "TestEnd": pd.Timestamp(last["TestEnd"]),
-    }
-    tv = last.get("target_vol")
-    if tv is not None and pd.notna(tv) and str(tv).strip() not in ("", "N/A", "nan"):
-        params["target_vol"] = float(tv)
-    ml = last.get("mom_lookback")
-    if ml is not None and pd.notna(ml) and str(ml).strip() not in ("", "N/A", "nan"):
-        params["mom_lookback"] = int(float(ml))
-    else:
-        params["mom_lookback"] = 252
-    return params
-
-
-def _compute_atr_val(df: pd.DataFrame, atr_window: int) -> float:
-    """Calculates the current ATR volatility percentage (shifted by 1 for next day logic)."""
-    if len(df) < atr_window + 1:
-        return 0.0
-
-    df_copy = df.copy()
-    has_hl = "Najwyzszy" in df_copy.columns and "Najnizszy" in df_copy.columns
-
-    if has_hl:
-        prev_close = df_copy["Zamkniecie"].shift(periods=1)
-        tr = np.maximum(df_copy["Najwyzszy"], prev_close) - np.minimum(df_copy["Najnizszy"], prev_close)
-        atr_s = (tr / prev_close).rolling(window=atr_window).mean().shift(periods=1) * 100.0
-    else:
-        atr_s = (df_copy["Zamkniecie"].diff().abs() / df_copy["Zamkniecie"].shift(periods=1)).rolling(
-            window=atr_window
-        ).mean().shift(periods=1) * 100.0
-
-    val = float(atr_s.iloc[-1])
-    return val if np.isfinite(val) else 0.0
-
-
-def _extract_open_position(wf_trades: pd.DataFrame) -> dict | None:
-    """Return the most recent CARRY record as a dict, or None if flat."""
-    if wf_trades is None or wf_trades.empty:
-        return None
-    carry = wf_trades[wf_trades["Exit Reason"] == "CARRY"]
-    if carry.empty:
-        return None
-    return carry.iloc[-1].to_dict()
-
-
-def _compute_ma_filter_state(
-    df: pd.DataFrame,
-    fast: int,
-    slow: int,
-    price_col: str = "Zamkniecie",
-) -> dict:
-    """Recompute fast/slow MAs from the full price series."""
-    prices = df[price_col].dropna()
-    if len(prices) < slow:
-        return {"fast_ma": None, "slow_ma": None, "filter_on": None, "gap_pct": None}
-    fast_ma = float(prices.rolling(fast).mean().iloc[-1])
-    slow_ma = float(prices.rolling(slow).mean().iloc[-1])
-    gap_pct = (fast_ma - slow_ma) / slow_ma if slow_ma != 0 else 0.0
-    filter_on = fast_ma > slow_ma
-    return {
-        "fast_ma": round(fast_ma, 2),
-        "slow_ma": round(slow_ma, 2),
-        "filter_on": filter_on,
-        "gap_pct": round(gap_pct * 100, 2),
-    }
-
-
-def _compute_mom_filter_state(
-    df: pd.DataFrame,
-    lookback: int = 252,
-    skip: int = 21,
-    price_col: str = "Zamkniecie",
-) -> dict:
-    """Recompute momentum filter state from the full price series."""
-    prices = df[price_col].dropna()
-    if len(prices) < lookback:
-        return {"mom_value": None, "filter_on": None}
-    mom_series = prices.shift(skip) / prices.shift(lookback) - 1
-    mom_value = float(mom_series.iloc[-1]) if not pd.isna(mom_series.iloc[-1]) else None
-    filter_on = (mom_value > 0) if mom_value is not None else None
-    return {
-        "mom_value": round(mom_value * 100, 2) if mom_value is not None else None,
-        "filter_on": filter_on,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -220,125 +122,127 @@ def _determine_action(
 # ---------------------------------------------------------------------------
 
 
-def _build_snapshot(
-    wf_equity: pd.Series,
-    wf_trades: pd.DataFrame,
-    wf_metrics: dict,
-    wf_results: pd.DataFrame,
-    bh_metrics: dict,
-    df: pd.DataFrame,
-    price_col: str,
-    run_date: dt.date,
-    asset_name: str,
-) -> dict:
-    """Assemble the full snapshot dict from walk-forward outputs."""
-    snap = {"run_date": run_date.isoformat()}
+class SingleAssetSnapshotBuilder(SnapshotBuilder[SingleAssetReportContext]):
+    """Snapshot of a single-asset strategy (flat position fields)."""
 
-    # --- NOWE: Data freshness ---
-    freshness = {}
-    if df is not None and not df.empty:
-        freshness[asset_name] = str(df.index.max().date())
-    if wf_equity is not None and not wf_equity.empty:
-        freshness["Strategy"] = str(wf_equity.index.max().date())
-    snap["data_freshness"] = freshness
-    # ----------------------------
+    def build_body(self) -> dict[str, Any]:
+        ctx = self.context
+        snap: dict[str, Any] = {}
 
-    params = _get_active_window_params(wf_results)
-    snap["params"] = params
+        freshness = {}
+        if ctx.df is not None and not ctx.df.empty:
+            freshness[ctx.asset_name] = str(ctx.df.index.max().date())
+        if ctx.wf_equity is not None and not ctx.wf_equity.empty:
+            freshness["Strategy"] = str(ctx.wf_equity.index.max().date())
+        snap["data_freshness"] = freshness
 
-    prices = df[price_col].dropna()
-    today_price = float(prices.iloc[-1]) if len(prices) > 0 else None
-    snap["today_price"] = today_price
+        params = get_active_window_params(wf_results=ctx.wf_results, include_window_bounds=True)
+        snap["params"] = params
 
-    open_pos = _extract_open_position(wf_trades)
-    snap["open_position"] = open_pos
+        prices = ctx.df[ctx.price_col].dropna()
+        today_price = float(prices.iloc[-1]) if len(prices) > 0 else None
+        snap["today_price"] = today_price
 
-    if open_pos is not None:
-        snap["signal"] = "IN"
+        open_pos = extract_open_position(wf_trades=ctx.wf_trades)
+        snap["open_position"] = open_pos
+
+        if open_pos is not None and today_price is not None:
+            snap.update(self._open_position_fields(open_pos=open_pos, prices=prices, today_price=today_price))
+        else:
+            snap.update(self._flat_position_fields(open_pos=open_pos))
+
+        if params:
+            snap["ma_state"] = compute_ma_filter_state(
+                df=ctx.df,
+                fast=params["fast"],
+                slow=params["slow"],
+                price_col=ctx.price_col,
+            )
+            snap["mom_state"] = compute_mom_filter_state(
+                df=ctx.df,
+                lookback=params.get("mom_lookback", 252),
+                skip=21,
+                price_col=ctx.price_col,
+            )
+        else:
+            snap["ma_state"] = {"fast_ma": None, "slow_ma": None, "filter_on": None, "gap_pct": None}
+            snap["mom_state"] = {"mom_value": None, "filter_on": None}
+
+        filter_mode = params.get("filter_mode", "ma") if params else "ma"
+        snap["active_filter_on"] = (
+            snap["mom_state"]["filter_on"] if filter_mode == "mom" else snap["ma_state"]["filter_on"]
+        )
+
+        snap["strategy_metrics"] = round_metrics(metrics=ctx.wf_metrics)
+        snap["bh_metrics"] = round_metrics(metrics=ctx.bh_metrics)
+
+        if ctx.wf_results is not None and not ctx.wf_results.empty:
+            last_w = ctx.wf_results.iloc[-1]
+            snap["active_window"] = {
+                "train_start": str(last_w.get("TrainStart", "")),
+                "test_start": str(last_w.get("TestStart", "")),
+                "test_end": str(last_w.get("TestEnd", "")),
+            }
+        else:
+            snap["active_window"] = {}
+        snap["current_regime_adx"] = get_current_adx_regime(ctx.df)
+        return snap
+
+    def _open_position_fields(
+        self,
+        open_pos: dict[str, Any],
+        prices: pd.Series,
+        today_price: float,
+    ) -> dict[str, Any]:
+        ctx = self.context
+        params = get_active_window_params(wf_results=ctx.wf_results, include_window_bounds=True)
         entry_price = float(open_pos["EntryPrice"])
-        entry_date = pd.Timestamp(open_pos["EntryDate"]).date().isoformat()
-        unreal_ret = float(open_pos["Return"])
-        days_in = int(open_pos.get("Days", 0))
         peak_price = today_price
 
-        if wf_equity is not None and not wf_equity.empty:
+        if ctx.wf_equity is not None and not ctx.wf_equity.empty:
             trade_start = pd.Timestamp(open_pos["EntryDate"])
             price_in_trade = prices.loc[prices.index >= trade_start]
             if not price_in_trade.empty:
                 peak_price = float(price_in_trade.max())
 
-        # POPRAWKA: Pobieramy 'stop_param' (którym jest X lub N_atr) i stop_loss
-        stop_param = params.get("stop_param", 0.10)
-        stop_loss = params.get("stop_loss", 0.05)
-
-        # POPRAWKA: Używamy peak_price oraz stop_param
-        if params.get("use_atr_stop"):
-            atr_val = _compute_atr_val(df=df, atr_window=params.get("atr_window", 20))
-            trail_stop = round(number=peak_price * (1.0 - stop_param * atr_val), ndigits=2)
-            snap["atr_val_equity"] = round(number=atr_val, ndigits=3)
-        else:
-            trail_stop = round(number=peak_price * (1.0 - stop_param), ndigits=2)
-            snap["atr_val_equity"] = None
-
-        abs_stop = round(number=entry_price * (1.0 - stop_loss), ndigits=2)
-        binding_stop = max(trail_stop, abs_stop)
-
-        snap["entry_date"] = entry_date
-        snap["entry_price"] = round(number=entry_price, ndigits=2)
-        snap["days_in_trade"] = days_in
-        snap["unrealised_pct"] = round(number=unreal_ret * 100.0, ndigits=2)
-        snap["peak_price"] = round(number=peak_price, ndigits=2)
-        snap["trail_stop"] = trail_stop
-        snap["abs_stop"] = abs_stop
-        snap["binding_stop"] = binding_stop
-        if today_price:
-            snap["stop_gap_pct"] = round(
-                number=(binding_stop - today_price) / today_price * 100.0,
-                ndigits=2,
-            )
-    else:
-        snap["signal"] = "OUT"
-        snap["entry_date"] = None
-        snap["entry_price"] = None
-        snap["days_in_trade"] = None
-        snap["unrealised_pct"] = None
-        snap["peak_price"] = None
-        snap["trail_stop"] = None
-        snap["abs_stop"] = None
-        snap["binding_stop"] = None
-        snap["stop_gap_pct"] = None
-
-    if params:
-        snap["ma_state"] = _compute_ma_filter_state(df, params["fast"], params["slow"], price_col)
-        snap["mom_state"] = _compute_mom_filter_state(
-            df,
-            lookback=params.get("mom_lookback", 252),
-            skip=21,
-            price_col=price_col,
+        stops = compute_stop_levels(
+            price_df=ctx.df,
+            params=params,
+            entry_price=entry_price,
+            peak_price=peak_price,
         )
-    else:
-        snap["ma_state"] = {"fast_ma": None, "slow_ma": None, "filter_on": None, "gap_pct": None}
-        snap["mom_state"] = {"mom_value": None, "filter_on": None}
-
-    filter_mode = params.get("filter_mode", "ma") if params else "ma"
-    snap["active_filter_on"] = (
-        snap["mom_state"]["filter_on"] if filter_mode == "mom" else snap["ma_state"]["filter_on"]
-    )
-
-    snap["strategy_metrics"] = {k: round(float(v), 4) for k, v in (wf_metrics or {}).items()}
-    snap["bh_metrics"] = {k: round(float(v), 4) for k, v in (bh_metrics or {}).items()}
-
-    if wf_results is not None and not wf_results.empty:
-        last_w = wf_results.iloc[-1]
-        snap["active_window"] = {
-            "train_start": str(last_w.get("TrainStart", "")),
-            "test_start": str(last_w.get("TestStart", "")),
-            "test_end": str(last_w.get("TestEnd", "")),
+        fields: dict[str, Any] = {
+            "signal": "IN",
+            "atr_val_equity": round(number=stops.atr_val, ndigits=3) if stops.atr_val is not None else None,
+            "entry_date": pd.Timestamp(open_pos["EntryDate"]).date().isoformat(),
+            "entry_price": round(number=entry_price, ndigits=2),
+            "days_in_trade": int(open_pos.get("Days", 0)),
+            "unrealised_pct": round(number=float(open_pos["Return"]) * 100.0, ndigits=2),
+            "peak_price": round(number=peak_price, ndigits=2),
+            "trail_stop": stops.trail_stop,
+            "abs_stop": stops.abs_stop,
+            "binding_stop": stops.binding_stop,
         }
-    else:
-        snap["active_window"] = {}
-    snap["current_regime_adx"] = get_current_adx_regime(df)
-    return snap
+        if today_price:
+            fields["stop_gap_pct"] = stop_gap_pct(binding_stop=stops.binding_stop, today_price=today_price)
+        return fields
+
+    @staticmethod
+    def _flat_position_fields(
+        open_pos: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        return {
+            "signal": "IN" if open_pos is not None else "OUT",
+            "entry_date": None,
+            "entry_price": None,
+            "days_in_trade": None,
+            "unrealised_pct": None,
+            "peak_price": None,
+            "trail_stop": None,
+            "abs_stop": None,
+            "binding_stop": None,
+            "stop_gap_pct": None,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -498,38 +402,6 @@ def _build_log_row(snap: dict, action: str) -> dict:
         "calmar": round(sm.get("CalMAR", 0), 4),
         "sharpe": round(sm.get("Sharpe", 0), 4),
     }
-
-
-def _append_log_row_dedup(log_path: Path, row: dict) -> None:
-    """
-    Append one row to signal_log.csv, deduplicating on run_date.
-
-    Unlike the base append_log_row() which always appends, this version
-    reloads the existing CSV and drops any prior row for the same date
-    before appending — preventing duplicate rows on re-runs.
-    """
-    new_row_df = pd.DataFrame([row])
-
-    if log_path.exists():
-        try:
-            existing = pd.read_csv(log_path)
-            existing = existing[existing["date"] != row["date"]]
-            combined = pd.concat([existing, new_row_df], ignore_index=True)
-        except Exception:
-            # Jeśli plik jest uszkodzony, zacznij od nowa
-            combined = new_row_df
-    else:
-        combined = new_row_df
-
-    tmp = log_path.with_suffix(".tmp")
-    combined.to_csv(tmp, index=False)
-
-    # PANCERNE NADPISYWANIE:
-    # Path.replace delegates to the same atomic replacement operation.
-    if log_path.exists():
-        tmp.replace(log_path)
-    else:
-        tmp.rename(log_path)
 
 
 # ---------------------------------------------------------------------------
@@ -713,13 +585,11 @@ def _build_chart(
     plt.setp(ax2.get_xticklabels(), visible=False)
     ax3.tick_params(axis="x", labelrotation=30)
 
-    buf = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    plt.savefig(buf.name, dpi=70, bbox_inches="tight")
-    plt.close(fig)
-    buf.close()
-    temp_path = Path(buf.name)
-    atomic_write_bytes(chart_path, temp_path.read_bytes())
-    temp_path.unlink()
+    save_figure_atomically(
+        figure=fig,
+        chart_path=chart_path,
+        dpi=70,
+    )
     logging.info("daily_output: chart saved to %s", chart_path)
 
 
@@ -729,122 +599,69 @@ def _build_chart(
 
 
 def build_daily_outputs(
-    wf_equity: pd.Series,
-    wf_trades: pd.DataFrame,
-    wf_metrics: dict,
-    wf_results: pd.DataFrame,
-    bh_equity: pd.Series,
-    bh_metrics: dict,
-    df: pd.DataFrame,
-    output_dir: str = "outputs",
-    price_col: str = "Zamkniecie",
-    logfile_name: str = "signal_log.csv",
-    asset_name: str = "WIG20TR",
-    run_date: dt.date | None = None,
-    gdrive_folder_id: str | None = None,
-    gdrive_credentials: str | None = None,
+    context: SingleAssetReportContext,
 ) -> dict:
     """
     Build and write all daily output artefacts for a single-asset strategy.
 
-    Parameters
-    ----------
-    wf_equity            : stitched OOS equity curve
-    wf_trades            : full trade log including CARRY records
-    wf_metrics           : dict of OOS metrics from compute_metrics
-    wf_results           : per-window DataFrame from walk_forward
-    bh_equity            : buy-and-hold equity curve aligned to OOS period
-    bh_metrics           : dict of B&H metrics
-    df                   : full price DataFrame (must contain price_col column)
-    output_dir           : directory to write output files into
-    price_col            : price column name in df
-    logfile_name         : Drive-matching log filename (e.g. "wig20tr_signal_log.csv")
-    asset_name           : asset label for status text header
-    run_date             : override today's date (default: dt.date.today())
-    gdrive_folder_id     : Drive folder ID — triggers Drive log pre-fetch
-    gdrive_credentials   : path to service account JSON
+    ``context`` bundles the stitched OOS equity/trades/metrics, the per-window
+    results, the buy-and-hold benchmark, the price frame and the output / Drive
+    settings (see ``SingleAssetReportContext``).
 
     Returns
     -------
     dict with keys: action, signal, status_text, log_row,
                     chart_path, snapshot_path, log_path
     """
+    run_date = resolve_run_date(run_date=context.run_date)
+    artifact_paths = resolve_artifact_paths(
+        output_dir=context.output_dir,
+        asset_name=context.asset_name,
+    )
+    log_path = artifact_paths.log_path
 
-    # Jeśli run_date przyszło jako string (błąd w wywołaniu), przekonwertuj je
-    if isinstance(run_date, str):
-        try:
-            run_date = dt.date.fromisoformat(run_date)
-        except ValueError:
-            run_date = dt.date.today()
-    elif run_date is None:
-        run_date = dt.date.today()
-    # ----------------
-
-    # Teraz run_date na 100% ma metodę .isoformat()
-    snap = {"run_date": run_date.isoformat()}
-
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    # [ZMIANA] Dynamiczne nazwy plików z użyciem asset_name
-    prefix = asset_name.lower()
-    logfile_name = f"{prefix}_signal_log.csv"
-    log_path = out_dir / logfile_name
-    status_path = out_dir / f"{prefix}_signal_status.txt"
-    chart_path = out_dir / f"{prefix}_equity_chart.png"
-    snapshot_path = out_dir / f"{prefix}_signal_snapshot.json"
-
-    # [ZMIANA] Używamy logfile_name do ściągania poprzedniego logu
-    if gdrive_folder_id and gdrive_credentials:
-        fetch_file_from_drive(log_path, gdrive_folder_id, logfile_name, gdrive_credentials)
+    if context.gdrive_folder_id and context.gdrive_credentials:
+        fetch_file_from_drive(
+            local_path=log_path,
+            folder_id=context.gdrive_folder_id,
+            filename=artifact_paths.log_filename,
+            credentials_path=context.gdrive_credentials,
+        )
     else:
         logging.info("daily_output: gdrive credentials not supplied — skipping Drive log fetch.")
 
-    # Build snapshot
-    snap = _build_snapshot(
-        wf_equity=wf_equity,
-        wf_trades=wf_trades,
-        wf_metrics=wf_metrics,
-        wf_results=wf_results,
-        bh_metrics=bh_metrics,
-        df=df,
-        price_col=price_col,
-        run_date=run_date,
-        asset_name=asset_name,  # <--- DODANA LINIA
-    )
+    snap = SingleAssetSnapshotBuilder(context=context, run_date=run_date).build()
 
-    # Action
-    prev_log = load_existing_log(log_path)
+    prev_log = load_existing_log(log_path=log_path)
     action = _determine_action(prev_log, snap["signal"])
     snap["_action"] = action  # underscore copy for chart title
     snap["action"] = action
 
-    # Status text
-    status_text = _build_status_text(snap, action, asset_name)
+    status_text = _build_status_text(snap, action, context.asset_name)
     logging.info("\n%s", status_text)
-    atomic_write(status_path, status_text)
-    logging.info("daily_output: status written to %s", status_path)
+    atomic_write(path=artifact_paths.status_path, content=status_text)
+    logging.info("daily_output: status written to %s", artifact_paths.status_path)
 
-    # Signal log
     log_row = _build_log_row(snap, action)
-    _append_log_row_dedup(log_path, log_row)
+    append_log_row(log_path=log_path, row=log_row)
     logging.info("daily_output: signal log updated at %s", log_path)
 
-    # Snapshot JSON
     snap_serialisable = {k: v for k, v in snap.items() if not k.startswith("_")}
-    atomic_write(snapshot_path, json.dumps(snap_serialisable, indent=2, default=str))
-    logging.info("daily_output: JSON snapshot written to %s", snapshot_path)
+    atomic_write(
+        path=artifact_paths.snapshot_path,
+        content=json.dumps(snap_serialisable, indent=2, default=str),
+    )
+    logging.info("daily_output: JSON snapshot written to %s", artifact_paths.snapshot_path)
 
-    # Chart
     _build_chart(
-        wf_equity=wf_equity,
-        bh_equity=bh_equity,
-        wf_trades=wf_trades,
-        wf_results=wf_results,
-        df=df,
+        wf_equity=context.wf_equity,
+        bh_equity=context.bh_equity,
+        wf_trades=context.wf_trades,
+        wf_results=context.wf_results,
+        df=context.df,
         snap=snap,
-        chart_path=chart_path,
-        price_col=price_col,
+        chart_path=artifact_paths.chart_path,
+        price_col=context.price_col,
     )
 
     logging.info(
@@ -853,38 +670,17 @@ def build_daily_outputs(
         action,
         run_date,
     )
-    # --- NOWA LOGIKA: WYSYŁANIE NA GOOGLE DRIVE ---
-    if gdrive_folder_id and gdrive_credentials:
-        logging.info("Uploading artefacts to Google Drive...")
-        try:
-            from moj_system.data.gdrive import GDriveClient
-
-            client = GDriveClient(credentials_path=gdrive_credentials)
-
-            if client.service:
-                # Wysyłamy wszystkie 4 wygenerowane pliki.
-                files_to_upload = [log_path, status_path, chart_path, snapshot_path]
-                for file_path in files_to_upload:
-                    if file_path.exists():
-                        client.upload_csv(gdrive_folder_id, str(file_path), file_path.name)
-                        # Uwaga: metoda nazywa się 'upload_csv', ale w kodzie GDriveClient używa
-                        # ogólnego mimetypu 'text/csv' lub go ignoruje, więc prześle
-                        # poprawnie również .txt i .png.
-                        # Dla pewności, można w przyszłości zaktualizować metodę w GDriveClient.
-                logging.info("Successfully uploaded all daily artefacts to Google Drive.")
-            else:
-                logging.warning("Drive service unavailable. Artefacts saved locally only.")
-        except Exception as e:
-            logging.error(f"Failed to upload artefacts to Drive: {e}")
-    else:
-        logging.info("No GDrive credentials provided. Artefacts saved locally only.")
-    # ---------------------------------------------
+    upload_artifacts_to_drive(
+        artifact_paths=artifact_paths.upload_candidates(),
+        gdrive_folder_id=context.gdrive_folder_id,
+        gdrive_credentials=context.gdrive_credentials,
+    )
     return {
         "action": action,
         "signal": snap["signal"],
         "status_text": status_text,
         "log_row": log_row,
-        "chart_path": chart_path,
-        "snapshot_path": snapshot_path,
+        "chart_path": artifact_paths.chart_path,
+        "snapshot_path": artifact_paths.snapshot_path,
         "log_path": log_path,
     }

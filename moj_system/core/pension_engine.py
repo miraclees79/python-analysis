@@ -51,6 +51,7 @@ from typing import TypedDict
 import numpy as np
 import pandas as pd
 
+from moj_system.core.grid_config import AllocationOptimizationConfig
 from moj_system.core.strategy_engine import (
     compute_metrics,
 )
@@ -325,6 +326,7 @@ def allocation_walk_forward(
     objective: str = "calmar",
     cooldown_days: int = 10,
     annual_cap: int = 12,
+    allocation_config: AllocationOptimizationConfig | None = None,
 ) -> tuple:
     """
     Walk-forward optimisation of the both-signals-on allocation weights.
@@ -360,6 +362,8 @@ def allocation_walk_forward(
     objective        : str            — optimisation objective
     cooldown_days    : int            — reallocation gate cooldown
     annual_cap       : int            — reallocation gate annual cap
+    allocation_config: AllocationOptimizationConfig | None — injected settings;
+                        any non-None field overrides the matching argument above
 
     Returns
     -------
@@ -369,6 +373,16 @@ def allocation_walk_forward(
       all_reallocation_log  : list[dict]
       alloc_results_df      : pd.DataFrame — per-window best weights
     """
+
+    if allocation_config is not None:
+        if allocation_config.step is not None:
+            step = allocation_config.step
+        if allocation_config.objective is not None:
+            objective = allocation_config.objective
+        if allocation_config.cooldown_days is not None:
+            cooldown_days = allocation_config.cooldown_days
+        if allocation_config.annual_cap is not None:
+            annual_cap = allocation_config.annual_cap
 
     def _slice(s: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> pd.Series:
         return s.loc[(s.index >= start) & (s.index < end)]
