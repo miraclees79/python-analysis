@@ -85,6 +85,7 @@ except ImportError:
     _YFINANCE_AVAILABLE = False
 
 
+from moj_system.core.grid_config import AllocationOptimizationConfig
 from moj_system.core.strategy_engine import compute_metrics
 
 # ============================================================
@@ -909,6 +910,7 @@ def allocation_walk_forward_n(
     optional_keys: Collection[str] | None = None,
     min_delta: float = 0.10,
     delta_tol: float = 0.0,
+    allocation_config: AllocationOptimizationConfig | None = None,
 ) -> tuple:
     """
     Walk-forward allocation optimisation for N risky assets + MMF residual.
@@ -940,6 +942,8 @@ def allocation_walk_forward_n(
     cooldown_days      : int                   — reallocation gate cooldown
     annual_cap         : int                   — max reallocations/year (999=disabled)
     train_years        : int                   — in-sample window length (years)
+    allocation_config  : AllocationOptimizationConfig | None — injected settings;
+                                                 any non-None field overrides the matching argument
 
     Returns
     -------
@@ -949,6 +953,24 @@ def allocation_walk_forward_n(
       reallocation_log   : list[dict]       — log of accepted reallocations
       alloc_results_df   : pd.DataFrame     — per-window optimised weights
     """
+    if allocation_config is not None:
+        if allocation_config.step is not None:
+            step = allocation_config.step
+        if allocation_config.objective is not None:
+            objective = allocation_config.objective
+        if allocation_config.cooldown_days is not None:
+            cooldown_days = allocation_config.cooldown_days
+        if allocation_config.annual_cap is not None:
+            annual_cap = allocation_config.annual_cap
+        if allocation_config.asset_caps is not None:
+            asset_caps = dict(allocation_config.asset_caps)
+        if allocation_config.optional_keys is not None:
+            optional_keys = allocation_config.optional_keys
+        if allocation_config.min_delta is not None:
+            min_delta = allocation_config.min_delta
+        if allocation_config.delta_tol is not None:
+            delta_tol = allocation_config.delta_tol
+
     oos_equity_slices = []
     alloc_results = []
     all_weights = {}

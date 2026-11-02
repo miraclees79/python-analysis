@@ -20,6 +20,7 @@ from moj_system.config import USE_NUMBA_ENGINE
 
 # Dodany brakujący import potrzebny do ewaluacji parametrów funduszy
 from moj_system.core.fund_filter import compute_fund_breadth_signal
+from moj_system.core.grid_config import OptimizationGridConfig
 
 # ============================================================
 # CANONICAL N_JOBS CALCULATION
@@ -1478,26 +1479,36 @@ def walk_forward(
     fast_mode: bool = True,
     use_atr_stop: bool = False,
     N_atr_grid: list[float] | None = None,
-    atr_window: int = 20,
+    atr_window: int | None = None,
+    grid_config: OptimizationGridConfig | None = None,
 ) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame]:
+    """Rolling walk-forward optimisation.
+
+    Search grids are injected through ``grid_config``; the individual
+    ``*_grid``/``atr_window`` arguments are explicit per-call overrides kept
+    for backward compatibility. Precedence: explicit argument > grid_config >
+    ``OptimizationGridConfig`` defaults.
+    """
+    resolved_grids = OptimizationGridConfig() if grid_config is None else grid_config
 
     if X_grid is None:
-        X_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
+        X_grid = list(resolved_grids.x_grid)
     if Y_grid is None:
-        Y_grid = [0.02, 0.03, 0.05, 0.07, 0.10]
+        Y_grid = list(resolved_grids.y_grid)
     if fast_grid is None:
-        fast_grid = [50, 75, 100]
+        fast_grid = list(resolved_grids.fast_grid)
     if slow_grid is None:
-        slow_grid = [150, 200, 250]
+        slow_grid = list(resolved_grids.slow_grid)
     if tv_grid is None:
-        tv_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
+        tv_grid = list(resolved_grids.tv_grid)
     if sl_grid is None:
-        sl_grid = [0.05, 0.08, 0.10, 0.15]
+        sl_grid = list(resolved_grids.sl_grid)
     if mom_lookback_grid is None:
-        mom_lookback_grid = [126, 252]
-
+        mom_lookback_grid = list(resolved_grids.mom_lookback_grid)
     if N_atr_grid is None:
-        N_atr_grid = [0.08, 0.10, 0.12, 0.15, 0.20]
+        N_atr_grid = list(resolved_grids.n_atr_grid)
+    if atr_window is None:
+        atr_window = resolved_grids.atr_window
 
     stop_grid = N_atr_grid if use_atr_stop else X_grid
 
