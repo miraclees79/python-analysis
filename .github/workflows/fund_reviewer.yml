@@ -2,7 +2,7 @@ name: Weekly Fund Review
 
 on:
   schedule:
-    # Uruchamia się w soboty o 01:00 UTC (po piątkowym odświeżeniu funduszy z 23:00 UTC)
+    # Uruchamia się w soboty o 01:00 UTC (po piątkowym odświeżeniu funduszy z 20:11 UTC)
     - cron: '0 1 * * 6'
   workflow_dispatch:
     inputs:

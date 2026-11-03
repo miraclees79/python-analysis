@@ -2,8 +2,8 @@ name: Daily Fund Data Refresh
 
 on:
   schedule:
-    # Uruchamia się   o 23:11 UTC
-    - cron: '11 23 * * *'
+    # Uruchamia się   o 20:11 UTC
+    - cron: '11 20 * * *'
   workflow_dispatch: 
 
 permissions:

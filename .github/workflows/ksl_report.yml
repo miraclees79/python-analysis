@@ -2,8 +2,8 @@ name: Daily KSL Report
 
 on:
   schedule:
-    # Po odświeżeniu funduszy (23:11 UTC), OCR PPE (00:23 UTC) i strategii (02:17 UTC)
-    - cron: '51 3 * * *'
+    # Po odświeżeniu funduszy (20:11 UTC), OCR PPE (21:23 UTC) i strategii (23:17 UTC)
+    - cron: '51 1 * * *'
   workflow_dispatch:
 
 permissions:
