@@ -296,7 +296,11 @@ def run(send: bool, upload: bool) -> int:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     report_path = OUTPUT_DIR / REPORT_FILENAME
     report_path.write_text(html_body, encoding="utf-8")
-    logging.info("%s | pozycje: %d | raport: %s", subject, len(results), report_path)
+    if sys.platform.startswith("win"):
+        logging.info("%s | pozycje: %d | raport: %s", subject, len(results), report_path)
+    else:
+        # CI: log only the status tag, without position details
+        logging.info("%s", subject.split("]")[0] + "]" if subject.startswith("[") else subject)
 
     if upload and not client.upload_file(folder_id, str(report_path), REPORT_FILENAME):
         logging.error("Nie udało się wgrać %s na Google Drive.", REPORT_FILENAME)
