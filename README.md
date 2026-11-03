@@ -212,43 +212,42 @@ All strategy parameters are in `moj_system/config.py`:
 For global portfolios, `WIG` is supplied to the universe builder by each caller after the normal data update and local load. The `DataUpdater` keeps its GPW Benchmark and YFinance fallback chain for WIG; STOXX600 and MSCI World retain their Drive-history plus YFinance extension through `build_and_upload`.
 
 
----
-Strategy Configuration & Management
 
-The system utilizes a configuration-driven architecture. You do not need to write new Python logic or modify the execution engines to add or adjust standard strategies. All strategy definitions, asset characteristics, and hyperparameter search spaces are strictly centralized in a single Source of Truth.
-1. Where Strategies Are Defined
+***
 
-All configurations live in moj_system/config.py. The system relies on three primary dictionaries:
+## Strategy Configuration & Management
 
-    ASSET_REGISTRY: Defines the actual executable strategies (run modes). This is where you configure training windows, test windows, stop-loss modes, and portfolio compositions. The keys in this dictionary are the exact arguments you pass to the CLI (e.g., python moj_system/scripts/daily_runner.py --asset WIG20TR).
+The system utilizes a **configuration-driven architecture**. You do not need to write new Python logic or modify the execution engines to add or adjust standard strategies. All strategy definitions, asset characteristics, and hyperparameter search spaces are strictly centralized in a single Source of Truth.
 
-    GLOBAL_ASSET_CATALOG: A dictionary describing individual financial instruments used as building blocks for Multi-Asset / Global portfolios.
+### 1. Where Strategies Are Defined
+All configurations live in **`moj_system/config.py`**. The system relies on three primary dictionaries:
 
-    GRID_SETS / BASE_GRIDS: Define the hyperparameter optimization spaces (moving averages, momentum lookbacks, target volatility, etc.).
+1.  **`ASSET_REGISTRY`**: Defines the actual executable strategies (run modes). This is where you configure training windows, test windows, stop-loss modes, and portfolio compositions. The keys in this dictionary are the exact arguments you pass to the CLI (e.g., `python moj_system/scripts/daily_runner.py --asset WIG20TR`).
+2.  **`GLOBAL_ASSET_CATALOG`**: A dictionary describing individual financial instruments used as building blocks for Multi-Asset / Global portfolios.
+3.  **`GRID_SETS` / `BASE_GRIDS`**: Define the hyperparameter optimization spaces (moving averages, momentum lookbacks, target volatility, etc.).
 
-2. How Assets Are Described
+### 2. How Assets Are Described
+Individual assets are described in the `GLOBAL_ASSET_CATALOG` (in `config.py`). Each entry contains metadata instructing the `MarketDataFacade` how to fetch and process the data.
 
-Individual assets are described in the GLOBAL_ASSET_CATALOG (in config.py). Each entry contains metadata instructing the MarketDataFacade how to fetch and process the data.
-Python
-
+```python
 "SP500": {
     "source": "local",       # Where to get data: 'local' (CSV), 'drive' (Google Drive), 'crypto'
     "ticker": "sp500",       # Local filename or Stooq ticker
     "fx": "USD",             # Base currency of the asset (for FX adjustments)
     "hedge": "portfolio"     # FX Treatment: 'portfolio' (respects strategy setting) or 'never'
 }
+```
 
-3. How to Add a New Strategy
+### 3. How to Add a New Strategy
 
 Depending on whether you want to run a Single-Asset trend-following strategy or a Multi-Asset Global Portfolio, follow the steps below.
-Scenario A: Adding a Single-Asset Strategy
 
+#### Scenario A: Adding a Single-Asset Strategy
 To add a new standalone index (e.g., German DAX):
 
-Step 1: Ensure data is available (either add it to DEFAULT_TICKERS in moj_system/data/updater.py or manually place the CSV in moj_system/data/raw_csv/).
-Step 2: Add a new entry to ASSET_REGISTRY in config.py:
-Python
-
+**Step 1:** Ensure data is available (either add it to `DEFAULT_TICKERS` in `moj_system/data/updater.py` or manually place the CSV in `moj_system/data/raw_csv/`).
+**Step 2:** Add a new entry to `ASSET_REGISTRY` in `config.py`:
+```python
 "DAX_TR": {
     "type": "single",            # Tells the pipeline to use SingleAssetPipeline
     "source": "stooq",           
@@ -258,16 +257,15 @@ Python
     "test": 2,                   # Out-of-sample window (years)
     "default_stop": "atr"        # Use ATR-trailing stop (alternatives: 'fixed')
 },
+```
+**Step 3:** Run it via CLI: `python moj_system/scripts/daily_runner.py --asset DAX_TR`
 
-Step 3: Run it via CLI: python moj_system/scripts/daily_runner.py --asset DAX_TR
-Scenario B: Adding a New Global Portfolio
-
+#### Scenario B: Adding a New Global Portfolio
 To create a custom portfolio (e.g., a mix of US Tech, Polish Equities, and Bitcoin):
 
-Step 1: Ensure all components exist in GLOBAL_ASSET_CATALOG.
-Step 2: Define the new portfolio in ASSET_REGISTRY by linking the assets:
-Python
-
+**Step 1:** Ensure all components exist in `GLOBAL_ASSET_CATALOG`.
+**Step 2:** Define the new portfolio in `ASSET_REGISTRY` by linking the assets:
+```python
 "MY_CUSTOM_PORTFOLIO": {
     "type": "portfolio_global",   # Tells the pipeline to use GlobalPipeline
     "mode": "custom_tech_crypto", # Display label for reports
@@ -283,21 +281,19 @@ Python
     },
     "min_delta": 0.05             # Reallocation gate: minimum 5% change required to execute trades
 },
+```
+**Step 3:** Run it via CLI: `python moj_system/scripts/daily_runner.py --asset MY_CUSTOM_PORTFOLIO`
 
-Step 3: Run it via CLI: python moj_system/scripts/daily_runner.py --asset MY_CUSTOM_PORTFOLIO
+*(Note: The bond component (`TBSP`) and the cash component (`MMF`) are automatically handled by the Global Pipeline and do not need to be listed in the `"assets"` array).*
 
-(Note: The bond component (TBSP) and the cash component (MMF) are automatically handled by the Global Pipeline and do not need to be listed in the "assets" array).
-4. How to Modify an Existing Strategy
+### 4. How to Modify an Existing Strategy
 
-To tweak strategy behavior without changing the core Python codebase, edit its dictionary entry in ASSET_REGISTRY:
+To tweak strategy behavior without changing the core Python codebase, edit its dictionary entry in `ASSET_REGISTRY`:
 
-    Change the Stop-Loss Mode: Change "default_stop": "fixed" to "default_stop": "atr" to switch from a fixed percentage trailing stop to an ATR-scaled Chandelier exit.
-
-    Change Walk-Forward Windows: Modify the "train" and "test" integers (e.g., from 6+2 to 7+1).
-
-    Override Optimization Grids: If you want a specific strategy to use a different parameter search space than the global defaults, inject a "grids" dictionary:
-    Python
-
+*   **Change the Stop-Loss Mode:** Change `"default_stop": "fixed"` to `"default_stop": "atr"` to switch from a fixed percentage trailing stop to an ATR-scaled Chandelier exit.
+*   **Change Walk-Forward Windows:** Modify the `"train"` and `"test"` integers (e.g., from 6+2 to 7+1).
+*   **Override Optimization Grids:** If you want a specific strategy to use a different parameter search space than the global defaults, inject a `"grids"` dictionary:
+    ```python
     "WIG20TR": {
         "type": "single",
         "train": 6,
@@ -309,6 +305,7 @@ To tweak strategy behavior without changing the core Python codebase, edit its d
             "X_GRID": [0.05, 0.10, 0.15]     # Narrower trailing stop search space
         }
     }
+    ```
 ---
 
 
