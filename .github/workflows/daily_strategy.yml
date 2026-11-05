@@ -56,7 +56,7 @@ jobs:
         run: |
           # Zapisz credentials do pliku (wymagane przez GDriveClient)
           echo "$GOOGLE_CREDENTIALS" > /tmp/credentials.json
-          python -m moj_system.scripts.daily_runner --asset ${{ matrix.asset }} ${{ matrix.asset == 'PENSION' && '--email' || '' }}
+          python -m moj_system.scripts.daily_runner --asset ${{ matrix.asset }} ${{ contains(fromJSON('["PENSION", "WIG20TR"]'), matrix.asset) && '--email' || '' }}
 
       # 4. Archiwizacja wyników
       - name: Upload Artifacts
