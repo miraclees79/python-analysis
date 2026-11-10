@@ -143,7 +143,10 @@ class SingleAssetSnapshotBuilder(SnapshotBuilder[SingleAssetReportContext]):
         today_price = float(prices.iloc[-1]) if len(prices) > 0 else None
         snap["today_price"] = today_price
 
-        open_pos = extract_open_position(wf_trades=ctx.wf_trades)
+        open_pos = extract_open_position(
+            wf_trades=ctx.wf_trades,
+            last_row_only=True,
+        )
         snap["open_position"] = open_pos
 
         if open_pos is not None and today_price is not None:

@@ -67,11 +67,17 @@ BOUNDARY_EXITS = {"CARRY", "SAMPLE_END"}
 # ---------------------------------------------------------------------------
 
 
-def _get_signal_from_trades(wf_trades: pd.DataFrame) -> str:
+def _get_signal_from_series(sig_oos: pd.Series | None) -> str:
+    if sig_oos is None or sig_oos.empty:
+        return "OUT"
+    return "IN" if int(sig_oos.iloc[-1]) == 1 else "OUT"
+
+
+def _get_signal_from_trades(wf_trades: pd.DataFrame | None) -> str:
     if wf_trades is None or wf_trades.empty:
         return "OUT"
-    carry = wf_trades[wf_trades["Exit Reason"] == "CARRY"]
-    return "IN" if not carry.empty else "OUT"
+    last_trade = wf_trades.iloc[-1]
+    return "IN" if last_trade["Exit Reason"] == "CARRY" else "OUT"
 
 
 def _get_current_weights(weights_series: pd.Series | None) -> dict:
@@ -166,7 +172,11 @@ class PensionSnapshotBuilder(SnapshotBuilder[PensionReportContext]):
         }
 
         par_eq = get_active_window_params(wf_results=ctx.wf_results_eq)
-        snap["signal_equity"] = _get_signal_from_trades(wf_trades=ctx.wf_trades_eq)
+        snap["signal_equity"] = (
+            _get_signal_from_series(sig_oos=ctx.sig_eq_oos)
+            if ctx.sig_eq_oos is not None and not ctx.sig_eq_oos.empty
+            else _get_signal_from_trades(wf_trades=ctx.wf_trades_eq)
+        )
         snap["params_equity"] = par_eq
         snap["ma_state_equity"] = compute_ma_filter_state(
             df=ctx.wig_df,
@@ -189,7 +199,11 @@ class PensionSnapshotBuilder(SnapshotBuilder[PensionReportContext]):
         snap["equity_position"] = equity_position
 
         par_bd = get_active_window_params(wf_results=ctx.wf_results_bd)
-        snap["signal_bond"] = _get_signal_from_trades(wf_trades=ctx.wf_trades_bd)
+        snap["signal_bond"] = (
+            _get_signal_from_series(sig_oos=ctx.sig_bd_oos)
+            if ctx.sig_bd_oos is not None and not ctx.sig_bd_oos.empty
+            else _get_signal_from_trades(wf_trades=ctx.wf_trades_bd)
+        )
         snap["params_bond"] = par_bd
         snap["ma_state_bond"] = compute_ma_filter_state(
             df=ctx.tbsp_df,
@@ -211,11 +225,13 @@ class PensionSnapshotBuilder(SnapshotBuilder[PensionReportContext]):
         snap["bh_equity_metrics"] = round_metrics(metrics=ctx.bh_eq_metrics)
         snap["bh_bond_metrics"] = round_metrics(metrics=ctx.bh_bd_metrics)
         snap["current_regime_adx"] = get_current_adx_regime(df=ctx.wig_df)
+        realloc_today = _realloc_today(reallocation_log=ctx.reallocation_log, run_date=self.run_date)
+        snap["realloc_today"] = realloc_today
         snap["action"] = _determine_action(
             prev_log=None,  # the real action is derived in build_daily_outputs once the log is loaded
             sig_eq_today=snap["signal_equity"],
             sig_bd_today=snap["signal_bond"],
-            realloc_today=_realloc_today(reallocation_log=ctx.reallocation_log, run_date=self.run_date),
+            realloc_today=realloc_today,
         )
 
         if ctx.reallocation_log:
@@ -236,7 +252,10 @@ class PensionSnapshotBuilder(SnapshotBuilder[PensionReportContext]):
         params: dict[str, Any],
         wf_trades: pd.DataFrame,
     ) -> tuple[dict[str, Any] | None, float | None]:
-        open_position = extract_open_position(wf_trades=wf_trades)
+        open_position = extract_open_position(
+            wf_trades=wf_trades,
+            last_row_only=True,
+        )
         if not open_position:
             return None, None
 

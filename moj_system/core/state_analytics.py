@@ -157,7 +157,7 @@ def get_active_window_params(
 
 def extract_open_position(
     wf_trades: pd.DataFrame | None,
-    last_row_only: bool = False,
+    last_row_only: bool = True,
 ) -> dict[str, Any] | None:
     """Return the most recent CARRY record as a dict, or None if flat.
 
